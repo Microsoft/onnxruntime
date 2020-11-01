@@ -150,7 +150,7 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
         "Must match data generation.", cxxopts::value<int>()->default_value("80"))
       ("optimizer", "Adam or Lamb", cxxopts::value<std::string>()->default_value("Adam"))
       ("deepspeed_zero_stage", "Controls whether to partition state using the DeepSpeed ZeRO technique. "
-       "Stages 0 (disabled) and 1 (optimizer state partitioning) are supported.",
+       "Stages 0 (disabled), stages 1 (optimizer state partitioning), and stage 2 (graident partitioning) are supported.",
        cxxopts::value<int>()->default_value("0"))
       ("alpha", "Adam/Lamb alpha parameter", cxxopts::value<float>()->default_value("0.9"))
       ("beta", "Adam/Lamb beta parameter", cxxopts::value<float>()->default_value("0.999"))
@@ -355,6 +355,12 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
 
     params.deepspeed_zero = ZeROConfig(flags["deepspeed_zero_stage"].as<int>());
     params.enable_grad_norm_clip = flags["enable_grad_norm_clip"].as<bool>();
+
+    if(params.deepspeed_zero.stage == 1){
+      printf("use ZeRO stage 1\n");
+    } else if(params.deepspeed_zero.stage == 2){
+      printf("use ZeRO stage 2\n");
+    } 
 
     float alpha = flags["alpha"].as<float>();
     float beta = flags["beta"].as<float>();

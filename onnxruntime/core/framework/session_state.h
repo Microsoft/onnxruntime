@@ -31,6 +31,7 @@
 #include "core/platform/ort_mutex.h"
 #include "core/platform/path_lib.h"
 #include "core/platform/threadpool.h"
+#include "core/framework/memory_info.h"
 
 namespace flatbuffers {
 class FlatBufferBuilder;
@@ -52,6 +53,7 @@ class OpKernel;
 class NodeIndexInfo;
 struct SequentialExecutionPlan;
 struct MemoryPatternGroup;
+class MemoryInfo;
 
 /**
  * SessionState should be modified by the inference session class only.
@@ -80,7 +82,8 @@ class SessionState {
                const DataTransferManager& data_transfer_mgr,
                const logging::Logger& logger,
                profiling::Profiler& profiler,
-               bool use_deterministic_compute = false)
+               bool use_deterministic_compute = false,
+               int local_rank = 0)
       : graph_(graph),
         execution_providers_(execution_providers),
         logger_(logger),
@@ -89,7 +92,9 @@ class SessionState {
         thread_pool_(thread_pool),
         inter_op_thread_pool_(inter_op_thread_pool),
         data_transfer_mgr_(data_transfer_mgr),
-        use_deterministic_compute_(use_deterministic_compute) {
+        use_deterministic_compute_(use_deterministic_compute),
+        local_rank_(local_rank),
+        memory_info_(local_rank) {
     SetupAllocators();
   }
 
@@ -119,8 +124,8 @@ class SessionState {
   const ExecutionProviders& GetExecutionProviders() const noexcept { return execution_providers_; }
 
   /**
-  Get the allocator for the given OrtMemoryInfo location
-  */
+    Get the allocator for the given OrtMemoryInfo location
+    */
   AllocatorPtr GetAllocator(const OrtMemoryInfo& location) const noexcept;
 
   /** Get the allocator for a given OrtDevice. The first allocator that matches will be returned. */
@@ -129,46 +134,52 @@ class SessionState {
   const OrtValueNameIdxMap& GetOrtValueNameIdxMap() const noexcept { return ort_value_name_idx_map_; }
 
   /**
-   * Adds an initialized tensor (weight) so that it can be used by the
-   * execution frame to setup the appropriate OrtValue vectors.
-   * This function will take a shallow copy of d if d is not NULL.
-   * If 'constant' is true the tensor value cannot be overridden by an input at runtime.
-   */
+     * Adds an initialized tensor (weight) so that it can be used by the
+     * execution frame to setup the appropriate OrtValue vectors.
+     * This function will take a shallow copy of d if d is not NULL.
+     * If 'constant' is true the tensor value cannot be overridden by an input at runtime.
+     */
   Status AddInitializedTensor(int ort_value_index, const OrtValue& ort_value, const OrtCallback* d, bool constant);
 
   /**
-   * Gets the map of ort_value_index to initialized tensors (weights) so that it can be used by the
-   * execution frame to setup the appropriate OrtValue vectors.
-   * The lifetime of returned OrtValues are limited by this SessionState object.
-   */
+     * Gets the map of ort_value_index to initialized tensors (weights) so that it can be used by the
+     * execution frame to setup the appropriate OrtValue vectors.
+     * The lifetime of returned OrtValues are limited by this SessionState object.
+     */
   const std::unordered_map<int, OrtValue>& GetInitializedTensors() const;
 
   /**
-   * Gets the map of ort_value_index to initialized tensors (e.g. weights) that are constant
-   * and cannot be overridden at runtime.
-   * The lifetime of returned OrtValues are limited by this SessionState object.
-   */
+     * Gets the map of ort_value_index to initialized tensors (e.g. weights) that are constant
+     * and cannot be overridden at runtime.
+     * The lifetime of returned OrtValues are limited by this SessionState object.
+     */
   const std::unordered_map<int, OrtValue>& GetConstantInitializedTensors() const;
 
 #ifdef ENABLE_TRAINING
   /**
-  Get some initialized tensors (weights).
-  @param interested_weights The names of the weights to retrieve.
-  @param allow_missing_weights Whether to allow names in interested_weights
-         with no corresponding weight.
-  @param[out] retrieved_weights The retrieved weights.
-  @return The status of the operation.
-  */
+    Get some initialized tensors (weights).
+    @param interested_weights The names of the weights to retrieve.
+    @param allow_missing_weights Whether to allow names in interested_weights
+           with no corresponding weight.
+    @param[out] retrieved_weights The retrieved weights.
+    @return The status of the operation.
+    */
   Status GetInitializedTensors(
       const std::unordered_set<std::string>& interested_weights,
       bool allow_missing_weights, NameMLValMap& retrieved_weights) const;
 
   /**
-  Get some initialized tensors (weights).
-  Any names in interested_weights with no corresponding weight are ignored.
-  */
+    Get some initialized tensors (weights).
+    Any names in interested_weights with no corresponding weight are ignored.
+    */
   NameMLValMap GetInitializedTensors(const std::unordered_set<std::string>& interested_weights) const;
 #endif
+
+  MemoryInfo& GetMutableMemoryInfo() const {
+    return const_cast<MemoryInfo&>(memory_info_);
+  }
+
+  inline size_t GetRank() const { return local_rank_; }
 
   // execution plan. nullptr until FinalizeSessionState is called
   const SequentialExecutionPlan* GetExecutionPlan() const;
@@ -396,6 +407,7 @@ class SessionState {
   // lock for the mem_patterns_
   mutable OrtMutex mem_patterns_lock_;
 
+
   // cache for the generated mem_patterns. key is calculated based on input shapes.
   mutable std::map<int64_t, std::unique_ptr<MemoryPatternGroup>> mem_patterns_;
   mutable std::map<int64_t, std::unordered_map<int, TensorShape>> shape_patterns_;
@@ -418,6 +430,8 @@ class SessionState {
   const DataTransferManager& data_transfer_mgr_;
 
   bool use_deterministic_compute_;
+  int local_rank_;
+  MemoryInfo memory_info_;
 
   std::unique_ptr<NodeIndexInfo> node_index_info_;
   std::multimap<int, std::unique_ptr<FeedsFetchesManager>> cached_feeds_fetches_managers_;

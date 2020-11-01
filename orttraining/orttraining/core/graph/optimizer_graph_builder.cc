@@ -86,7 +86,8 @@ Status OptimizerGraphBuilder::AddGradientScalingNodes(
     ArgDef& fused_gradient_argdef,          // update argdef in place
     GraphAugmenter::GraphDefs& graph_defs,
     ONNX_NAMESPACE::TensorProto_DataType allreduce_element_type,
-    const bool fuse_scaling_outputs) {
+    const bool fuse_scaling_outputs,
+    const std::vector<int64_t>& partitions) {
   ArgDef pre_allreduce_scale(nodearg_name_generator("pre_allreduce_scale"),
                              graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT));
   graph_defs.AddInitializers({CreateTensorProto<float>(pre_allreduce_scale.name, scale, {})});
@@ -113,8 +114,16 @@ Status OptimizerGraphBuilder::AddGradientScalingNodes(
 
       TypeProto* scaled_gradient_type_proto = graph_defs.CopyTypeProto(gradient_argdef);
       scaled_gradient_type_proto->mutable_tensor_type()->set_elem_type(allreduce_element_type);
+      int lb = -1;
+      size_t j = 0;
+      for (; j < partitions.size(); ++j) {
+        if (int(i) > lb && int(i) <= partitions[j]) {
+          break;
+        }
+        lb = partitions[j] + 1;
+      }
 
-      ArgDef scaled_gradient_argdef = ArgDef(nodearg_name_generator(gradient_argdef.name + "_scaled"),
+      ArgDef scaled_gradient_argdef = ArgDef(nodearg_name_generator(gradient_argdef.name + "_scaled_partition_" + std::to_string(j)),
                                              scaled_gradient_type_proto);
       graph_defs.AddNodeDefs({NodeDef(OpDef{"MixedPrecisionScale", kMSDomain, 1},
                                       {pre_allreduce_scale, gradient_argdef},

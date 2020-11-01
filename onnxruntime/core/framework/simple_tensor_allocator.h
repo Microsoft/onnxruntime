@@ -36,5 +36,8 @@ class SimpleTensorAllocator : public ITensorAllocator {
   }
   common::Status GetPreallocatedBuffer(int ort_value_index, const char* name, std::unique_ptr<MemBuffer>& out) override;
   common::Status Trace(int id, const ONNX_NAMESPACE::TensorProto* value) override;
+  const MemoryPatternGroup& GetMemPatterns() override {
+    return mem_patterns_;
+  }
 };
 }  // namespace onnxruntime

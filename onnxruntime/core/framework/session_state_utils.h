@@ -20,6 +20,7 @@ class GraphViewer;
 class OrtValueNameIdxMap;
 class DataTransferManager;
 class NodeArg;
+class MemoryInfo;
 
 namespace logging {
 class Logger;
@@ -35,8 +36,8 @@ common::Status SaveInitializedTensors(
     const logging::Logger& logger,
     const DataTransferManager& data_transfer_mgr,
     const ExecutionPlanBase& exec_plan,
-    const SessionOptions& session_options);
-
+    const SessionOptions& session_options, 
+    MemoryInfo& memory_info);
 common::Status SaveInputOutputNamesToNodeMapping(const GraphViewer& graph,
                                                  SessionState& session_state,
                                                  const std::vector<const NodeArg*>& implicit_inputs);

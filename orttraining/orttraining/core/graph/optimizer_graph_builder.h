@@ -80,7 +80,8 @@ class OptimizerGraphBuilder {
       ArgDef& fused_gradient_argdef,
       GraphAugmenter::GraphDefs& graph_defs,
       ONNX_NAMESPACE::TensorProto_DataType allreduce_element_type,
-      const bool fuse_scaling_outputs);
+      const bool fuse_scaling_outputs,
+      const std::vector<int64_t>& partitions = {});
 
   Status AddGradientNorm(
       const NodeArgNameGeneratorFn& nodearg_name_generator,

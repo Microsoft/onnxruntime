@@ -12,6 +12,9 @@ struct MemoryBlock {
 
   MemoryBlock() = default;
   MemoryBlock(size_t offset, size_t size) : offset_(offset), size_(size) {}
+  bool operator<(const MemoryBlock& mb) const {
+    return offset_ < mb.offset_;
+  }
 };
 
 class MemoryPattern {
@@ -40,6 +43,10 @@ class MemoryPattern {
       return nullptr;
 
     return &it->second;
+  }
+
+  const std::unordered_map<int, MemoryBlock>& GetPatternsMap() const {
+    return patterns_;
   }
 
  private:

@@ -15,6 +15,7 @@
 #include "core/framework/session_state.h"
 #include "core/framework/TensorSeq.h"
 #include "core/framework/utils.h"
+#include "core/framework/memory_info.h"
 
 using namespace onnxruntime::common;
 
@@ -298,6 +299,9 @@ ExecutionFrame::ExecutionFrame(const std::vector<int>& feed_mlvalue_idxs, const 
         }
       }
     }
+    //Record activation memory pattern
+    session_state_.GetMutableMemoryInfo().ClearMemoryInfoPerExecution();
+    session_state_.GetMutableMemoryInfo().RecordActivationPatternInfo(*mem_patterns_);
   }
 }
 
@@ -403,6 +407,7 @@ Status ExecutionFrame::AllocateMLValueTensorSelfOwnBufferHelper(OrtValue& ort_va
     // if parallel executor is used.
     std::unique_lock<std::mutex> lock(mtx_);
     dynamic_activation_memory_sizes_in_byte_[location.name] += size;
+    session_state_.GetMutableMemoryInfo().SetDynamicAllocation(ort_value_index);
   }
 
   return Status::OK();
@@ -565,6 +570,8 @@ Status ExecutionFrame::AllocateAsPerAllocationPlan(OrtValue& ort_value, int ort_
         return Status(ONNXRUNTIME, FAIL, ostr.str());
       }
     }
+
+    session_state_.GetMutableMemoryInfo().RecordActivationAllocInfo(ort_value_index, ort_value);
 
     return Status::OK();
   } else if (ml_type->IsSparseTensorType()) {

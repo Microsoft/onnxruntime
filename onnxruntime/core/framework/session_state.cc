@@ -867,9 +867,11 @@ Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_
   ORT_RETURN_IF_ERROR(SequentialPlanner::CreatePlan(parent_node, *graph_viewer_, valid_outer_scope_node_args,
                                                     execution_providers_, kernel_create_info_map_,
                                                     ort_value_name_idx_map_, context, p_seq_exec_plan_));
+  //Record the allocation plan
 
   // Uncomment the below to dump the allocation plan to std::cout
-  // LOGS(logger_, VERBOSE) << std::make_pair(p_seq_exec_plan_.get(), this);
+  LOGS(logger_, VERBOSE) << std::make_pair(p_seq_exec_plan_.get(), this);
+  memory_info_.GenerateTensorMap(GetExecutionPlan(), GetOrtValueNameIdxMap());
 
   std::unique_ptr<ITensorAllocator> tensor_allocator_(
       ITensorAllocator::Create(enable_mem_pattern_, *p_seq_exec_plan_, *this, weights_buffers_));
@@ -883,7 +885,9 @@ Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_
           [this](int idx, const OrtValue& value, const OrtCallback& d, bool constant) -> Status {
             return AddInitializedTensor(idx, value, &d, constant);
           },
-          logger_, data_transfer_mgr_, *p_seq_exec_plan_.get(), session_options));
+          logger_, data_transfer_mgr_, *p_seq_exec_plan_.get(), session_options, memory_info_));
+  //Record Weight allocation info on device
+  memory_info_.RecordInitializerAllocInfo(GetInitializedTensors());
 
   // remove weights from the graph now to save memory but in many cases it won't save memory, if the tensor was
   // preallocated with the some other tensors in a single 'allocate' call, which is very common.

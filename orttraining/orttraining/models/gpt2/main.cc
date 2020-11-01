@@ -83,7 +83,7 @@ Status ParseArguments(int argc, char* argv[], GPT2Parameters& params, OrtParamet
         "than this will be padded. Must match data generation.", cxxopts::value<int>()->default_value("1024"))
       ("optimizer", "Adam or Lamb", cxxopts::value<std::string>()->default_value("Adam"))
       ("deepspeed_zero_stage", "Controls whether to partition state using the DeepSpeed ZeRO technique. "
-       "Stages 0 (disabled) and 1 (optimizer state partitioning) are supported.",
+       "Stages 0 (disabled), stages 1 (optimizer state partitioning), and stage 2 (graident partitioning) are supported.",
        cxxopts::value<int>()->default_value("0"))
       ("alpha", "Adam/Lamb alpha parameter", cxxopts::value<float>()->default_value("0.9"))
       ("beta", "Adam/Lamb beta parameter", cxxopts::value<float>()->default_value("0.999"))
@@ -91,6 +91,10 @@ Status ParseArguments(int argc, char* argv[], GPT2Parameters& params, OrtParamet
       ("epsilon", "Adam/Lamb epsilon parameter", cxxopts::value<float>()->default_value("1e-8"))
       ("data_parallel_size", "Data parallel group size.", cxxopts::value<int>()->default_value("1"))
       ("horizontal_parallel_size", "Horizontal model parallel group size.", cxxopts::value<int>()->default_value("1"))
+      ("attn_dropout_checkpoint", "Enable checkpointing of attention dropout to save memory.",
+        cxxopts::value<bool>()->default_value("false"))
+      ("gelu_checkpoint", "Enable checkpointing of Gelu activation output to save memory.",
+        cxxopts::value<bool>()->default_value("false"))
       ("enable_grad_norm_clip", "Specify whether to enable gradient clipping for optimizers.",
         cxxopts::value<bool>()->default_value("true"));
   options
@@ -211,6 +215,11 @@ Status ParseArguments(int argc, char* argv[], GPT2Parameters& params, OrtParamet
 
     params.deepspeed_zero = ZeROConfig(flags["deepspeed_zero_stage"].as<int>());
     params.enable_grad_norm_clip = flags["enable_grad_norm_clip"].as<bool>();
+    if(params.deepspeed_zero.stage == 1){
+      printf("use ZeRO stage 1\n");
+    } else if(params.deepspeed_zero.stage == 2){
+      printf("use ZeRO stage 2\n");
+    } 
     float alpha = flags["alpha"].as<float>();
     float beta = flags["beta"].as<float>();
     float lambda = flags["lambda"].as<float>();

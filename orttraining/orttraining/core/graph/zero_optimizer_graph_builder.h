@@ -23,6 +23,9 @@ class ZeROOptimizerGraphBuilder : public OptimizerGraphBuilder {
       std::vector<ArgDef>& gradient_argdefs,
       std::unordered_set<std::string>& optimizer_state_initializer_names,
       OptimizerOutputKeyMap<std::string>& optimizer_graph_outputs) override;
+
+ private:
+  const int stage_;
 };
 
 }  // namespace training

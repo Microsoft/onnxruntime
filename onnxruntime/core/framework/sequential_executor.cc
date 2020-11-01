@@ -436,6 +436,9 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
   ORT_RETURN_IF_ERROR(frame.GetOutputs(fetches));
   VLOGS(logger, 1) << "Done with execution.";
 
+  //session_state.GetMutableMemoryInfo().PrintMemoryInfoForLocation(session_state.Logger(), OrtDevice::GPU);
+  session_state.GetMutableMemoryInfo().GenerateMemoryProfile();
+
   if (frame.HasMemoryPatternPlanner()) {
     std::vector<std::reference_wrapper<const TensorShape>> input_shapes;
     bool all_tensors = true;
@@ -460,13 +463,13 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
   }
 
   for (auto i : frame.GetStaticMemorySizeInfo()) {
-    LOGS(logger, INFO) << "[Memory] ExecutionFrame statically allocates "
-                       << i.second << " bytes for " << i.first << std::endl;
+    std::cout << "[Memory] ExecutionFrame statically allocates "
+              << i.second << " bytes for " << i.first << std::endl;
   }
 
   for (auto i : frame.GetDynamicMemorySizeInfo()) {
-    LOGS(logger, INFO) << "[Memory] ExecutionFrame dynamically allocates "
-                       << i.second << " bytes for " << i.first << std::endl;
+    std::cout << "[Memory] ExecutionFrame dynamically allocates "
+              << i.second << " bytes for " << i.first << std::endl;
   }
 
   return Status::OK();

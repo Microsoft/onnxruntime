@@ -48,7 +48,8 @@ struct NodeDef {
                                           input_args(input_args),
                                           output_args(output_args),
                                           attributes(attributes),
-                                          name(name){};
+                                          name(name),
+                                          priority_(0){};
 
   NodeDef(const std::string& op_type,
           const std::vector<ArgDef>& input_args,
@@ -58,7 +59,8 @@ struct NodeDef {
                                           input_args(input_args),
                                           output_args(output_args),
                                           attributes(attributes),
-                                          name(name){};
+                                          name(name),
+                                          priority_(0){};
 
   NodeDef(const OpDef& op_def,
           const std::vector<ArgDef>& input_args,
@@ -68,7 +70,8 @@ struct NodeDef {
                                           domain(op_def.domain),
                                           input_args(input_args),
                                           output_args(output_args),
-                                          name(name) {
+                                          name(name),
+                                          priority_(0) {
     for (const AttributeProto& a : attribute_protos) {
       attributes.insert({a.name(), a});
     }
@@ -81,11 +84,14 @@ struct NodeDef {
           const std::string& name = "") : op_type(op_type),
                                           input_args(input_args),
                                           output_args(output_args),
-                                          name(name) {
+                                          name(name),
+                                          priority_(0) {
     for (const AttributeProto& a : attribute_protos) {
       attributes.insert({a.name(), a});
     }
   }
+
+  void SetPriority(int p) { priority_ = p; }
 
   std::string op_type;
   std::string domain = kOnnxDomain;
@@ -93,6 +99,7 @@ struct NodeDef {
   std::vector<ArgDef> output_args;
   NodeAttributes attributes;
   std::string name;
+  int priority_;
 };
 
 /** GraphAugmenter is a stateless class to add new elements into a Graph.
@@ -195,7 +202,7 @@ class GraphAugmenter {
   };
 
   // Augment the graph with new_graph_elements which defines new nodes, outputs, initializers.
-  static common::Status AugmentGraph(Graph& graph,
+   static common::Status AugmentGraph(Graph& graph,
                                      const GraphDefs& graph_element_defs,
                                      const std::unordered_set<std::string>* p_initializer_names_to_preserve = nullptr);
 

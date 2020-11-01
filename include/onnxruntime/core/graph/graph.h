@@ -764,7 +764,8 @@ class Graph {
                 const std::vector<NodeArg*>& input_args,
                 const std::vector<NodeArg*>& output_args,
                 const NodeAttributes* attributes = nullptr,
-                const std::string& domain = "");
+                const std::string& domain = "", 
+                const int& priority = 0);
 
   /** Copy a Node and add it to this Graph.
   @param other Node to copy

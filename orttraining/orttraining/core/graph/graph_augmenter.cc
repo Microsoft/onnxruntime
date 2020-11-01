@@ -73,7 +73,8 @@ Status GraphAugmenter::AugmentGraph(Graph& graph,
                   input_args,
                   output_args,
                   &node_def.attributes,
-                  node_def.domain);
+                  node_def.domain, 
+                  node_def.priority_);
   }
 
   // Add new inputs to the graph.

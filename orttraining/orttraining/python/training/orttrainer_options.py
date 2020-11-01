@@ -84,7 +84,7 @@ class ORTTrainerOptions(object):
                                 'stage': {
                                     'type': 'integer',
                                     'min': 0,
-                                    'max': 1,
+                                    'max': 2,
                                     'default': 0
                                 },
                             }

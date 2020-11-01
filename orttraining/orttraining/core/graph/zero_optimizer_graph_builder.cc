@@ -1,11 +1,19 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <iostream>
+#include <fstream>
+
+#include <queue>
+
+#include "onnx/defs/attr_proto_util.h"
+
 #include "orttraining/core/graph/zero_optimizer_graph_builder.h"
 
 #include "core/common/common.h"
 #include "core/framework/tensorprotoutils.h"
 #include "core/graph/graph.h"
+#include "core/graph/graph_viewer.h"
 #include "orttraining/core/graph/graph_augmenter.h"
 
 namespace onnxruntime {
@@ -17,6 +25,126 @@ static bool IsNcclAvailable() {
 #else
   return false;
 #endif
+}
+
+/*
+Utility function. The number of paritions (workers) needed to partition a given vector of tensor sizes(size_arr), where the total tensor size cannot be larger than a given number (max_len)
+Inputs
+  size_arr: A vector of integers, each element in the vector is a tensor size
+  max_len: The total tensor size of each parition cannot be larger than the max_len
+  partitions: The vector to store the index of element in size_arr, where that element is the last element in the current partition. 
+Return value:
+  num_workers: The number of partitiones (workers) needed
+*/
+static int NumberOfWorkers(const std::vector<int64_t>& size_arr, int64_t max_len, std::vector<int64_t>& partitions) {
+  int64_t total = 0;
+  int num_workers = 1;
+  int64_t idx = 0;
+  partitions.clear();
+  for (auto i : size_arr) {
+    total += i;
+    if (total > max_len) {
+      total = i;
+      partitions.push_back(idx - 1);
+      num_workers += 1;
+    }
+    idx += 1;
+  }
+  //The last index, enforce that the size_arr is not an empty vector
+  ORT_ENFORCE(idx > 0);
+  partitions.push_back(idx - 1);
+  return num_workers;
+}
+
+//Binary search to find the most even partition of gradients cross workers
+
+//size_arr: The vector of gradient tensor sizes. Each element is the size of a gradient.
+//dp_group: The number of ranks to partition the gradients into
+//max_size: The biggest gradient size in the tensors to be partitioned. I.e., the largest number in size_arr.
+//total_size: The total size of all gradient tensors added together
+//return: lo: The total tensor size of the maximum partitioned group
+
+//In the each iteration of the algorithm, it finds the number of workers needed for the size_arr, given the max length of each partition to be the average of lower(lo) and higher (hi) bounds.
+//If the number of workers is less than the data parallel groups (dp_group), it updates the higher bound (hi) to be the current average, and goes to the next iteration.
+//Else it is a invalid partition, increase the lower bounds by 1, goest to next iteration
+//The algorithm terminates until lo >= hi
+
+static int64_t WorkersPartition(const std::vector<int64_t>& size_arr, int dp_group, int64_t max_size, int64_t total_size, std::vector<int64_t>& partitions) {
+  int64_t lo = max_size;
+  int64_t hi = total_size;
+  int64_t mid = lo + (hi - lo) / 2;
+  std::vector<int64_t> tmp_partitions;
+
+  while (lo < hi) {
+    mid = lo + (hi - lo) / 2;
+    //Collect the number of workers needed given each partition cannot not exceeding
+    int num_workers = NumberOfWorkers(size_arr, mid, tmp_partitions);
+    // find better optimum in lower half. Here mid is included because we may not get anything better
+    if (num_workers <= dp_group) {
+      hi = mid;
+      partitions = tmp_partitions;
+    } else {
+      //find better optimum in upper half. Here mid is excluded because it gives required workers > dp_group, which is invalid
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
+static Status AddNcclReduceForGradients(
+    const NodeArgNameGeneratorFn& nodearg_name_generator,
+    std::vector<ArgDef>& gradient_argdefs,
+    std::vector<int64_t>& partitions,
+    std::vector<OptimizerNodeConfig>& opt_configs,
+    const OptimizerGraphConfig& opt_graph_config,
+    GraphAugmenter::GraphDefs& graph_defs,
+    std::vector<ArgDef>& output_readies) {
+  const int data_parallel_group_rank = opt_graph_config.data_parallel_group_rank;
+  ArgDef old_reduce_output;
+  for (int i = 0; i < static_cast<int>(partitions.size()); ++i) {
+    int64_t ub = partitions[i];
+    int64_t lb = i == 0 ? 0 : partitions[i - 1] + 1;
+    bool current_rank = (i == data_parallel_group_rank);
+    std::vector<ArgDef> reduce_outputs;
+    std::vector<ArgDef> reduce_inputs;
+
+    auto node_name = nodearg_name_generator("NcclReduce");
+    ArgDef reduce_output(node_name + "Fake_Reduce_Out");
+
+    for (int64_t j = lb; j <= ub; ++j) {
+      reduce_inputs.push_back(gradient_argdefs[j]);
+      if (current_rank) {
+        reduce_output = ArgDef(gradient_argdefs[j].name + "_Reduce_Out", gradient_argdefs[j].type_proto);
+        reduce_outputs.push_back(reduce_output);
+        gradient_argdefs[j] = reduce_output;
+        opt_configs[j].enabled = true;
+      } else {
+        opt_configs[j].enabled = false;
+      }
+    }
+    if (!current_rank) {
+      reduce_outputs.push_back(reduce_output);
+    }
+    if (i > 0) {
+      //fake data edge to enforce dependence
+      reduce_inputs.push_back(old_reduce_output);
+    }
+    old_reduce_output = reduce_outputs[0];
+    int64_t has_old_reduce = i > 0;
+
+    std::vector<AttributeProto> attributes({onnx::MakeAttribute("root_rank", int64_t(i)),
+                                            onnx::MakeAttribute("num_input_readies", has_old_reduce)});  //,
+    auto nd = NodeDef(OpDef{"NcclReduce", kMSDomain, 1},
+                      reduce_inputs,
+                      reduce_outputs,
+                      attributes,
+                      node_name);
+    nd.SetPriority(-1);
+    graph_defs.AddNodeDefs({nd});
+
+    output_readies.push_back(reduce_outputs[0]);
+  }
+  return Status::OK();
 }
 
 static Status AddNcclReduceScatterForGradients(
@@ -40,8 +168,12 @@ static Status AddNcclReduceScatterForGradients(
 }
 
 static Status AddNcclAllGatherForWeights(
+    std::vector<ArgDef>& input_readies,
+    std::vector<int64_t>& partitions,
     std::vector<ArgDef>& weight_argdefs,
-    GraphAugmenter::GraphDefs& graph_defs) {
+    GraphAugmenter::GraphDefs& graph_defs,
+    int64_t max_group_size_val,
+    const bool partition_even) {
   std::vector<ArgDef> allgather_outputs(weight_argdefs.size());
   for (size_t i = 0; i < weight_argdefs.size(); i++) {
     allgather_outputs[i] = ArgDef(weight_argdefs[i].name + "_AllGather_Out",
@@ -49,17 +181,31 @@ static Status AddNcclAllGatherForWeights(
   }
 
   // Add NCCL AllGather node.
-  graph_defs.AddNodeDefs({NodeDef(OpDef{"NcclAllGather", kMSDomain, 1},
-                                  weight_argdefs,
-                                  allgather_outputs,
-                                  NodeAttributes(),
-                                  "NcclAllGather")});
+  if (partition_even) {
+    graph_defs.AddNodeDefs({NodeDef(OpDef{"NcclAllGather", kMSDomain, 1},
+                                    weight_argdefs,
+                                    allgather_outputs,
+                                    NodeAttributes(),
+                                    "NcclAllGather")});
+  } else {
+    auto partition = onnx::MakeAttribute("partition", partitions);
+    auto max_group_size = onnx::MakeAttribute("max_group_size", int64_t(max_group_size_val));
+    auto num_input_readies = onnx::MakeAttribute("num_input_readies", int64_t(input_readies.size()));
+    std::vector<ArgDef> inputs = weight_argdefs;
+    inputs.insert(inputs.end(), input_readies.begin(), input_readies.end());
+    graph_defs.AddNodeDefs({NodeDef(OpDef{"NcclAllGather", kMSDomain, 1},
+                                    inputs,
+                                    allgather_outputs,
+                                    {partition, max_group_size, num_input_readies},
+                                    "NcclAllGather")});
+  }
 
   weight_argdefs = std::move(allgather_outputs);
   return Status::OK();
 }
 
 static Status AddL2NormNcclAllReduce(
+    std::vector<ArgDef>& input_readies,
     ArgDef& norm_argdef,
     GraphAugmenter::GraphDefs& graph_defs) {
   // Square the L2 norm.
@@ -74,11 +220,13 @@ static Status AddL2NormNcclAllReduce(
                                   norm_squared.name)});
 
   // AllReduce the squared L2 norms.
+  std::vector<ArgDef> inputs({norm_argdef});
+  inputs.insert(inputs.end(), input_readies.begin(), input_readies.end());
   ArgDef allreduce_output(norm_argdef.name + "_AllReduce_Out", norm_argdef.type_proto);
   graph_defs.AddNodeDefs({NodeDef(OpDef{"NcclAllReduce", kMSDomain, 1},
-                                  {norm_squared},
+                                  inputs,
                                   {allreduce_output},
-                                  NodeAttributes(),
+                                  {onnx::MakeAttribute("num_input_readies", int64_t(input_readies.size()))},
                                   allreduce_output.name)});
 
   // Sqrt the reduced L2 norm.
@@ -163,6 +311,36 @@ static Status AddViewForParameters(
 
     opt_configs.push_back(new_config);
   }
+
+  return Status::OK();
+}
+
+static Status ModifyParametersForOptimizerPartitioningByBoundary(
+    const OptimizerGraphConfig& opt_graph_config,
+    std::vector<ArgDef>& gradient_argdefs,
+    std::vector<int64_t>& partitions,
+    int64_t& max_group_size) {
+  std::vector<int64_t> size_arr;
+  int64_t max_size = 0;
+  int64_t total_size = 0;
+  for (const auto& gradient_argdef : gradient_argdefs) {
+    ORT_ENFORCE(gradient_argdef.type_proto != nullptr);
+    const auto& gradient_shape_proto = gradient_argdef.type_proto->tensor_type().shape();
+    const TensorShape& gradient_shape = utils::GetTensorShapeFromTensorShapeProto(gradient_shape_proto);
+
+    total_size += gradient_shape.Size();
+    ORT_ENFORCE(total_size > 0);
+    if (max_size < gradient_shape.Size()) max_size = gradient_shape.Size();
+    size_arr.push_back(gradient_shape.Size());
+  }
+
+  //Bucketing the gradients on boundary
+  const int dp_group = opt_graph_config.data_parallel_group_size;
+  max_group_size = WorkersPartition(size_arr, dp_group, max_size, total_size, partitions);
+  //The partitions have to be the same (TODO: smaller ?) as the data parallel group size
+  ORT_ENFORCE((int)(partitions.size()) == dp_group);
+  //The last element in partitons index should be the last index of gradients
+  ORT_ENFORCE(partitions.back() == int(gradient_argdefs.size() - 1));
 
   return Status::OK();
 }
@@ -284,13 +462,51 @@ static std::vector<ArgDef> GetGradientNormInputs(
   return inputs;
 }
 
+static Status GetGradientArgsInTopoOrder(
+    Graph& graph,
+    std::vector<ArgDef>& weight_argdefs,
+    std::vector<OptimizerNodeConfig>& opt_configs,
+    std::vector<ArgDef>& gradient_argdefs) {
+  GraphViewer gv(graph);
+  const auto& node_indices = gv.GetNodesInTopologicalOrder(ExecutionOrder::PRIORITY_BASED);
+  std::vector<std::string> gradient_names;
+  for (auto& g_argdef : gradient_argdefs) {
+    gradient_names.push_back(g_argdef.name);
+  }
+
+  std::vector<ArgDef> weight_argdefs_in_topo_order;
+  std::vector<ArgDef> gradient_argdefs_in_topo_order;
+  std::vector<OptimizerNodeConfig> opt_configs_in_topo_order;
+
+  for (auto& n_idx : node_indices) {
+    auto n_output_defs = gv.GetNode(n_idx)->OutputDefs();
+    for (const auto* output_def : n_output_defs) {
+      auto itr = std::find(gradient_names.begin(), gradient_names.end(), output_def->Name());
+      if (itr != gradient_names.end()) {
+        gradient_argdefs_in_topo_order.push_back(gradient_argdefs.at(std::distance(gradient_names.begin(), itr)));
+        weight_argdefs_in_topo_order.push_back(weight_argdefs.at(std::distance(gradient_names.begin(), itr)));
+        opt_configs_in_topo_order.push_back(opt_configs.at(std::distance(gradient_names.begin(), itr)));
+      }
+    }
+  }
+
+  ORT_ENFORCE(gradient_argdefs_in_topo_order.size() == gradient_argdefs.size());
+  ORT_ENFORCE(weight_argdefs_in_topo_order.size() == gradient_argdefs.size());
+  ORT_ENFORCE(opt_configs_in_topo_order.size() == opt_configs.size());
+  gradient_argdefs = std::move(gradient_argdefs_in_topo_order);
+  weight_argdefs = std::move(weight_argdefs_in_topo_order);
+  opt_configs = std::move(opt_configs_in_topo_order);
+  return Status::OK();
+}
+
 ZeROOptimizerGraphBuilder::ZeROOptimizerGraphBuilder(
     const OptimizerBuilderRegistry& opt_builder_registry,
     const OptimizerGraphConfig& opt_graph_config,
     const std::unordered_map<std::string, OptimizerNodeConfig>& weight_names_to_opt_configs)
     : OptimizerGraphBuilder(opt_builder_registry,
                             opt_graph_config,
-                            weight_names_to_opt_configs) {
+                            weight_names_to_opt_configs),
+      stage_(opt_graph_config.deepspeed_zero.stage) {
   ORT_ENFORCE(opt_graph_config.data_parallel_group_size > 1, "ZeRO optimizer graph builder can only be used for distributed training.");
   ORT_ENFORCE(opt_graph_config.use_nccl, "Distributed training with ZeRO is only supported with NCCL.");
   ORT_ENFORCE(IsNcclAvailable(), "Distributed training with NCCL is not supported, as NCCL is not enabled in this build.");
@@ -303,24 +519,45 @@ Status ZeROOptimizerGraphBuilder::BuildInternal(
     std::vector<ArgDef>& gradient_argdefs,
     std::unordered_set<std::string>& optimizer_state_initializer_names,
     OptimizerOutputKeyMap<std::string>& optimizer_graph_outputs) {
+  std::vector<int64_t> partitions;            //The vector to hold the partition result of gradient tensors. For stage=1, it should be empty
+  std::vector<ArgDef> reduce_output_readies;  //The vector to hold nodes to enforce the same order for reduce nodes. This should be empty for stage 1
+  int64_t max_group_size = 0;
+
+  ORT_ENFORCE(stage_ == 1 || stage_ == 2);
+  if (stage_ == 2) {
+    ORT_ENFORCE(opt_graph_config_.gradient_accumulation_steps == 1);
+  }
+
   auto nodearg_name_generator = [&graph](const std::string& base_name) {
     return graph.GenerateNodeArgName(base_name);
   };
 
-  // handle optimizer partitioning
-  ORT_RETURN_IF_ERROR(ModifyParametersForOptimizerPartitioning(
-      graph, graph_defs, opt_graph_config_, opt_configs_, weight_argdefs, gradient_argdefs));
+  if (stage_ == 1) {
+    // handle optimizer partitioning
+    ORT_RETURN_IF_ERROR(ModifyParametersForOptimizerPartitioning(
+        graph, graph_defs, opt_graph_config_, opt_configs_, weight_argdefs, gradient_argdefs));
+  } else {
+    //Get gradients in topological order, updates the weight, gradients and opt_configs_ following that order
+    ORT_RETURN_IF_ERROR(GetGradientArgsInTopoOrder(graph, weight_argdefs, opt_configs_, gradient_argdefs));
 
-  // add gradient scaling
+    // handle optimizer partitioning
+    ORT_RETURN_IF_ERROR(ModifyParametersForOptimizerPartitioningByBoundary(opt_graph_config_, gradient_argdefs, partitions, max_group_size));
+  }
+
   ArgDef fused_gradient_argdef;
   const auto total_num_accumulations = opt_graph_config_.gradient_accumulation_steps * opt_graph_config_.data_parallel_group_size;
   ORT_RETURN_IF_NOT(total_num_accumulations > 0);
   const float scale = 1.0f / total_num_accumulations;
   ORT_RETURN_IF_ERROR(AddGradientScalingNodes(nodearg_name_generator, scale, gradient_argdefs, fused_gradient_argdef, graph_defs,
-                                              opt_graph_config_.AllReduceDataType(), false));
+                                              opt_graph_config_.AllReduceDataType(), false, partitions));
 
-  // add Reducescatter for gradients
-  ORT_RETURN_IF_ERROR(AddNcclReduceScatterForGradients(gradient_argdefs, graph_defs));
+  if (stage_ == 1) {
+    // add Reducescatter for gradients;
+    ORT_RETURN_IF_ERROR(AddNcclReduceScatterForGradients(gradient_argdefs, graph_defs));
+  } else {
+    //add Reduce for gradients, update the "enabled" flag in opt_configs_ based on rank. Update the gradient args to reduce outputs
+    ORT_RETURN_IF_ERROR(AddNcclReduceForGradients(nodearg_name_generator, gradient_argdefs, partitions, opt_configs_, opt_graph_config_, graph_defs, reduce_output_readies));
+  }
 
   // check if all gradients are finite
   ArgDef global_grad_norm_argdef;
@@ -331,7 +568,7 @@ Status ZeROOptimizerGraphBuilder::BuildInternal(
         nodearg_name_generator, gradient_norm_inputs, graph_defs, global_grad_norm_argdef));
     optimizer_graph_outputs[OptimizerOutputKey::GlobalGradientNorm] = global_grad_norm_argdef.name;
 
-    ORT_RETURN_IF_ERROR(AddL2NormNcclAllReduce(global_grad_norm_argdef, graph_defs));
+    ORT_RETURN_IF_ERROR(AddL2NormNcclAllReduce(reduce_output_readies, global_grad_norm_argdef, graph_defs));
 
     ORT_RETURN_IF_ERROR(AddFiniteGradientCheck(
         nodearg_name_generator, {global_grad_norm_argdef}, graph_defs, global_grad_norm_finite_argdef));
@@ -347,7 +584,8 @@ Status ZeROOptimizerGraphBuilder::BuildInternal(
       optimizer_state_initializer_names));
 
   // add Allgather for weights
-  ORT_RETURN_IF_ERROR(AddNcclAllGatherForWeights(weight_argdefs, graph_defs));
+  bool partition_even = (stage_ == 1);
+  ORT_RETURN_IF_ERROR(AddNcclAllGatherForWeights(reduce_output_readies, partitions, weight_argdefs, graph_defs, max_group_size, partition_even));
 
   return Status::OK();
 }

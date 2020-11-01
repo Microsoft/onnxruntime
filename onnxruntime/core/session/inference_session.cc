@@ -1116,7 +1116,8 @@ common::Status InferenceSession::Initialize() {
         data_transfer_mgr_,
         *session_logger_,
         session_profiler_,
-        session_options_.use_deterministic_compute);
+        session_options_.use_deterministic_compute,
+        session_options_.local_rank);
 
     onnxruntime::Graph& graph = model_->MainGraph();
 

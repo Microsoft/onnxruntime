@@ -147,10 +147,11 @@ class PlannerImpl {
 
     // This is initialized to -1 to ensure that if ProcessDef is somehow not called, planning
     // will fail more cleanly.  This is also used as a temporary workaround to detect the
-    // case that the DML provider has removed initilizers from the graph during partitioning. 
-    // Removing initializers is a temporary measure needed to limit the number of copies of 
+    // case that the DML provider has removed initilizers from the graph during partitioning.
+    // Removing initializers is a temporary measure needed to limit the number of copies of
     // tensors in GPU memory.
-    OrtValueIndex reused_buffer_index = -1;  // index of original buffer to reuse
+    OrtValueIndex reused_buffer_index = -1;          // index of original buffer to reuse
+    OrtValueIndex inplace_reused_buffer_index = -1;  // index of original buffer to reuse inplace
   };
 
   // ort_value_info_ is indexed by an OrtValueIndex
@@ -189,6 +190,11 @@ class PlannerImpl {
     return use_count;
   }
 
+  OrtValueIndex& InplaceBuffer(OrtValueIndex n) {
+    ORT_ENFORCE(n >= 0 && static_cast<size_t>(n) < ort_value_info_.size());
+    return ort_value_info_[n].inplace_reused_buffer_index;
+  }
+
   OrtValueIndex& Buffer(OrtValueIndex n) {
     ORT_ENFORCE(n >= 0 && static_cast<size_t>(n) < ort_value_info_.size());
     return ort_value_info_[n].reused_buffer_index;
@@ -206,7 +212,9 @@ class PlannerImpl {
     ORT_ENFORCE(id >= 0 && static_cast<size_t>(id) < ort_value_info_.size());
     OrtValueInfo& info = ort_value_info_[id];
     info.usecount = 0;
-    info.reused_buffer_index = id;  // initially, no reuse; the ml-value uses its own buffer
+    info.reused_buffer_index = id;          // initially, no reuse; the ml-value uses its own buffer
+    info.inplace_reused_buffer_index = id;  // initially, no reuse; the ml-value uses its own buffer
+
     info.p_def_site = p_def_site;
   }
 
@@ -224,6 +232,13 @@ class PlannerImpl {
     auto& symplan = AllocPlan(reused_for);
     symplan.alloc_kind = alloc_kind;
     symplan.reused_buffer = original;
+  }
+
+  void InplaceReuse(OrtValueIndex reused, OrtValueIndex reused_for) {
+    ORT_ENFORCE(reused != reused_for);
+    OrtValueIndex original = InplaceBuffer(reused);
+    InplaceBuffer(reused_for) = original;
+    AllocPlan(reused_for).inplace_reuse = original;
   }
 
   // Find if there exists some input tensor that we can use in-place for output_arg_num-th input in the node.
@@ -534,10 +549,17 @@ class PlannerImpl {
       ORT_RETURN_IF_ERROR(status);
     }
     for (size_t i = 0; i != locations.size(); ++i) {
+      size_t max_pc = plan_.execution_plan.size();
       const std::vector<OrtMemoryInfo>& loc = locations[i];
       if (loc.empty()) continue;
       plan_.allocation_plan[i].alloc_kind = AllocKind::kAllocateStatically;
+      std::string node_arg_name;
+      ort_value_name_idx_map_.GetName(static_cast<int>(i), node_arg_name);
+      auto node_arg = graph_viewer_.GetNodeArg(node_arg_name);
+      plan_.allocation_plan[i].value_type = utils::GetMLDataType(*node_arg);
       plan_.allocation_plan[i].location = loc[0];
+      plan_.allocation_plan[i].life_interval = std::pair<size_t, size_t>(0, max_pc);
+      plan_.allocation_plan[i].allocate_interval = std::pair<size_t, size_t>(0, max_pc);
       for (size_t j = 0; j != loc.size(); ++j) {
         if (loc[j] != loc[0]) {
           // set the location to CPU
@@ -552,14 +574,22 @@ class PlannerImpl {
   // Should only be used after ProcessDef()
   Status ComputeReusePlan() {
     std::vector<SequentialExecutionPlan::NodeExecutionPlan>& execution_plan(plan_.execution_plan);
+    //copy the usecounts to an vector, before computing reuse
+    std::vector<int> ort_value_usecount;
+    for (size_t i = 0; i < ort_value_info_.size(); ++i) {
+      ort_value_usecount.push_back(ort_value_info_[i].usecount);
+    }
 
     // Identify allocation/deallocation plan for every ml-value
 
     auto setup_preexisting = [this](const NodeArg* node_arg) {
+      size_t max_pc = plan_.execution_plan.size();
       auto input_index = Index(node_arg->Name());
       AllocPlanPerValue& thisplan = AllocPlan(input_index);
       thisplan.alloc_kind = AllocKind::kPreExisting;
       thisplan.value_type = utils::GetMLDataType(*node_arg);
+      thisplan.allocate_interval = std::pair<size_t, size_t>(0, max_pc);
+      thisplan.life_interval = std::pair<size_t, size_t>(0, max_pc);
     };
 
     // inputs of the graph:
@@ -595,12 +625,16 @@ class PlannerImpl {
         // OrtValue index of the considered output NodeArg.
         const auto current = Index(node_output->Name());
         AllocPlan(current).value_type = utils::GetMLDataType(*node_output);
+        AllocPlan(current).life_interval.first = program_counter;
+        AllocPlan(current).allocate_interval.first = program_counter;
         // Declare OrtValue index of the reused buffer.
         // The the OrtValue indexed by current may reuse the memory in the OrtValue indexed by reused.
         OrtValueIndex reused;
         if (std::find(graph_outputs.begin(), graph_outputs.end(), node_output) != graph_outputs.end()) {
           // node_output is graph's output, so we can't reuse intermediate buffer
           AllocPlan(current).alloc_kind = AllocKind::kAllocateOutput;
+          AllocPlan(current).life_interval.second = execution_plan.size();
+          AllocPlan(current).allocate_interval.second = execution_plan.size();
 
           // hacky perf optimization to not copy a pre-existing value to an output if this is a Loop subgraph and
           // the value is not being changed in the subgraph.
@@ -639,7 +673,9 @@ class PlannerImpl {
           AllocPlan(current).alloc_kind = AllocKind::kAllocate;
         } else if (FindReusableInput(*pnode, static_cast<int>(output_arg_def_index), &reused)) {
           // Reuse one of this node's input buffers as the output buffer (for in-place update)
+          //In this case, we dont kill the "reused" tensor
           Reuse(reused, current, AllocKind::kReuse);
+          InplaceReuse(reused, current);
         } else if (!context_.IsParallelExecutionEnabled() &&
                    FindReusableTensor(*node_output, &reused)) {
           // Reuse an available (dead) buffer for this output, this is only for sequential execution.
@@ -654,22 +690,38 @@ class PlannerImpl {
       for (auto node_input : pnode->InputDefs()) {
         if (node_input->Exists()) {
           auto& sym = node_input->Name();
+          auto current = Index(sym);
           auto original = Buffer(Index(sym));
           // The index will be -1 if it's an initializer that was removed as part of a temporary workaround.
           // See comments in the OrtValueInfo definition.
-          if ((original != -1) && (0 == DecrementUseCount(original)))
+          // Compute lifetime
+          if ((current != -1) && (0 == --ort_value_usecount[current])) {
+            AllocPlan(current).life_interval.second = program_counter;
+          }
+          if ((original != -1) && (0 == DecrementUseCount(original))) {
             freelist_.push_front(FreeBufferInfo(original, program_counter));
+            AllocPlan(original).allocate_interval.second = program_counter;
+          }
         }
       }
 
       for (auto node_input : pnode->ImplicitInputDefs()) {
         if (node_input->Exists()) {
           auto& sym = node_input->Name();
+          auto current = Index(sym);
           auto original = Buffer(Index(sym));
           // The index will be -1 if it's an initializer that was removed as part of a temporary workaround.
           // See comments in the OrtValueInfo definition.
-          if ((original != -1) && (0 == DecrementUseCount(original)))
+          // Compute lifetime
+          if ((current != -1) && (0 == --ort_value_usecount[current])) {
+            AllocPlan(current).life_interval.second = program_counter;
+          }
+          // The index will be -1 if it's an initializer that was removed as part of a temporary workaround.
+          // See comments in the OrtValueInfo definition.
+          if ((original != -1) && (0 == DecrementUseCount(original))) {
             freelist_.push_front(FreeBufferInfo(original, program_counter));
+            AllocPlan(original).allocate_interval.second = program_counter;
+          }
         }
       }
 
@@ -677,18 +729,27 @@ class PlannerImpl {
       for (auto node_output : pnode->OutputDefs()) {
         if (node_output->Exists()) {
           auto& sym = node_output->Name();
+          auto current = Index(sym);
           auto original = Buffer(Index(sym));
-          if (0 == DecrementUseCount(original))
+          // The index will be -1 if it's an initializer that was removed as part of a temporary workaround.
+          // See comments in the OrtValueInfo definition.
+          if ((current != -1) && (0 == --ort_value_usecount[current])) {
+            AllocPlan(current).life_interval.second = program_counter;
+          }
+          if (0 == DecrementUseCount(original)) {
             freelist_.push_front(FreeBufferInfo(original, program_counter));
+            AllocPlan(original).allocate_interval.second = program_counter;
+          }
         }
       }
     }
     return Status::OK();
-  }
+  }  // namespace onnxruntime
 
   // Whether a given NodeArg has fence or not.
   // If the buffer is reused, need to check whether original OrtValue has fence or not.
-  bool HasFence(const onnxruntime::NodeArg* arg) {
+  bool
+  HasFence(const onnxruntime::NodeArg* arg) {
     bool has_fence = false;
     if (arg && arg->Exists()) {
       OrtValueIndex index = Index(arg->Name());
@@ -765,6 +826,37 @@ class PlannerImpl {
     auto& type_proto = ONNX_NAMESPACE::Utils::DataTypeUtils::ToTypeProto(ptype);
     return !utils::HasTensorType(type_proto);
   }
+
+  //For reuse tensors, the alloc-time is equal to the allocate time of the allocated tensor
+  void AdjustAllocateIntervals() {
+    for (size_t i = 0; i < ort_value_info_.size(); ++i) {
+      if (OrtValueIndex(i) != ort_value_info_[i].reused_buffer_index) {
+        AllocPlan(OrtValueIndex(i)).allocate_interval = AllocPlan(ort_value_info_[i].reused_buffer_index).allocate_interval;
+      }
+    }
+  }
+
+  //For in-place reuse tensors, the lifetime is the union of all the tensor that tensors that use that buffer
+  void AdjustInplaceLifeIntervals() {
+    std::unordered_map<OrtValueIndex, std::vector<OrtValueIndex>> inplace_reuse_buffer;
+    for (size_t i = 0; i < ort_value_info_.size(); ++i) {
+      if (AllocPlan(OrtValueIndex(i)).inplace_reuse != OrtValueIndex(i)) {
+        inplace_reuse_buffer[ort_value_info_[i].inplace_reused_buffer_index].push_back(OrtValueIndex(i));
+      }
+    }
+    for (const auto& item : inplace_reuse_buffer) {
+      IntervalT& lifetime = AllocPlan(item.first).life_interval;
+      for (const auto& value : item.second) {
+        auto start = AllocPlan(value).life_interval.first;
+        auto end = AllocPlan(value).life_interval.second;
+        lifetime.first = lifetime.first < start ? lifetime.first : start;
+        lifetime.second = lifetime.second > end ? lifetime.second : end;
+      }
+      for (const auto& value : item.second) {
+        AllocPlan(value).life_interval = lifetime;
+      }
+    }
+  }
 };  // namespace onnxruntime
 
 Status PlannerImpl::CreatePlan() {
@@ -788,6 +880,10 @@ Status PlannerImpl::CreatePlan() {
 
   // Determine nodes that need fence check. This needs to be done after ComputeUseCounts and ComputeReusePlan.
   ORT_RETURN_IF_ERROR(ComputeFenceCheck());
+
+  //Adjust the allocate and lifetime intervals for all ml-values, based on their allocation kind.
+  AdjustAllocateIntervals();
+  AdjustInplaceLifeIntervals();
 
   // convert information in the freelist_ into a deallocation plan in required format
   GenerateDeallocationPlan();

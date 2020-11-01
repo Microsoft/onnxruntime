@@ -14,6 +14,7 @@ namespace onnxruntime {
 class ExecutionPlanBase;
 class SessionState;
 class MemBuffer;
+struct MemoryPatternGroup;
 
 class ITensorAllocator {
  public:
@@ -43,6 +44,8 @@ class ITensorAllocator {
    */
   virtual common::Status GetPreallocatedBuffer(int ort_value_index, const char* name,
                                                std::unique_ptr<MemBuffer>& out) = 0;
+
+  virtual const MemoryPatternGroup& GetMemPatterns() = 0;
   /**
    * Reserve memory for ort_value_index
    */

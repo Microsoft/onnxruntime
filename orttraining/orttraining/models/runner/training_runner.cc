@@ -33,26 +33,27 @@ namespace training {
 
 static std::vector<FreeDimensionOverride> overrides = {};
 static SessionOptions SESSION_OPTION = {
-    ExecutionMode::ORT_SEQUENTIAL,     //execution_mode
-    ExecutionOrder::PRIORITY_BASED,    //execution_order
-    false,                             //enable_profiling
-    ORT_TSTR(""),                      //optimized_model_filepath
-    true,                              //enable_mem_pattern
-    true,                              //enable_cpu_mem_arena
-    ORT_TSTR("onnxruntime_profile_"),  //profile_file_prefix
-    "",                                //session_logid
-    -1,                                //session_log_severity_level
-    0,                                 //session_log_verbosity_level
-    5,                                 //max_num_graph_transformation_steps
-    TransformerLevel::Level1,          //graph_optimization_level
-    {},                                //intra_op_param
-    {},                                //inter_op_param
-    overrides,                         //free_dimension_overrides
-    true,                              //use_per_session_threads
-    true,                              //thread_pool_allow_spinning
-    false,                             //use_deterministic_compute
-    {},                                //session_configurations
-    {},                                // initializers_to_share_map
+    ExecutionMode::ORT_SEQUENTIAL,             //execution_mode
+    ExecutionOrder::PRIORITY_BASED,            //execution_order
+    false,                                     //enable_profiling
+    ORT_TSTR(""),                              //optimized_model_filepath
+    false,                                      //enable_mem_pattern
+    true,                                      //enable_cpu_mem_arena
+    ORT_TSTR("onnxruntime_profile_"),          //profile_file_prefix
+    "",                                        //session_logid
+    -1,                                        //session_log_severity_level
+    0,                                         //session_log_verbosity_level
+    5,                                         //max_num_graph_transformation_steps
+    TransformerLevel::Level1,                  //graph_optimization_level
+    {},                                        //intra_op_param
+    {},                                        //inter_op_param
+    overrides,                                 //free_dimension_overrides
+    true,                                      //use_per_session_threads
+    true,                                      //thread_pool_allow_spinning
+    false,                                     //use_deterministic_compute
+    {},                                        //session_configurations
+    {},                                        // initializers_to_share_map
+    MPIContext::GetInstance().GetLocalRank(),  //local_rank
 };
 
 TrainingRunner::TrainingRunner(Parameters params, const Environment& env)
@@ -77,6 +78,9 @@ TrainingRunner::TrainingRunner(Parameters params, const Environment& env, Sessio
   if (params.deepspeed_zero.stage != 0)
     ORT_ENFORCE(params.use_nccl,
                 "DeepSpeed ZeRO partitioning is only supported with NCCL distributed training.");
+  if(params.deepspeed_zero.stage > 1)
+    ORT_ENFORCE(params.gradient_accumulation_steps == 1,
+                "DeepSpeed ZeRO stage 2 is only supported with accumulation step == 1.");
   ORT_ENFORCE(params.num_train_steps % params.gradient_accumulation_steps == 0,
               "Number of training steps must be a multiple of number of gradient accumulation step.");
 }
@@ -549,15 +553,15 @@ void TrainingRunner::RunWithUpdate(VectorString& feed_names,
 
     pipeline_worker_pool_.workers[worker_id] = std::thread([&](const size_t worker_id, const size_t step) {
       try {
-  #ifdef ENABLE_NVTX_PROFILE
+#ifdef ENABLE_NVTX_PROFILE
         // Store the tag for the thread which runs session_.Run(...).
         // It will be used to name range in Nvidia's visual profiler.
         auto& profile_context = profile::Context::GetInstance();
         profile_context.SetThreadTag(
             std::this_thread::get_id(), std::to_string(step));
-  #else
+#else
         ORT_UNUSED_PARAMETER(step);
-  #endif
+#endif
         RunOptions run_options;
         auto status = session_.Run(
             run_options,
@@ -572,7 +576,7 @@ void TrainingRunner::RunWithUpdate(VectorString& feed_names,
         pipeline_worker_pool_.worker_states[worker_id].execution_exception = std::current_exception();
       }
     },
-                                                          worker_id, step_);
+                                                           worker_id, step_);
 
     // Wait all workers to finish this round of pipeline parallelism.
     // The last batch in a pipeline collects gradient and update the model.
@@ -663,15 +667,15 @@ void TrainingRunner::RunWithoutUpdate(VectorString& feed_names,
     // Async launch of a session.
     pipeline_worker_pool_.workers[worker_id] = std::thread([&](const size_t worker_id, const size_t step) {
       try {
-  #ifdef ENABLE_NVTX_PROFILE
+#ifdef ENABLE_NVTX_PROFILE
         // Store the tag for the thread which runs session_.Run(...).
         // It will be used to name range in Nvidia's visual profiler.
         auto& profile_context = profile::Context::GetInstance();
         profile_context.SetThreadTag(
             std::this_thread::get_id(), std::to_string(step));
-  #else
+#else
         ORT_UNUSED_PARAMETER(step);
-  #endif
+#endif
         RunOptions run_options;
         run_options.only_execute_path_to_fetches = true;
         run_options.training_mode = true;
@@ -686,7 +690,7 @@ void TrainingRunner::RunWithoutUpdate(VectorString& feed_names,
         pipeline_worker_pool_.worker_states[worker_id].execution_exception = std::current_exception();
       }
     },
-                                                          worker_id, step_);
+                                                           worker_id, step_);
   } else {
     // Pipeline is not enabled, so we run session using the main thread.
 #ifdef ENABLE_NVTX_PROFILE
@@ -797,6 +801,7 @@ Status TrainingRunner::TrainingLoop(IDataLoader& training_data_loader, IDataLoad
       // loop through the data
       size_t batch_num_cur_shard = training_data->TotalBatch(params_.batch_size);
       for (size_t batch = 0; batch < batch_num_cur_shard && step_ < params_.num_train_steps; ++batch) {
+        session_.GetSessionState().GetMutableMemoryInfo().SetIteration(step_);
         const bool is_weight_update_step = (step_ + 1) % params_.gradient_accumulation_steps == 0;
 
         const bool stablized_perf_measurement_started = step_ >= stabilized_perf_start_step;

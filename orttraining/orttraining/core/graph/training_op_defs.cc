@@ -917,7 +917,6 @@ Example 4:
       .Input(0, "input", "input tensor", "T")
       .Input(1, "input_ready", "one or more bool tensors to wait on", "B", OpSchema::Variadic)
       .Output(0, "output", "output tensor", "T")
-      .Output(1, "output_ready", "output tensor is ready", "B")
       .TypeConstraint("B", {"tensor(bool)"}, "Only bool")
       .TypeConstraint("T", OpSchema::all_tensor_types(), "All Tensor types")
       .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
@@ -932,7 +931,10 @@ Example 4:
       .Attr("group_type", "0 - data parallel group, 1 - horizontal parallel group",
             AttributeProto::INT,
             static_cast<int64_t>(0))
-      .Input(0, "input", "tensors to be reduced", "T", OpSchema::Variadic)
+      .Attr("num_input_readies", "The last num_input_readies of input tensor are the input ready signals current AllReduce node depends on. default value is 0, means no input ready signals",
+            AttributeProto::INT,
+            static_cast<int64_t>(0))
+      .Input(0, "input", "tensors to be reduced", "T", OpSchema::Variadic, false)
       .Output(0, "output", "reduced tensors", "T", OpSchema::Variadic)
       .TypeConstraint(
           "T",
@@ -946,6 +948,14 @@ Example 4:
       .SetDomain(kMSDomain)
       .SinceVersion(1)
       .Attr("group_type", "0 - data parallel group, 1 - horizontal parallel group",
+            AttributeProto::INT,
+            static_cast<int64_t>(0))
+      .Attr("max_group_size", "If partition by boundary, the largest bucket size",
+            AttributeProto::INT,
+            static_cast<int64_t>(0))
+      .Attr("partition", "The vector of partition of the gradients",
+            AttributeProto::INTS, OPTIONAL_VALUE)
+      .Attr("num_input_readies", "The last num_input_readies of input tensor are the input ready signals current AllGather node depends on. default value is 0, means no input ready signals",
             AttributeProto::INT,
             static_cast<int64_t>(0))
       .Input(0, "input", "tensors to be sent", "T", OpSchema::Variadic)
@@ -965,6 +975,24 @@ Example 4:
             AttributeProto::INT,
             static_cast<int64_t>(0))
       .Input(0, "input", "tensors to be reduced and scattered", "T", OpSchema::Variadic)
+      .Output(0, "output", "reduced tensors", "T", OpSchema::Variadic)
+      .TypeConstraint(
+          "T",
+          {"tensor(float16)", "tensor(float)", "tensor(double)"},
+          "Constrain to float, float16 and double tensors.");
+
+  ONNX_CONTRIB_OPERATOR_SCHEMA(NcclReduce)
+      .SetDomain(kMSDomain)
+      .SinceVersion(1)
+      .Attr("group_type", "0 - data parallel group, 1 - horizontal parallel group",
+            AttributeProto::INT,
+            static_cast<int64_t>(0))
+      .Attr("root_rank", "the rank the reduce output is written to",
+            AttributeProto::INT)
+      .Attr("num_input_readies", "The last num_input_readies of input tensor are the input ready signals current AllReduce node depends on. default value is 0, means no input ready signals",
+            AttributeProto::INT,
+            static_cast<int64_t>(0))
+      .Input(0, "input", "tensors to be reduced", "T", OpSchema::Variadic)
       .Output(0, "output", "reduced tensors", "T", OpSchema::Variadic)
       .TypeConstraint(
           "T",
