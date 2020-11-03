@@ -17,6 +17,21 @@ class FusionReshape(Fusion):
         super().__init__(model, "Reshape", "Reshape")
 
     def fuse(self, reshape_node, input_name_to_nodes, output_name_to_node):
+        # Bart model adjustment
+        reshape_path = self.model.match_parent_path(reshape_node, ['Expand', 'Reshape', 'Slice'], [0, 0, 0],
+                                                    output_name_to_node)
+        if reshape_path is not None:
+            expand_node = reshape_path[0]
+            expand_shape_value = self.model.get_constant_value(expand_node.input[1])
+
+            reshape_before_expand = reshape_path[1]
+            shape_value = self.model.get_constant_value(reshape_before_expand.input[1])
+
+            slice_node = reshape_path[2]
+            if expand_shape_value is not None and shape_value is not None and len(expand_shape_value) is 2 and len(
+                    shape_value) is 1 and expand_shape_value[1] == shape_value[0]:
+                reshape_node.input[0] = slice_node.output[0]
+
         if reshape_node.input[1] not in output_name_to_node:
             return
 

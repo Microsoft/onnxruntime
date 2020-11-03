@@ -103,10 +103,10 @@ MODELS = {
     "flaubert/flaubert_base_cased": (["input_ids"], 11, False, "bert"),
     "flaubert/flaubert_large_cased": (["input_ids"], 11, False, "bert"),
     # Bart
-    #"facebook/bart-large": (["input_ids"], 11, False, "bert"),
-    #"facebook/bart-base": (["input_ids"], 11, False, "bert"),
-    #"facebook/bart-large-mnli": (["input_ids"], 11, False, "bert"),
-    #"facebook/bart-large-cnn": (["input_ids"], 11, False, "bert"),
+    "facebook/bart-large": (["input_ids"], 11, False, "bert"),
+    "facebook/bart-base": (["input_ids"], 11, False, "bert"),
+    "facebook/bart-large-mnli": (["input_ids"], 11, False, "bert"),
+    "facebook/bart-large-cnn": (["input_ids"], 11, False, "bert"),
     #"facebook/mbart-large-en-ro": (["input_ids"], 11, True, "bert"),
     # DialoGPT
     "microsoft/DialoGPT-small": (["input_ids"], 11, False, "gpt2"),

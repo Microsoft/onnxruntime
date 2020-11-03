@@ -32,6 +32,10 @@ class FusionSkipLayerNormalization(Fusion):
         if len(self.model.get_parents(add)) != 2:
             return
 
+        gather_node = self.model.match_parent_path(add, ['Gather'], [None])
+        if gather_node is not None:
+            return
+
         if add is not None and add.op_type == 'Add' and self.model.is_safe_to_fuse_nodes(
             [add, node], node.output, input_name_to_nodes, output_name_to_node):
             self.nodes_to_remove.extend([add, node])
@@ -107,4 +111,14 @@ class FusionBiasSkipLayerNormalization(Fusion):
                                     name=self.model.create_node_name("SkipLayerNormalization",
                                                                      "SkipLayerNorm_AddBias_"))
         new_node.domain = "com.microsoft"
+
+        # Pass attribute "epsilon" from layernorm node to SkipLayerNormalization
+        for att in node.attribute:
+            if att.name == 'epsilon':
+                new_node.attribute.extend([att])
+
+        # Set default epsilon if no epsilon exists from layernorm
+        if len(new_node.attribute) == 0:
+            new_node.attribute.extend([helper.make_attribute("epsilon", 1.0E-12)])
+
         self.nodes_to_add.append(new_node)
