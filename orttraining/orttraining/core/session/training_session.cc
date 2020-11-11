@@ -232,6 +232,13 @@ Status TrainingSession::ConfigureForTraining(
     }
   }
 
+  //std::cout << "Trainable weights: " << std::endl;
+  //for (auto itr = trainable_initializers.begin(); itr != trainable_initializers.end(); ++itr) {
+  // std::cout << (*itr) << std::endl;
+  //}
+
+  // ORT_IGNORE_RETURN_VALUE(Save("/opt/m100.onnx", SaveOption::NO_RELOAD));
+
   ORT_RETURN_IF_ERROR(ApplyTransformationsToMainGraph(trainable_initializers, config.graph_transformer_config));
 
   if (IsRootNode(config) && config.model_with_loss_function_path.has_value()) {
@@ -1004,6 +1011,14 @@ std::unordered_set<std::string> TrainingSession::GetStateTensorNames() const {
       opt_state_initializer_names_.begin(), opt_state_initializer_names_.end());
   checkpointed_tensor_names.insert(
       mixed_precision_weight_initializer_names_.begin(), mixed_precision_weight_initializer_names_.end());
+  auto& initializers = GetSessionState().GetInitializedTensors();
+  auto& name_map = GetSessionState().GetOrtValueNameIdxMap();
+  for (auto& kv : initializers) {
+    std::string name;
+    if (name_map.GetName(kv.first, name).IsOK() && name.find("accumulate") != std::string::npos) {
+      checkpointed_tensor_names.insert(name);
+    }
+  }
   return checkpointed_tensor_names;
 }
 
