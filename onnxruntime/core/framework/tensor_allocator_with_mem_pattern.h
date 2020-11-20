@@ -67,6 +67,15 @@ class TensorAllocatorWithMemPattern : public ITensorAllocator {
 
   common::Status FinalizePlan(std::unordered_map<std::string, size_t>& planned_memory_sizes_in_byte) override {
     ORT_RETURN_IF_ERROR(planner_.GeneratePatterns(&mem_patterns_));
+#ifdef ENABLE_TRAINING
+    // Output planned static memory, especially for large model memory footprint analysis.
+    // We have to print here before the immediately next line, which is trying to allocate memory.
+    // For cases initializers cannot be put on one single GPU, we still need know the memory requirement to run it.
+    for (size_t i = 0; i < mem_patterns_.locations.size(); i++) {
+      std::cout << mem_patterns_.locations[i].ToString() << "Allocated memory for initializers, size: "
+                << mem_patterns_.patterns[i].PeakSize() << std::endl;
+    }
+#endif
     ORT_RETURN_IF_ERROR(AllocatePlannedBuffersAndReportTotalSize(planned_memory_sizes_in_byte));
     is_sealed_ = true;
     return Status::OK();

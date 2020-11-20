@@ -394,19 +394,22 @@ Status SessionState::GeneratePatternGroupCache(const std::vector<std::reference_
   }
   std::unordered_map<std::string, int64_t> map;
   ORT_RETURN_IF_ERROR(ResolveDimParams(*graph_viewer_, feeds, map));
+  return GenerateActivationMemoryPatterns(output, map, resolved_shapes);
+}
+
+Status SessionState::GenerateActivationMemoryPatterns(MemoryPatternGroup* output,
+                                                      std::unordered_map<std::string, int64_t>& map,
+                                                      std::unordered_map<int, TensorShape>& resolved_shapes) const {
   auto* exe_plan = GetExecutionPlan();
   ORT_ENFORCE(exe_plan);
   OrtValuePatternPlanner mem_planner(*exe_plan);
-
   // Try to resolve shapes for activations.
-  auto& node_index_info = GetNodeIndexInfo();
   for (auto& node_plan : exe_plan->execution_plan) {
-    int node_index = node_index_info.GetNodeOffset(node_plan.node_index);
     auto* node = graph_viewer_->GetNode(node_plan.node_index);
-    int output_start = node_index + static_cast<int>(node->InputDefs().size()) + static_cast<int>(node->ImplicitInputDefs().size());
 
     for (int i = 0, end = static_cast<int>(node->OutputDefs().size()); i < end; ++i) {
-      const auto ml_value_idx = node_index_info.GetMLValueIndex(output_start + i);
+      int ml_value_idx = NodeIndexInfo::kInvalidEntry;
+      ort_value_name_idx_map_.GetIdx(node->OutputDefs()[i]->Name(), ml_value_idx);
       if (ml_value_idx == NodeIndexInfo::kInvalidEntry)
         continue;
 
@@ -427,7 +430,7 @@ Status SessionState::GeneratePatternGroupCache(const std::vector<std::reference_
     }
   }
 
-  // Allocate activations that want to be laid out contigously in memory.
+  // Allocate activations that want to be laid out contiguously in memory.
   for (auto ml_value_idx : exe_plan->activation_allocation_order) {
     ORT_ENFORCE(ml_value_idx >= 0);
 
@@ -462,12 +465,12 @@ Status SessionState::GeneratePatternGroupCache(const std::vector<std::reference_
 
   // Allocate all other activations.
   for (auto& node_plan : exe_plan->execution_plan) {
-    int node_index = node_index_info.GetNodeOffset(node_plan.node_index);
     auto* node = graph_viewer_->GetNode(node_plan.node_index);
-    int output_start = node_index + static_cast<int>(node->InputDefs().size()) + static_cast<int>(node->ImplicitInputDefs().size());
+
     //allocate output
     for (int i = 0, end = static_cast<int>(node->OutputDefs().size()); i < end; ++i) {
-      const auto ml_value_idx = node_index_info.GetMLValueIndex(output_start + i);
+      int ml_value_idx = NodeIndexInfo::kInvalidEntry;
+      ort_value_name_idx_map_.GetIdx(node->OutputDefs()[i]->Name(), ml_value_idx);
       if (ml_value_idx == NodeIndexInfo::kInvalidEntry ||
           (std::find(exe_plan->activation_allocation_order.begin(), exe_plan->activation_allocation_order.end(), ml_value_idx) != exe_plan->activation_allocation_order.end()))
         continue;
@@ -513,6 +516,19 @@ Status SessionState::GeneratePatternGroupCache(const std::vector<std::reference_
   if (!mem_planner.GeneratePatterns(output).IsOK()) {
     return Status(ONNXRUNTIME, FAIL, "Generate Memory Pattern failed");
   }
+
+#ifdef ENABLE_TRAINING
+  bool is_verbose_mode = logger_.GetSeverity() == logging::Severity::kVERBOSE;
+  if (is_verbose_mode) {
+    // Output planned static memory, especially for large model memory footprint analysis.
+    for (size_t i = 0; i < output->locations.size(); i++) {
+      LOGS(logger_, INFO) << output->locations[i].ToString()
+                          << "Activation Peak: Allocated memory for activations, size: "
+                          << output->patterns[i].PeakSize();
+    }
+  }
+#endif
+
   return Status::OK();
 }
 #endif
@@ -994,74 +1010,87 @@ Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_
   std::unique_ptr<ITensorAllocator> tensor_allocator_(
       ITensorAllocator::Create(enable_mem_pattern_, *p_seq_exec_plan_, *this, weights_buffers_));
 
-  const auto& initializer_allocation_order = p_seq_exec_plan_->initializer_allocation_order;
-
-  // move initializers from TensorProto instances in Graph to OrtValue instances in SessionState
-  ORT_RETURN_IF_ERROR(
-      session_state_utils::SaveInitializedTensors(
-          Env::Default(), graph_location, *graph_viewer_,
-          execution_providers_.GetDefaultCpuMemoryInfo(),
-          ort_value_name_idx_map_, initializer_allocation_order, *tensor_allocator_,
-          [this](int idx, const OrtValue& value, const OrtCallback& d, bool constant) -> Status {
-            return AddInitializedTensor(idx, value, &d, constant);
-          },
-          logger_, data_transfer_mgr_, *p_seq_exec_plan_.get(), session_options));
-
-  // remove weights from the graph now to save memory but in many cases it won't save memory, if the tensor was
-  // preallocated with the some other tensors in a single 'allocate' call, which is very common.
-  // TODO: make it better
-  if (remove_initializers) {
-    CleanInitializedTensorsFromGraph();
-  }
-
-  ORT_RETURN_IF_ERROR(CreateKernels(kernel_registry_manager));
-
-  const auto disable_prepacking =
-      session_options.GetConfigOrDefault(kOrtSessionOptionsConfigDisablePrepacking, "0");
-
-  if (disable_prepacking != "1") {
-    ORT_RETURN_IF_ERROR(PrepackConstantInitializedTensors(constant_initializers_use_count));
-  }
-
-  ORT_RETURN_IF_ERROR(
-      session_state_utils::SaveInputOutputNamesToNodeMapping(*graph_viewer_, *this, valid_outer_scope_node_args));
-
-  // Need to recurse into subgraph session state instances to finalize them and add the execution info
-
-  // Currently all subgraphs need to be executed using the sequential EP due to potential deadlock with the current
-  // parallel executor implementation
-  SessionOptions subgraph_session_options(session_options);
-  subgraph_session_options.execution_mode = ExecutionMode::ORT_SEQUENTIAL;
-
-  for (const auto& node_to_subgraph_ss : subgraph_session_states_) {
-    Node& node = *graph_.GetNode(node_to_subgraph_ss.first);
-
-    for (const auto& attr_subgraph_pair : node.GetAttributeNameToMutableSubgraphMap()) {
-      auto& attr_name = attr_subgraph_pair.first;
-      auto entry = node_to_subgraph_ss.second.find(attr_name);
-      // CreateSubgraphSessionState should ensure all these entries are created
-      ORT_ENFORCE(entry != node_to_subgraph_ss.second.cend(),
-                  "Missing session state for subgraph. Node:'", node.Name(),
-                  "' OpType:", node.OpType(), " Index:", node.Index(), " Attribute:", attr_name);
-
-      SessionState& subgraph_session_state = *entry->second;
-
-      // recurse
-      ORT_RETURN_IF_ERROR(subgraph_session_state.FinalizeSessionStateImpl(
-          graph_location, kernel_registry_manager, &node, subgraph_session_options, remove_initializers, constant_initializers_use_count));
-
-      // setup all the info for handling the feeds and fetches used in subgraph execution
-      auto* p_op_kernel = GetMutableKernel(node.Index());
-      ORT_ENFORCE(p_op_kernel);
-
-      // Downcast is safe, since only control flow nodes have subgraphs
-      // (node.GetAttributeNameToMutableSubgraphMap() is non-empty)
-      auto& control_flow_kernel = static_cast<controlflow::IControlFlowKernel&>(*p_op_kernel);
-      ORT_RETURN_IF_ERROR(control_flow_kernel.SetupSubgraphExecutionInfo(*this, attr_name, subgraph_session_state));
+#ifdef ENABLE_TRAINING
+  bool is_verbose_mode = logger_.GetSeverity() == logging::Severity::kVERBOSE;
+  if (is_verbose_mode && GetEnableMemoryPattern()) {
+    // calculate activation memory usage
+    MemoryPatternGroup activation_memory_pattern_output;
+    std::unordered_map<std::string, int64_t> symbolic_map;
+    std::unordered_map<int, TensorShape> resolved_shapes;
+    auto ret = GenerateActivationMemoryPatterns(&activation_memory_pattern_output, symbolic_map, resolved_shapes);
+    if (!ret.IsOK()) {
+      LOGS(logger_, INFO) << "Fail to get activation peak memory: " << ret.ErrorMessage();
     }
-  }
+#endif
 
-  return Status::OK();
-}
+    const auto& initializer_allocation_order = p_seq_exec_plan_->initializer_allocation_order;
+
+    // move initializers from TensorProto instances in Graph to OrtValue instances in SessionState
+    ORT_RETURN_IF_ERROR(
+        session_state_utils::SaveInitializedTensors(
+            Env::Default(), graph_location, *graph_viewer_,
+            execution_providers_.GetDefaultCpuMemoryInfo(),
+            ort_value_name_idx_map_, initializer_allocation_order, *tensor_allocator_,
+            [this](int idx, const OrtValue& value, const OrtCallback& d, bool constant) -> Status {
+              return AddInitializedTensor(idx, value, &d, constant);
+            },
+            logger_, data_transfer_mgr_, *p_seq_exec_plan_.get(), session_options));
+
+    // remove weights from the graph now to save memory but in many cases it won't save memory, if the tensor was
+    // preallocated with the some other tensors in a single 'allocate' call, which is very common.
+    // TODO: make it better
+    if (remove_initializers) {
+      CleanInitializedTensorsFromGraph();
+    }
+
+    ORT_RETURN_IF_ERROR(CreateKernels(kernel_registry_manager));
+
+    const auto disable_prepacking =
+        session_options.GetConfigOrDefault(kOrtSessionOptionsConfigDisablePrepacking, "0");
+
+    if (disable_prepacking != "1") {
+      ORT_RETURN_IF_ERROR(PrepackConstantInitializedTensors(constant_initializers_use_count));
+    }
+
+    ORT_RETURN_IF_ERROR(
+        session_state_utils::SaveInputOutputNamesToNodeMapping(*graph_viewer_, *this, valid_outer_scope_node_args));
+
+    // Need to recurse into subgraph session state instances to finalize them and add the execution info
+
+    // Currently all subgraphs need to be executed using the sequential EP due to potential deadlock with the current
+    // parallel executor implementation
+    SessionOptions subgraph_session_options(session_options);
+    subgraph_session_options.execution_mode = ExecutionMode::ORT_SEQUENTIAL;
+
+    for (const auto& node_to_subgraph_ss : subgraph_session_states_) {
+      Node& node = *graph_.GetNode(node_to_subgraph_ss.first);
+
+      for (const auto& attr_subgraph_pair : node.GetAttributeNameToMutableSubgraphMap()) {
+        auto& attr_name = attr_subgraph_pair.first;
+        auto entry = node_to_subgraph_ss.second.find(attr_name);
+        // CreateSubgraphSessionState should ensure all these entries are created
+        ORT_ENFORCE(entry != node_to_subgraph_ss.second.cend(),
+                    "Missing session state for subgraph. Node:'", node.Name(),
+                    "' OpType:", node.OpType(), " Index:", node.Index(), " Attribute:", attr_name);
+
+        SessionState& subgraph_session_state = *entry->second;
+
+        // recurse
+        ORT_RETURN_IF_ERROR(subgraph_session_state.FinalizeSessionStateImpl(
+            graph_location, kernel_registry_manager, &node, subgraph_session_options, remove_initializers, constant_initializers_use_count));
+
+        // setup all the info for handling the feeds and fetches used in subgraph execution
+        auto* p_op_kernel = GetMutableKernel(node.Index());
+        ORT_ENFORCE(p_op_kernel);
+
+        // Downcast is safe, since only control flow nodes have subgraphs
+        // (node.GetAttributeNameToMutableSubgraphMap() is non-empty)
+        auto& control_flow_kernel = static_cast<controlflow::IControlFlowKernel&>(*p_op_kernel);
+        ORT_RETURN_IF_ERROR(control_flow_kernel.SetupSubgraphExecutionInfo(*this, attr_name, subgraph_session_state));
+      }
+    }
+
+    return Status::OK();
+  }
 
 }  // namespace onnxruntime
