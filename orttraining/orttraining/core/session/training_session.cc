@@ -169,6 +169,7 @@ Status TrainingSession::ConfigureForTraining(
                               DistributedRunContext::RankInGroup(WorkerGroupType::ModelParallel) :
                               -1;
 
+  std::vector<std::string> non_differentiable_edge_names;
   if (config.pipeline_config.has_value() && config.pipeline_config.value().do_partition) {
     // Apply online pipeline partition to graph obj. This needs to be done first before any graph
     // transportation which may alter node_arg and invalidate cut_list info from the original graph.
@@ -180,7 +181,8 @@ Status TrainingSession::ConfigureForTraining(
     ORT_RETURN_IF_ERROR(ApplyPipelinePartitionToMainGraph(model_->MainGraph(),
                                                           config.pipeline_config.value().cut_list,
                                                           pipeline_stage_id,
-                                                          config.distributed_config.pipeline_parallel_size));
+                                                          config.distributed_config.pipeline_parallel_size,
+                                                          non_differentiable_edge_names));
 
     //if (config.distributed_config.world_rank == 0) {
     //  Save("pipeline_0.onnx", SaveOption::NO_RELOAD);
@@ -329,6 +331,10 @@ Status TrainingSession::ConfigureForTraining(
   }
   ORT_RETURN_IF_ERROR(BuildGradientGraph(
       weight_names_to_train_copy, loss_name, config.gradient_graph_config, *session_logger_));
+
+  if (config.pipeline_config.has_value() && config.pipeline_config.value().do_partition) {
+    ORT_RETURN_IF_ERROR(RemoveNonDifferentiableEdgeInPartition(model_->MainGraph(), non_differentiable_edge_names));
+  }
 
   //if (config.distributed_config.world_rank == 0) {
   //  Save("pipeline_after_grad_builder_0.onnx", SaveOption::NO_RELOAD);

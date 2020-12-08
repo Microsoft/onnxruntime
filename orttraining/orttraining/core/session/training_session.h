@@ -155,6 +155,10 @@ class TrainingSession : public InferenceSession {
       // would be "tensor_X" and consumer_nodes[0] would be "tensor_Z".
       optional<std::vector<std::string>> consumer_nodes;
 
+      // boolean value indicating whether the cut edge is a non-differentiable edge or on the path of a
+      // non-differentiable node. Default to false.
+      bool non_differentiable_edge = false;
+
       // If the edge is unique, i.e. only have one consumer node, or all the edges
       // with the same node_arg_name needs to be cut, specify the node_arg_name
       // suffices.
@@ -163,6 +167,10 @@ class TrainingSession : public InferenceSession {
       // consumer node belongs to one partition, and some belongs to another, specify
       // the consumer node names which you want to perform the cut on.
       CutEdge(std::string edge, std::vector<std::string> nodes) : node_arg_name(edge), consumer_nodes(nodes){};
+
+      CutEdge(std::string edge, std::vector<std::string> nodes, bool is_non_differentiable_edge) : node_arg_name(edge),
+                                                                                                   consumer_nodes(nodes),
+                                                                                                   non_differentiable_edge(is_non_differentiable_edge){};
     };
     // CutInfo is a group of CutEdges that describes a specific cut that composed of splitting those edges.
     typedef std::vector<CutEdge> CutInfo;
@@ -480,7 +488,7 @@ class TrainingSession : public InferenceSession {
   GradientGraphConfiguration gradient_graph_config_;
   static const std::string training_mode_string_;
   std::string model_output_path = "";
-  
+
   TrainingConfigurationResult config_result_;
 };
 }  // namespace training
