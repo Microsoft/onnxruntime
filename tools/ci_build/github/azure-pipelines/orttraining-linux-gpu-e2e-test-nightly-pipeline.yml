@@ -253,4 +253,4 @@ jobs:
     condition: succeededOrFailed() # ensure all tests are run
     timeoutInMinutes: 20
         
-  - template: templates/clean-agent-build-directory-step.yml
+  # - template: templates/clean-agent-build-directory-step.yml
