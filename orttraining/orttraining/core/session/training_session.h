@@ -403,8 +403,7 @@ class TrainingSession : public InferenceSession {
   //  3. Backward operators' descriptions are all "Backward pass". This assumption is used to
   //     identify backward nodes.
   //  4. No event operator is inserted by other graph transform.
-  common::Status InsertPipelineOps(const std::unordered_set<std::string>& initializer_names_to_preserve,
-                                   pipeline::PipelineTensorNames& pipeline_tensor_names);
+  common::Status InsertPipelineOps(pipeline::PipelineTensorNames& pipeline_tensor_names);
 
   common::Status ApplyTransformationsToMainGraph(std::unordered_set<std::string>& weights_to_train,
                                                  const TrainingConfiguration::GraphTransformerConfiguration& config,
@@ -428,8 +427,7 @@ class TrainingSession : public InferenceSession {
   @param weights_to_train a set of weights to be training.
   @param loss_function_output_name the name of the loss function's output.
   */
-  common::Status BuildGradientGraph(const std::unordered_set<std::string>& weights_to_train,
-                                    const std::string& loss_function_output_name,
+  common::Status BuildGradientGraph(const std::string& loss_function_output_name,
                                     const GradientGraphConfiguration& gradient_graph_config,
                                     const logging::Logger& logger);
 

@@ -2,14 +2,14 @@
 // Licensed under the MIT License.
 
 #include "orttraining/core/graph/zero_optimizer_graph_builder.h"
-
+#include "orttraining/core/graph/optimizer_graph_builder.h"
 #include "core/common/common.h"
 #include "core/framework/tensorprotoutils.h"
 #include "core/graph/graph.h"
 #include "core/graph/graph_utils.h"
 #include "core/optimizer/initializer.h"
 #include "orttraining/core/graph/graph_augmenter.h"
-
+#include "orttraining/core/framework/distributed_run_context.h"
 namespace onnxruntime {
 namespace training {
 
@@ -63,7 +63,8 @@ static Status AddNcclAllGatherForWeights(
 
 static Status AddL2NormNcclAllReduce(
     ArgDef& norm_argdef,
-    GraphAugmenter::GraphDefs& graph_defs) {
+    GraphAugmenter::GraphDefs& graph_defs,
+    std::string output_name) {
   // Square the L2 norm.
   ArgDef exponent(norm_argdef.name + "_pow2",
                   graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT));
@@ -84,7 +85,7 @@ static Status AddL2NormNcclAllReduce(
                                   allreduce_output.name)});
 
   // Sqrt the reduced L2 norm.
-  ArgDef sqrt_output(norm_argdef.name + "_sqrt", norm_argdef.type_proto);
+  ArgDef sqrt_output(output_name, norm_argdef.type_proto);
   graph_defs.AddNodeDefs({NodeDef("Sqrt",
                                   {allreduce_output},
                                   {sqrt_output},
@@ -245,6 +246,8 @@ static Status ModifyParametersForOptimizerPartitioning(
     std::vector<OptimizerNodeConfig>& opt_configs,
     std::vector<ArgDef>& weight_argdefs,
     std::vector<ArgDef>& gradient_argdefs,
+    const std::vector<size_t>& megatron_partitioned_weight_grad_index,
+    std::vector<bool>& is_grad_for_global_norm,
     std::unordered_map<std::string, std::string>& updated_weight_names_map) {
   ORT_ENFORCE(weight_argdefs.size() == gradient_argdefs.size());
   ORT_ENFORCE(weight_argdefs.size() == opt_configs.size());
@@ -280,8 +283,15 @@ static Status ModifyParametersForOptimizerPartitioning(
   std::vector<ArgDef> new_weight_argdefs;
   std::vector<ArgDef> new_gradient_argdefs;
 
+  bool is_dp_group_id_zero = DistributedRunContext::RankInGroup(WorkerGroupType::HorizontalParallel) == 0;
   int64_t offset = 0;
   for (size_t i = 0; i < weight_argdefs.size(); i++) {
+    bool is_shared_weight = false;
+    if (std::find(megatron_partitioned_weight_grad_index.begin(), megatron_partitioned_weight_grad_index.end(), i) ==
+        megatron_partitioned_weight_grad_index.end()) {
+      is_shared_weight = true;
+    }
+
     const OptimizerNodeConfig& opt_config = opt_configs[i];
     ArgDef weight_argdef = weight_argdefs[i];
     ArgDef gradient_argdef = gradient_argdefs[i];
@@ -300,6 +310,14 @@ static Status ModifyParametersForOptimizerPartitioning(
         new_opt_configs.push_back(opt_config);
         new_weight_argdefs.push_back(weight_argdef);
         new_gradient_argdefs.push_back(gradient_argdef);
+
+        if (is_shared_weight && is_dp_group_id_zero) {
+          is_grad_for_global_norm.push_back(true);
+        } else if (!is_shared_weight) {
+          is_grad_for_global_norm.push_back(true);
+        } else {
+          is_grad_for_global_norm.push_back(false);
+        }
       } else if (offset < rank_start && offset + tensor_count <= rank_end) {
         int64_t size_for_previous_rank = rank_start - offset;
         int64_t size_for_current_rank = offset + tensor_count - rank_start;
@@ -307,6 +325,14 @@ static Status ModifyParametersForOptimizerPartitioning(
         std::vector<bool> enabled = {false, true};
         AddParameterPartition(graph, graph_defs, weight_argdef, gradient_argdef, opt_config, view_shapes, enabled,
                              new_opt_configs, new_weight_argdefs, new_gradient_argdefs, updated_weight_names_map);
+        is_grad_for_global_norm.push_back(false);
+        if (is_shared_weight && is_dp_group_id_zero) {
+          is_grad_for_global_norm.push_back(true);
+        } else if (!is_shared_weight) {
+          is_grad_for_global_norm.push_back(true);
+        } else {
+          is_grad_for_global_norm.push_back(false);
+        }
       } else if (offset >= rank_start && offset + tensor_count > rank_end) {
         int64_t size_for_current_rank = rank_end - offset;
         int64_t size_for_next_rank = offset + tensor_count - rank_end;
@@ -314,6 +340,14 @@ static Status ModifyParametersForOptimizerPartitioning(
         std::vector<bool> enabled = {true, false};
         AddParameterPartition(graph, graph_defs, weight_argdef, gradient_argdef, opt_config, view_shapes, enabled,
                              new_opt_configs, new_weight_argdefs, new_gradient_argdefs, updated_weight_names_map);
+        if (is_shared_weight && is_dp_group_id_zero) {
+          is_grad_for_global_norm.push_back(true);
+        } else if (!is_shared_weight) {
+          is_grad_for_global_norm.push_back(true);
+        } else {
+          is_grad_for_global_norm.push_back(false);
+        }
+        is_grad_for_global_norm.push_back(false);
       } else {  // offset < rank_start && offset + tensor_count > rank_end
         int64_t size_for_previous_rank = rank_start - offset;
         int64_t size_for_current_rank = rank_end - rank_start;
@@ -322,17 +356,25 @@ static Status ModifyParametersForOptimizerPartitioning(
         std::vector<bool> enabled = {false, true, false};
         AddParameterPartition(graph, graph_defs, weight_argdef, gradient_argdef, opt_config, view_shapes, enabled,
                              new_opt_configs, new_weight_argdefs, new_gradient_argdefs, updated_weight_names_map);
+        is_grad_for_global_norm.push_back(false);
+        if (is_shared_weight && is_dp_group_id_zero) {
+          is_grad_for_global_norm.push_back(true);
+        } else if (!is_shared_weight) {
+          is_grad_for_global_norm.push_back(true);
+        } else {
+          is_grad_for_global_norm.push_back(false);
+        }
+        is_grad_for_global_norm.push_back(false);
       }
     } else {
       // Parameter is handled by a different rank.
       OptimizerNodeConfig new_config = opt_config;
       new_config.enabled = false;
-
+      is_grad_for_global_norm.push_back(false);
       new_opt_configs.push_back(new_config);
       new_weight_argdefs.push_back(weight_argdef);
       new_gradient_argdefs.push_back(gradient_argdef);
     }
-
     offset += tensor_count;
   }
 
@@ -383,31 +425,67 @@ Status ZeROOptimizerGraphBuilder::BuildInternal(
     return graph.GenerateNodeArgName(base_name);
   };
 
+  std::vector<bool> is_grad_for_global_norm;
   // handle optimizer partitioning
   ORT_RETURN_IF_ERROR(ModifyParametersForOptimizerPartitioning(
-      graph, graph_defs, opt_graph_config_, opt_configs_, weight_argdefs, gradient_argdefs, updated_weight_names_map_));
+      graph, graph_defs, opt_graph_config_, opt_configs_, weight_argdefs, gradient_argdefs, 
+      megatron_partitioned_weight_grad_index_, is_grad_for_global_norm, updated_weight_names_map_));
 
   // add gradient scaling
   ArgDef fused_gradient_argdef;
-  const auto total_num_accumulations = opt_graph_config_.gradient_accumulation_steps * opt_graph_config_.data_parallel_group_size;
-  ORT_RETURN_IF_NOT(total_num_accumulations > 0);
-  const float scale = 1.0f / total_num_accumulations;
+  // const auto total_num_accumulations = opt_graph_config_.gradient_accumulation_steps; // * opt_graph_config_.data_parallel_group_size;
+  // ORT_RETURN_IF_NOT(total_num_accumulations > 0);
+  //// todo : make this scale optional.
+  //const float scale = 1.0f ; // / total_num_accumulations;
+
+  bool divide_sample_after_all_reduce = true;
+  ArgDef scale;
+
+  ArgDef grad_multi_factor = AddAllReduceForSampleCount(nodearg_name_generator, gradient_argdefs, graph_defs);
+  if (divide_sample_after_all_reduce == true) {
+    scale = ArgDef(nodearg_name_generator("one"), graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT));
+    graph_defs.AddInitializers({CreateTensorProto<float>(scale.name, 1.0f, {})});
+  } else {
+    scale = grad_multi_factor;
+  }
+
   ORT_RETURN_IF_ERROR(AddGradientScalingNodes(nodearg_name_generator, scale, gradient_argdefs, fused_gradient_argdef, graph_defs,
                                               opt_graph_config_.AllReduceDataType(), false));
 
   // add Reducescatter for gradients
   ORT_RETURN_IF_ERROR(AddNcclReduceScatterForGradients(gradient_argdefs, graph_defs));
 
+  if (divide_sample_after_all_reduce == true) {
+    ORT_RETURN_IF_ERROR(ScaleGradWithSampleCount(nodearg_name_generator, gradient_argdefs, graph_defs, grad_multi_factor));
+  } 
+
   // check if all gradients are finite
   ArgDef global_grad_norm_argdef;
   ArgDef global_grad_norm_finite_argdef;
 
   if (should_add_gradient_norm) {
-    auto gradient_norm_inputs = GetGradientNormInputs(gradient_argdefs, opt_configs_);
-    ORT_RETURN_IF_ERROR(AddGradientNorm(
-        nodearg_name_generator, gradient_norm_inputs, graph_defs, global_grad_norm_argdef));
+    bool megatron_enabled = DistributedRunContext::GroupSize(WorkerGroupType::HorizontalParallel) > 1;
+    if (megatron_enabled) {
+      std::vector<ArgDef> gradient_norm_inputs;
+      ORT_ENFORCE(gradient_argdefs.size() == is_grad_for_global_norm.size());
+      for (size_t i = 0; i < gradient_argdefs.size(); i++) {
+        if (is_grad_for_global_norm[i] == true) {
+          gradient_norm_inputs.push_back(gradient_argdefs[i]);
+        }
+      }
+      ORT_RETURN_IF_ERROR(AddGradientNorm(
+        nodearg_name_generator, gradient_norm_inputs, graph_defs, global_grad_norm_argdef, global_gradient_norm_output_name + "_prior_mega_all_reduce"));
+      ORT_RETURN_IF_ERROR(AddL2NormBetweenMegatronRanksNcclAllReduce(global_grad_norm_argdef, graph_defs, global_gradient_norm_output_name + "_prior_dp_all_reduce"));
+      ORT_RETURN_IF_ERROR(AddL2NormNcclAllReduce(global_grad_norm_argdef, graph_defs, global_gradient_norm_output_name));
+    } else {
+      std::vector<ArgDef> gradient_norm_inputs = GetGradientNormInputs(gradient_argdefs, opt_configs_);
+      ORT_RETURN_IF_ERROR(AddGradientNorm(
+          nodearg_name_generator, gradient_norm_inputs, graph_defs, global_grad_norm_argdef, global_gradient_norm_output_name + "_prior_dp_all_reduce"));
+      ORT_RETURN_IF_ERROR(AddL2NormNcclAllReduce(global_grad_norm_argdef, graph_defs, global_gradient_norm_output_name));
+    }
+
     optimizer_graph_outputs[OptimizerOutputKey::GlobalGradientNorm] = global_grad_norm_argdef.name;
-    ORT_RETURN_IF_ERROR(AddL2NormNcclAllReduce(global_grad_norm_argdef, graph_defs));
+    graph_defs.AddGraphOutputs({global_grad_norm_argdef.name});
   }
 
   if (should_add_gradient_finite_check) {

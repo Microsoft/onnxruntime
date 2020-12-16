@@ -163,6 +163,9 @@ e.g. Node A produces outputs A1 and A2.
 */
 void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx);
 
+void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx, std::string replacement_consumer_op_type);
+
+
 /** Replace the input to a node with a NodeArg.
 @remarks The replacement only updates the node's input definition and does not create any edges,
          as typically this function is used to replace an input with an initializer or graph input

@@ -412,6 +412,7 @@ bool ReshapeFusion::Fuse_Subgraph(Node& reshape, Graph& graph, const logging::Lo
   auto& new_node_arg = graph_utils::AddInitializer(graph, shape_initializer_proto);
 
   // Safely remove concat parent nodes which have only one output
+  LOGS(logger, WARNING) << "Replacing subgraph for :" << concat.Name();
   for (int i = 0; i < concat_input_count; ++i) {
     const Node* p_cur_node = graph_utils::GetInputNode(concat, i);
     if (p_cur_node != nullptr) {

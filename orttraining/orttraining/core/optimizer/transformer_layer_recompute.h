@@ -21,8 +21,14 @@ class TransformerLayerRecompute : public GraphTransformer {
 
  private:
   Status IdentifyTransformerLayerEdges(const Graph& graph,
-                                       std::vector<std::pair<const NodeArg*, const NodeArg*>>& start_end_edges,
+                                       std::vector<const NodeArg*>& layer_start_edges,
+                                       std::vector<const NodeArg*>& layer_end_edges,
                                        const logging::Logger& logger) const;
+
+  std::vector<std::pair<const NodeArg*, const NodeArg*>>
+  FindMatchingStartEndEdges(const Graph& graph,
+                            const std::vector<const NodeArg*>& layer_start_edges,
+                            const std::vector<const NodeArg*>& layer_end_edges) const;
 
   std::vector<const Node*> NodesBetweenEdges(const Graph& graph, const NodeArg* start, const NodeArg* end) const;
 

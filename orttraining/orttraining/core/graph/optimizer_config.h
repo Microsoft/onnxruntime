@@ -54,6 +54,7 @@ struct OptimizerNodeConfig {
   bool use_mixed_precision_moments{false};
   bool update_weight{true};  // indicates whether Optimizer should do weight update, or output new gradient
   bool enabled{true};        // indicates whether this weight is included in the Optimizer
+  bool megatron_partitioned{false};
 };
 
 // configuration for optimizer portion of graph
@@ -80,10 +81,13 @@ struct OptimizerGraphConfig {
     }
 
     switch (mixed_precision_type) {
-      case MixedPrecisionDataType::FP16: return ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
-      case MixedPrecisionDataType::BF16: return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
-      default: return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
-    }  
+      case MixedPrecisionDataType::FP16:
+        return ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
+      case MixedPrecisionDataType::BF16:
+        return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
+      default:
+        return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
+    }
   }
 };
 

@@ -592,6 +592,39 @@ size_t RemoveNodeOutputEdges(Graph& graph, Node& node) {
   return output_edges.size();
 }
 
+
+void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx, std::string replacement_consumer_op_type) {
+  // get the output edges from node for output_idx
+  std::vector<GraphEdge> output_edges;
+  for (auto it = node.OutputEdgesBegin(), end = node.OutputEdgesEnd(); it != end; ++it) {
+    if (static_cast<size_t>(it->GetSrcArgIndex()) == static_cast<size_t>(output_idx) && it->GetNode().OpType() == replacement_consumer_op_type) {
+      output_edges.push_back(GraphEdge::CreateGraphEdge(node, *it, false));
+    }
+  }
+
+
+  if (!output_edges.empty()) {
+    const auto& replacement_name = replacement.MutableOutputDefs()[replacement_output_idx]->Name();
+
+    // Remove the output edges of the node first
+    RemoveGraphEdges(graph, output_edges);
+
+    // Create connections between the replacement node and the outgoing nodes
+    for (const auto& output_edge : output_edges) {
+      // Take care of subgraph inputs.
+      if (OutputEdgeProvidesImplicitInput(graph, output_edge)) {
+        Node& mutable_output_edge_node = *graph.GetNode(output_edge.dst_node);
+        UpdateImplicitInputNameInSubgraph(mutable_output_edge_node, output_edge.arg_name, replacement_name);
+      }
+
+      // Add new edge connecting the input with the output nodes directly.
+      // This also updates the destination node's input node args
+      graph.AddEdge(replacement.Index(), output_edge.dst_node, replacement_output_idx, output_edge.dst_arg_index);
+    }
+  }
+}
+
+
 void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx) {
   // get the output edges from node for output_idx
   std::vector<GraphEdge> output_edges = GetNodeOutputEdges(node, output_idx);

@@ -339,7 +339,7 @@ Status MegatronTransformer::TransformMLP(Graph& graph, bool& modified, int graph
       graph_utils::ReplaceNodeInput(node, 0, *(mlp_f_node.MutableOutputDefs()[0]));
     } else {
       auto input_node = const_cast<Node*>(&edge->GetNode());
-      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), mlp_f_node, 0);
+      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), mlp_f_node, 0, "MatMul");
     }
 
     const std::vector<NodeArg*> mlp_g_input_defs{matmul2_node.MutableOutputDefs()[0]};
@@ -484,7 +484,7 @@ Status MegatronTransformer::TransformBARTMLP(Graph& graph, bool& modified, int g
       graph_utils::ReplaceNodeInput(node, 0, *(mlp_f_node.MutableOutputDefs()[0]));
     } else {
       auto input_node = const_cast<Node*>(&edge->GetNode());
-      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetSrcArgIndex(), mlp_f_node, 0);
+      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetSrcArgIndex(), mlp_f_node, 0, "MatMul");
     }
 
     const std::vector<NodeArg*> mlp_g_input_defs{matmul2_node.MutableOutputDefs()[0]};
@@ -726,7 +726,7 @@ Status MegatronTransformer::TransformSelfAttention(Graph& graph, bool& modified,
       graph_utils::ReplaceNodeInput(node, 0, *(sa_f_node.MutableOutputDefs()[0]));
     } else {
       auto input_node = const_cast<Node*>(&edge->GetNode());
-      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), sa_f_node, 0);
+      graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), sa_f_node, 0, "MatMul");
     }
 
     const std::vector<NodeArg*> sa_g_input_defs{matmul_node.MutableOutputDefs()[0]};

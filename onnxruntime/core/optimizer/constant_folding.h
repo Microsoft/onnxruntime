@@ -23,13 +23,13 @@ class ConstantFolding : public GraphTransformer {
       \param execution_provider Execution provider instance to execute constant folding.
   */
   ConstantFolding(const IExecutionProvider& execution_provider,
-                  const std::unordered_set<std::string>& compatible_execution_providers = {},
-                  const std::unordered_set<std::string>& excluded_initializers = {}) noexcept;
+                  const std::unordered_set<std::string>& compatible_execution_providers,
+                  std::unordered_set<std::string>& excluded_initializers) noexcept;
 
  private:
   Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;
 
-  const std::unordered_set<std::string> excluded_initializers_;
+  std::unordered_set<std::string>& excluded_initializers_;
   const IExecutionProvider& execution_provider_;
 };
 

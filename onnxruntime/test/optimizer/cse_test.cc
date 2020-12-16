@@ -275,8 +275,11 @@ TEST(CseTests, MergeConstants) {
   std::unique_ptr<CPUExecutionProvider> e = onnxruntime::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
   ASSERT_TRUE(
       graph_transformation_mgr.Register(onnxruntime::make_unique<CommonSubexpressionElimination>(), TransformerLevel::Level1).IsOK());
+  std::unordered_set<std::string> compatible_execution_providers = {};
+  std::unordered_set<std::string> excluded_initializers = {};
   ASSERT_TRUE(
-      graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get()), TransformerLevel::Level1).IsOK());
+      graph_transformation_mgr.Register(onnxruntime::make_unique<ConstantFolding>(*e.get(), 
+      compatible_execution_providers, excluded_initializers), TransformerLevel::Level1).IsOK());
   ASSERT_TRUE(
       graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, DefaultLoggingManager().DefaultLogger()).IsOK());
 

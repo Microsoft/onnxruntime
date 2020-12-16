@@ -284,6 +284,11 @@ class SessionState {
                               bool remove_initializers = true,
                               bool saving_ort_format = false);
 
+#ifdef ENABLE_TRAINING
+  Status GenerateActivationMemoryPatterns(MemoryPatternGroup* output,
+                                          std::unordered_map<std::string, int64_t>& symbolic_map,
+                                          std::unordered_map<int, TensorShape>& resolved_shapes) const;
+#endif
   SessionState* Parent() {
     return parent_;
   }

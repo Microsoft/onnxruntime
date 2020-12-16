@@ -21,7 +21,9 @@ Status AdamOptimizerBuilder::Build(
 
   // gradient clipping is disabled by default for Adam.
   bool enable_grad_clipping = config.enable_grad_clipping.has_value() ? *config.enable_grad_clipping : false;
-
+  
+  std::vector<ArgDef> m1_reduceall_input_args;
+  std::vector<ArgDef> m2_reduceall_input_args;
   for (size_t i = 0; i < weight_argdefs.size(); ++i) {
     const std::string& weight_name = weight_argdefs[i].name;
     const std::string& gradient_name = gradient_argdefs[i].name;
@@ -109,17 +111,28 @@ Status AdamOptimizerBuilder::Build(
         new_external_initializers.emplace_back(moment_tensor_proto);
 
         input_args.push_back(ArgDef(gradient_moment_name, moment_type_proto));
-        output_args.push_back(ArgDef(gradient_moment_name + "_Out", moment_type_proto));
+
+        ArgDef out_def = ArgDef(gradient_moment_name + "_Out", moment_type_proto);
+        output_args.push_back(out_def);
+
+        if (moments_prefix.compare("Moment_1_") == 0 ){
+          m1_reduceall_input_args.push_back(out_def);
+        } else {
+          m2_reduceall_input_args.push_back(out_def);
+        }
+
       }
 
       // Output either w_new or g_new based on config.
       if (opt_configs[i].update_weight) {
         output_weight_argdef = ArgDef(weight_name + "_Adam_out", weight_type_proto);
-        output_args.push_back(output_weight_argdef);  // w_new
-        output_args.push_back(ArgDef());              // g_new
-      } else {
         output_gradient_argdef = ArgDef(gradient_name + "_Adam_out", gradient_type_proto);
-        output_args.push_back(ArgDef());                // w_new
+        output_args.push_back(output_weight_argdef);  // w_new
+        output_args.push_back(output_gradient_argdef);  // g_new
+      } else {
+        output_weight_argdef = ArgDef(weight_name + "_Adam_out", weight_type_proto);
+        output_gradient_argdef = ArgDef(gradient_name + "_Adam_out", gradient_type_proto);
+        output_args.push_back(output_weight_argdef);  // w_new
         output_args.push_back(output_gradient_argdef);  // g_new
       }
 
@@ -162,6 +175,47 @@ Status AdamOptimizerBuilder::Build(
     output_weight_argdefs.push_back(output_weight_argdef);
     output_gradient_argdefs.push_back(output_gradient_argdef);
   }
+
+  const TypeProto* const moment1_reduceall_type = graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  ArgDef moment1_reduceall_argdef = ArgDef{"Moment_1_reduceall", moment1_reduceall_type};
+  graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
+                                  m1_reduceall_input_args,
+                                  {moment1_reduceall_argdef},
+                                  NodeAttributes(),
+                                  "_moment1_reduceall_nodename"}});
+
+  graph_defs.AddGraphOutputs({moment1_reduceall_argdef.name});
+
+
+  const TypeProto* const moment2_reduceall_type = graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  ArgDef moment2_reduceall_argdef = ArgDef{"Moment_2_reduceall", moment2_reduceall_type};
+  graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
+                                  m2_reduceall_input_args,
+                                  {moment2_reduceall_argdef},
+                                  NodeAttributes(),
+                                  "_moment2_reduceall_nodename"}});
+
+  graph_defs.AddGraphOutputs({moment2_reduceall_argdef.name});
+
+  const TypeProto* const weight_reduceall_type = graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  ArgDef weight_reduceall_argdef = ArgDef{"Weight_reduceall", weight_reduceall_type};
+  graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
+                                  output_weight_argdefs,
+                                  {weight_reduceall_argdef},
+                                  NodeAttributes(),
+                                  "_weight_reduceall_nodename"}});
+
+  graph_defs.AddGraphOutputs({weight_reduceall_argdef.name});
+
+  const TypeProto* const gradient_reduceall_type = graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  ArgDef gradient_reduceall_argdef = ArgDef{"Gradient_reduceall", gradient_reduceall_type};
+  graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
+                                  output_gradient_argdefs,
+                                  {gradient_reduceall_argdef},
+                                  NodeAttributes(),
+                                  "_gradient_reduceall_nodename"}});
+
+  graph_defs.AddGraphOutputs({gradient_reduceall_argdef.name});
 
   return Status::OK();
 }

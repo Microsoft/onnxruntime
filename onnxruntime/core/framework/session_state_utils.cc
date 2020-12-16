@@ -167,8 +167,8 @@ common::Status SaveInitializedTensors(
       planner.FinalizePlan(planned_initializers_memory_sizes_in_byte));
 
   for (auto i : planned_initializers_memory_sizes_in_byte) {
-    LOGS(logger, INFO) << "[Memory] SessionStateInitializer statically allocates "
-                       << i.second << " bytes for " << i.first << std::endl;
+    LOGS(logger, WARNING) << "[Memory] SessionStateInitializer statically allocates "
+                          << i.second << " bytes for " << i.first << std::endl;
   }
 
   OrtCallback deleter{nullptr, nullptr};

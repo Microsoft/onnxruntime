@@ -86,7 +86,7 @@ class GradientBuilderBase {
     const NodeArg* recomputed_nodearg = graph_->GetNodeArg(graph_utils::RecomputeName(name));
     if (recomputed_nodearg) {
       const Node* producer_node = graph_->GetProducerNode(name);
-      LOGS(logger_, INFO) << "Recomputed node arg found for " << producer_node->Name();
+      LOGS(logger_, WARNING) << "Recomputed node arg found for " << producer_node->Name();
       return ArgDef(recomputed_nodearg->Name(), recomputed_nodearg->TypeAsProto());
     }
 
@@ -101,7 +101,7 @@ class GradientBuilderBase {
     const NodeArg* recomputed_nodearg = graph_->GetNodeArg(graph_utils::RecomputeName(name));
     if (recomputed_nodearg) {
       const Node* producer_node = graph_->GetProducerNode(name);
-      LOGS(logger_, INFO) << "Recomputed node arg found for " << producer_node->Name();
+      LOGS(logger_, WARNING) << "Recomputed node arg found for " << producer_node->Name();
       return ArgDef(recomputed_nodearg->Name(), recomputed_nodearg->TypeAsProto());
     }
 
@@ -190,8 +190,7 @@ class GradientBuilderBase {
   }
 
   int OnnxOpSetVersion() const {
-    return graph_ != nullptr && graph_->DomainToVersionMap().find(kOnnxDomain) != graph_->DomainToVersionMap().end() ?
-               graph_->DomainToVersionMap().at(kOnnxDomain) : -1;
+    return graph_ != nullptr && graph_->DomainToVersionMap().find(kOnnxDomain) != graph_->DomainToVersionMap().end() ? graph_->DomainToVersionMap().at(kOnnxDomain) : -1;
   }
 
   template <typename T>
@@ -265,11 +264,11 @@ class GradientBuilderBase {
                                  std::vector<NodeDef>& output) const;
 
   std::vector<NodeDef> GetBiasGeluGradNodes(
-    bool use_approximation,
-    const ArgDef& dY, const ArgDef& X, const ArgDef& B,  // inputs
-    const ArgDef& dX, const ArgDef& dB,                  // outputs
-    const ArgDef& b_axes, const ArgDef& b_shape, const ArgDef& x_shape,  //intermediate args
-    const std::string& node_name) const;
+      bool use_approximation,
+      const ArgDef& dY, const ArgDef& X, const ArgDef& B,                  // inputs
+      const ArgDef& dX, const ArgDef& dB,                                  // outputs
+      const ArgDef& b_axes, const ArgDef& b_shape, const ArgDef& x_shape,  //intermediate args
+      const std::string& node_name) const;
 
   const std::string& NodeName() const { return node_->Name(); }
 

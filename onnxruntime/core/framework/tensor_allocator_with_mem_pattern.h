@@ -67,6 +67,12 @@ class TensorAllocatorWithMemPattern : public ITensorAllocator {
 
   common::Status FinalizePlan(std::unordered_map<std::string, size_t>& planned_memory_sizes_in_byte) override {
     ORT_RETURN_IF_ERROR(planner_.GeneratePatterns(&mem_patterns_));
+
+    for (size_t i = 0; i < mem_patterns_.locations.size(); i++) {
+      std::cout << mem_patterns_.locations[i].ToString() << "Allocated memory for initializers, size: "
+                << mem_patterns_.patterns[i].PeakSize() << std::endl;
+    }
+
     ORT_RETURN_IF_ERROR(AllocatePlannedBuffersAndReportTotalSize(planned_memory_sizes_in_byte));
     is_sealed_ = true;
     return Status::OK();

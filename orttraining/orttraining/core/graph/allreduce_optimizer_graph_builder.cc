@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #include "orttraining/core/graph/allreduce_optimizer_graph_builder.h"
-
+#include "orttraining/core/framework/distributed_run_context.h"
 namespace onnxruntime {
 namespace training {
 
@@ -146,19 +146,35 @@ Status AllreduceOptimizerGraphBuilder::BuildInternal(
   };
 
   const int64_t horovod_reduce_op = opt_graph_config_.horovod_reduce_op;
+  
+  bool divide_sample_after_all_reduce = true;
+  ArgDef scale;
+
+  ArgDef grad_multi_factor = AddAllReduceForSampleCount(nodearg_name_generator, gradient_argdefs, graph_defs);
+  if (divide_sample_after_all_reduce == true) {
+    scale = ArgDef(nodearg_name_generator("one"), graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT));
+    graph_defs.AddInitializers({CreateTensorProto<float>(scale.name, 1.0f, {})});
+  } else {
+    scale = grad_multi_factor;
+  }
 
   // add gradient scaling
   std::vector<ArgDef> output_gradient_argdef;
-  const auto total_num_accumulations =
-      opt_graph_config_.gradient_accumulation_steps * opt_graph_config_.data_parallel_group_size;
-  ORT_RETURN_IF_NOT(total_num_accumulations > 0);
-  const float scale = 1.0f / total_num_accumulations;
+  // const auto total_num_accumulations =
+  //     opt_graph_config_.gradient_accumulation_steps; // * opt_graph_config_.data_parallel_group_size;
+  // ORT_RETURN_IF_NOT(total_num_accumulations > 0);
+  //We did not divide by acc step, instead, we divide by total sample across all accumulation batches.
+  // todo : make this scale optional.
+  //const float scale = 1.0f / total_num_accumulations; 
   ORT_RETURN_IF_ERROR(AddGradientScalingNodes(nodearg_name_generator, scale, gradient_argdefs, output_gradient_argdef, graph_defs,
                                               opt_graph_config_.AllReduceDataType()));
 
   // add Allreduce for gradients
   if (opt_graph_config_.use_nccl) {
     ORT_RETURN_IF_ERROR(AddNcclAllReduceForGradients(gradient_argdefs, output_gradient_argdef, graph_defs));
+    if (divide_sample_after_all_reduce == true) {
+      ORT_RETURN_IF_ERROR(ScaleGradWithSampleCount(nodearg_name_generator, gradient_argdefs, graph_defs, grad_multi_factor));
+    } 
   } else {
     ORT_RETURN_IF_ERROR(AddHorovodAllReduceForGradients(gradient_argdefs, graph_defs, horovod_reduce_op));
   }
@@ -168,9 +184,27 @@ Status AllreduceOptimizerGraphBuilder::BuildInternal(
   ArgDef global_grad_norm_finite_argdef;
 
   if (should_add_gradient_norm) {
-    ORT_RETURN_IF_ERROR(AddGradientNorm(
-        nodearg_name_generator, gradient_argdefs, graph_defs, global_grad_norm_argdef));
+    bool megatron_enabled = DistributedRunContext::GroupSize(WorkerGroupType::HorizontalParallel) > 1;
+    if (megatron_enabled) {
+      std::vector<ArgDef> gradient_norm_inputs;
+      ORT_ENFORCE(gradient_argdefs.size() > 1, "Using fused gradient to calcuate gradient norm is not supported when megatron enabled");
+      int rank_in_hori_group = DistributedRunContext::RankInGroup(WorkerGroupType::HorizontalParallel);
+      if (rank_in_hori_group != 0) {
+        for (size_t i = 0; i < megatron_partitioned_weight_grad_index_.size(); ++i) {
+          gradient_norm_inputs.push_back(gradient_argdefs[megatron_partitioned_weight_grad_index_[i]]);
+        }
+      } else {
+        gradient_norm_inputs = gradient_argdefs;
+      }
+      ORT_RETURN_IF_ERROR(AddGradientNorm(
+        nodearg_name_generator, gradient_norm_inputs, graph_defs, global_grad_norm_argdef, global_gradient_norm_output_name + "_prior_mega_all_reduce"));
+      ORT_RETURN_IF_ERROR(AddL2NormBetweenMegatronRanksNcclAllReduce(global_grad_norm_argdef, graph_defs, global_gradient_norm_output_name));
+    } else {
+      ORT_RETURN_IF_ERROR(AddGradientNorm(
+        nodearg_name_generator, gradient_argdefs, graph_defs, global_grad_norm_argdef, global_gradient_norm_output_name));
+    }
     optimizer_graph_outputs[OptimizerOutputKey::GlobalGradientNorm] = global_grad_norm_argdef.name;
+    graph_defs.AddGraphOutputs({global_grad_norm_argdef.name});
   }
 
   if (should_add_gradient_finite_check) {
