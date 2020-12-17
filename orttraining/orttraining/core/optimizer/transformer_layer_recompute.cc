@@ -9,42 +9,82 @@
 #include <deque>
 
 namespace onnxruntime {
+
+namespace {
+bool IsOpType(const Node& node, const std::unordered_set<std::string>& op_types) {
+  return op_types.count(node.OpType()) > 0;
+}
+
+}  // namespace
+
 Status TransformerLayerRecompute::IdentifyTransformerLayerEdges(
     const Graph& graph,
-    std::vector<std::pair<const NodeArg*, const NodeArg*>>& start_end_edges,
+    std::vector<const NodeArg*>& layer_start_edges,
+    std::vector<const NodeArg*>& layer_end_edges,
     const logging::Logger& logger) const {
   const std::unordered_set<std::string> gelu_ops{"Gelu", "BiasGelu", "FastGelu"};
   const std::unordered_set<std::string> dropout_ops{"Dropout", "BiasDropout"};
-  const std::unordered_set<std::string> layernorm_ops{"LayerNormalization", "SkipLayerNormalization"};
+  const std::unordered_set<std::string> layernorm_ops{"LayerNormalization", "SkipLayerNormalization", "SimplifiedLayerNormalization"};
+  const std::unordered_set<std::string> matmul_ops{"MatMul", "FusedMatMul", "TransposeMatMul"};
+  const std::unordered_set<std::string> transpose_ops{"Transpose"};
 
-  std::vector<const NodeArg*> layer_start_edges, layer_end_edges;
+  layer_start_edges.clear();
+  layer_end_edges.clear();
+
   GraphViewer graph_viewer(graph);
   const auto& node_topology_list = graph_viewer.GetNodesInTopologicalOrder();
   for (auto node_index : node_topology_list) {
     auto& node = *graph.GetNode(node_index);
 
-    // Look for start of a transformer layer
-    if ((layernorm_ops.find(node.OpType()) != layernorm_ops.end() ||
-         dropout_ops.find(node.OpType()) != dropout_ops.end()) &&
+    /*
+    Look for start of a transformer layer
+          [LayerNorm|Dropout|Transpose]
+         /       |         |           \       <----- Start of the transformer layer
+       (.)    MatMul    MatMul       MatMul
+    */
+    if ((IsOpType(node, layernorm_ops) || IsOpType(node, dropout_ops) || IsOpType(node, transpose_ops)) &&
         node.GetOutputEdgesCount() == 4) {
-      layer_start_edges.push_back(node.OutputDefs()[0]);
+      int matmul_count = 0;
+      for (auto next_node = node.OutputNodesBegin(); next_node != node.OutputNodesEnd(); ++next_node) {
+        if (IsOpType(*next_node, matmul_ops)) {
+          matmul_count++;
+        }
+      }
+
+      // Three following MatMul nodes for QKV projection
+      if (matmul_count == 3) {
+        layer_start_edges.push_back(node.OutputDefs()[0]);
+      }
     }
 
     // Look for end of a transformer layer
-    if (gelu_ops.find(node.OpType()) != gelu_ops.end()) {
+    // Pattern:  Gelu -> (.*) -> MatMul -> (.*) -> Dropout -> (.*) -> LayerNorm
+    // The output of LayerNorm is the end of a transformer layer
+    if (IsOpType(node, gelu_ops)) {
       auto next_node = node.OutputNodesBegin();
 
+      if (next_node == node.OutputNodesEnd()) {
+        continue;
+      }
+
       while (next_node->OutputNodesBegin() != next_node->OutputNodesEnd() &&
-             dropout_ops.find(next_node->OpType()) == dropout_ops.end()) {
+             !IsOpType(*next_node, matmul_ops)) {
         next_node = next_node->OutputNodesBegin();
       }
 
       while (next_node->OutputNodesBegin() != next_node->OutputNodesEnd() &&
-             layernorm_ops.find(next_node->OpType()) == layernorm_ops.end()) {
+             !IsOpType(*next_node, dropout_ops)) {
         next_node = next_node->OutputNodesBegin();
       }
 
-      if (layernorm_ops.find(next_node->OpType()) != layernorm_ops.end()) {
+      while (next_node->OutputNodesBegin() != next_node->OutputNodesEnd() &&
+             !IsOpType(*next_node, layernorm_ops)) {
+        next_node = next_node->OutputNodesBegin();
+      }
+
+      if (next_node->OutputNodesBegin() == next_node->OutputNodesEnd()) {
+        continue;
+      } else if (IsOpType(*next_node, layernorm_ops)) {
         layer_end_edges.push_back(next_node->OutputDefs()[0]);
       }
     }
@@ -54,14 +94,7 @@ Status TransformerLayerRecompute::IdentifyTransformerLayerEdges(
                     "Number of start and end edges doesn't match!, #start=", layer_start_edges.size(),
                     ", #end=", layer_end_edges.size());
 
-  start_end_edges.clear();
-
   LOGS(logger, INFO) << "Found " << layer_start_edges.size() << " transformer layers.";
-  for (size_t i = 0; i < layer_start_edges.size(); ++i) {
-    start_end_edges.push_back({layer_start_edges[i], layer_end_edges[i]});
-    LOGS(logger, INFO) << "Start edge: " << layer_start_edges[i]->Name() << " End edge: " << layer_end_edges[i]->Name();
-  }
-
   return Status::OK();
 }
 
@@ -89,7 +122,51 @@ NodeSet BFSFrom(const std::vector<const Node*>& start_nodes, bool reverse) {
   }
   return visited;
 }
+
+const NodeArg* FindMatchingEndEdge(const std::vector<const Node*>& start_nodes,
+                                   const std::unordered_map<const Node*, const NodeArg*>& end_nodes_edges) {
+  NodeSet visited(start_nodes.begin(), start_nodes.end());
+  std::deque<const Node*> queue(start_nodes.begin(), start_nodes.end());
+  while (!queue.empty()) {
+    const Node* n = queue.front();
+    queue.pop_front();
+
+    // return the first encountered end node
+    auto iter = end_nodes_edges.find(n);
+    if (iter != end_nodes_edges.end()) {
+      return iter->second;
+    }
+
+    for (auto node_it = n->OutputNodesBegin(); node_it != n->OutputNodesEnd(); ++node_it) {
+      const Node& node = *node_it;
+      if (visited.find(&node) == visited.end()) {
+        queue.push_back(&node);
+        visited.insert(&node);
+      }
+    }
+  }
+  return nullptr;
+}
 }  // namespace
+
+std::vector<std::pair<const NodeArg*, const NodeArg*>>
+TransformerLayerRecompute::FindMatchingStartEndEdges(const Graph& graph,
+                                                     const std::vector<const NodeArg*>& start_edges,
+                                                     const std::vector<const NodeArg*>& end_edges) const {
+  std::unordered_map<const Node*, const NodeArg*> candidate_end_nodes_edges;
+  for (auto end_edge : end_edges) {
+    candidate_end_nodes_edges.insert({graph.GetProducerNode(end_edge->Name()), end_edge});
+  }
+
+  std::vector<std::pair<const NodeArg*, const NodeArg*>> start_end_edges;
+  for (size_t i = 0; i < start_edges.size(); ++i) {
+    const NodeArg* end_edge = FindMatchingEndEdge(graph.GetConsumerNodes(start_edges[i]->Name()),
+                                                  candidate_end_nodes_edges);
+    start_end_edges.emplace_back(start_edges[i], end_edge);
+  }
+
+  return start_end_edges;
+}
 
 std::vector<const Node*> TransformerLayerRecompute::NodesBetweenEdges(const Graph& graph, const NodeArg* start, const NodeArg* end) const {
   // Forward BFS from the start node
@@ -167,19 +244,18 @@ void TransformerLayerRecompute::InsertRecomputeNodes(Graph& graph, const std::ve
 }
 
 Status TransformerLayerRecompute::ApplyImpl(Graph& graph, bool& modified, int /*graph_level*/, const logging::Logger& logger) const {
-  std::vector<std::pair<const NodeArg*, const NodeArg*>> start_end_edges;
+  std::vector<const NodeArg*> start_edges, end_edges;
+  Status s = IdentifyTransformerLayerEdges(graph, start_edges, end_edges, logger);
 
-  Status s = IdentifyTransformerLayerEdges(graph, start_end_edges, logger);
   if (!s.IsOK()) {
     modified = false;
     return Status::OK();
   }
 
   // by default, apply recompute expect for the last transformer layer
-  // otherwise, take user specified 'number_recompute_layers_'
-
+  // otherwise, take user specified 'number_recompute_layers_'s
   int n_layers;
-  const int n_layers_limit = static_cast<int>(start_end_edges.size() - 1); 
+  const int n_layers_limit = static_cast<int>(start_edges.size() - 1);
   if (number_recompute_layers_ > n_layers_limit) {
     LOGS(logger, WARNING) << "User specified number_recompute_layers " << number_recompute_layers_
                           << " is larger than limit " << n_layers_limit << "."
@@ -188,14 +264,25 @@ Status TransformerLayerRecompute::ApplyImpl(Graph& graph, bool& modified, int /*
   } else if (number_recompute_layers_ > 0) {
     n_layers = number_recompute_layers_;
   } else {
-    LOGS(logger, INFO) << "number_recompute_layers is not set by user, using default " << n_layers_limit << ".";
+    LOGS(logger, WARNING) << "number_recompute_layers is not set by user, using default " << n_layers_limit << ".";
     n_layers = n_layers_limit;
   }
+
+  std::vector<std::pair<const NodeArg*, const NodeArg*>> start_end_edges = FindMatchingStartEndEdges(graph, start_edges, end_edges);
 
   // latter recompute layers have higher execution priorty
   for (int i = 0; i < n_layers; ++i) {
     std::vector<const Node*> nodes = NodesBetweenEdges(graph, start_end_edges[i].first, start_end_edges[i].second);
-    InsertRecomputeNodes(graph, nodes, static_cast<int>(start_end_edges.size() - i));
+
+    std::stringstream node_names;
+    for (const auto n : nodes) {
+      node_names << n->Name() << ",";
+    }
+    LOGS(logger, INFO) << "Recompute Layer " << i << "."
+                       << "Start edge: " << start_end_edges[i].first->Name() << " End edge: " << start_end_edges[i].second->Name()
+                       << "Nodes between layer : " << node_names.str();
+
+    InsertRecomputeNodes(graph, nodes, static_cast<int>(start_edges.size() - i));
   }
 
   modified = true;
