@@ -315,35 +315,38 @@ Status OptimizerGraphBuilder::AddGradientNorm(
     const std::vector<ArgDef>& grad_argdefs,
     GraphAugmenter::GraphDefs& graph_defs,
     ArgDef& grad_norm_argdef) {
-  ONNX_NAMESPACE::TensorProto_DataType grad_type =
-      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(grad_argdefs[0].type_proto->tensor_type().elem_type());
-  if (grad_type != ONNX_NAMESPACE::TensorProto_DataType_FLOAT &&
-      grad_type != ONNX_NAMESPACE::TensorProto_DataType_FLOAT16 &&
-      grad_type != ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16) {
-    return Status(common::ONNXRUNTIME, common::FAIL,
-                  "Unsupport gradient type: it has to be either float, MLFloat16 or BFloat16.");
-  }
-
-  for (const auto& argdef : grad_argdefs) {
-    ONNX_NAMESPACE::TensorProto_DataType elem_type =
-        static_cast<ONNX_NAMESPACE::TensorProto_DataType>(argdef.type_proto->tensor_type().elem_type());
-    if (elem_type != grad_type) {
-      return Status(common::ONNXRUNTIME, common::FAIL,
-                    "All gradient tensors' types must be the same.");
-    }
-  }
-
   const TypeProto* const grad_norm_type = graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
   grad_norm_argdef = ArgDef{nodearg_name_generator("global_gradient_norm"), grad_norm_type};
 
-  graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
-                                  grad_argdefs,
-                                  {grad_norm_argdef},
-                                  NodeAttributes(),
-                                  grad_norm_argdef.name}});
+  if (!grad_argdefs.empty()) {
+    ONNX_NAMESPACE::TensorProto_DataType grad_type =
+        static_cast<ONNX_NAMESPACE::TensorProto_DataType>(grad_argdefs[0].type_proto->tensor_type().elem_type());
+    if (grad_type != ONNX_NAMESPACE::TensorProto_DataType_FLOAT &&
+        grad_type != ONNX_NAMESPACE::TensorProto_DataType_FLOAT16 &&
+        grad_type != ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16) {
+      return Status(common::ONNXRUNTIME, common::FAIL,
+                    "Unsupport gradient type: it has to be either float, MLFloat16 or BFloat16.");
+    }
+
+    for (const auto& argdef : grad_argdefs) {
+      ONNX_NAMESPACE::TensorProto_DataType elem_type =
+          static_cast<ONNX_NAMESPACE::TensorProto_DataType>(argdef.type_proto->tensor_type().elem_type());
+      if (elem_type != grad_type) {
+        return Status(common::ONNXRUNTIME, common::FAIL,
+                      "All gradient tensors' types must be the same.");
+      }
+    }
+
+    graph_defs.AddNodeDefs({NodeDef{OpDef{"ReduceAllL2", kMSDomain, 1},
+                                    grad_argdefs,
+                                    {grad_norm_argdef},
+                                    NodeAttributes(),
+                                    grad_norm_argdef.name}});
+  } else {
+    graph_defs.AddInitializers({CreateTensorProto<float>(grad_norm_argdef.name, 0.0f, {})});
+  }
 
   graph_defs.AddGraphOutputs({grad_norm_argdef.name});
-
   return Status::OK();
 }
 

@@ -35,7 +35,7 @@ ONNX_OPERATOR_VERSIONED_KERNEL_EX(
     Identity,
     kOnnxDomain,
     1, 12,
-     kCudaExecutionProvider,
+    kCudaExecutionProvider,
     KernelDefBuilder()
         .TypeConstraint("T", DataTypeImpl::AllFixedSizeTensorTypes())
         .Alias(0, 0),
@@ -51,4 +51,20 @@ ONNX_OPERATOR_KERNEL_EX(
         .Alias(0, 0),
     IdentityOp<false>);
 }  // namespace cuda
+
+namespace contrib {
+namespace cuda {
+
+ONNX_OPERATOR_KERNEL_EX(
+    Duplicate,
+    kMSDomain,
+    1,
+    kCudaExecutionProvider,
+    KernelDefBuilder()
+        .TypeConstraint("T", DataTypeImpl::AllFixedSizeTensorTypes()),
+    onnxruntime::cuda::IdentityOp<false>);
+
+}  // namespace cuda
+}  // namespace contrib
+
 }  // namespace onnxruntime

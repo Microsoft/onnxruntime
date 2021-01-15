@@ -431,7 +431,7 @@ and present state are optional. Present state could appear in output even when p
         return;
       });
 
-      static const char* Longformer_Attention_doc = R"DOC(
+  static const char* Longformer_Attention_doc = R"DOC(
 Longformer Self Attention with a local context and a global context. Tokens attend locally: Each token
 attends to its W previous tokens and W succeding tokens with W being the window length. A selected few tokens
 attend globally to all other tokens.
@@ -2217,6 +2217,18 @@ It's an extension of Gelu. It takes the sum of input A and bias input B as the i
       .TypeConstraint(
           "T",
           {"tensor(float16)", "tensor(float)", "tensor(double)"},
+          "Constrain input and output types to float tensors.")
+      .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
+
+  ONNX_CONTRIB_OPERATOR_SCHEMA(Duplicate)
+      .SetDomain(kMSDomain)
+      .SinceVersion(1)
+      .SetDoc("Equivalent to Identity operator, except that output won't share the buffer as input.")
+      .Input(0, "input", "The input tensor.", "T")
+      .Output(0, "output", "Tensor to copy input into.", "T")
+      .TypeConstraint(
+          "T",
+          OpSchema::all_tensor_types_with_bfloat(),
           "Constrain input and output types to float tensors.")
       .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
 

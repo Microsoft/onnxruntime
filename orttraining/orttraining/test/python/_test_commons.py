@@ -11,6 +11,8 @@ import onnx
 from onnxruntime.training import optim, _utils
 
 def _single_run(execution_file, scenario, checkopint_dir = None):
+    print("Running single_run scenario: ", scenario)
+
     cmd = [sys.executable, execution_file]
     if scenario:
         cmd += ['--scenario', scenario]
@@ -19,6 +21,8 @@ def _single_run(execution_file, scenario, checkopint_dir = None):
     assert subprocess.call(cmd) == 0
 
 def _distributed_run(execution_file, scenario, checkopint_dir = None):
+    print("Running distributed_run scenario: ", scenario)
+
     ngpus = torch.cuda.device_count()
     cmd = ['mpirun', '-n', str(ngpus), '-x', 'NCCL_DEBUG=INFO', sys.executable, execution_file]
     if scenario:

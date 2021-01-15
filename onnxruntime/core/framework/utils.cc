@@ -593,6 +593,7 @@ common::Status VerifyInputTensorsAllocatedContiguously(OpKernelContext* context)
 
     prev_input = curr_input;
   }
+
   return Status::OK();
 }
 #endif

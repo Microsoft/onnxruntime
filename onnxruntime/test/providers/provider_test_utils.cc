@@ -481,8 +481,36 @@ void OpTester::AddNodes(
   // default behavior is to create a single Node for the op being tested, with
   // node inputs/outputs
   // being 1:1 with graph inputs/outputs.
-  auto& node = graph.AddNode("node1", op_, op_, graph_input_defs,
-                             graph_output_defs, nullptr, domain_);
+
+  std::vector<NodeArg*> buffered_input_defs;
+  std::vector<NodeArg*> buffered_output_defs;
+  if (enable_buffered_input_outputs_) {
+    for (NodeArg* input_def : graph_input_defs) {
+      NodeArg& buffered_input = graph.GetOrCreateNodeArg(input_def->Name() + "_buffered", input_def->TypeAsProto());
+
+      std::vector<onnxruntime::NodeArg*> inputs = {input_def};
+      std::vector<onnxruntime::NodeArg*> outputs = {&buffered_input};
+
+      graph.AddNode(buffered_input.Name(), "Duplicate", "", inputs, outputs, nullptr, kMSDomain);
+      buffered_input_defs.push_back(&buffered_input);
+    }
+
+    for (NodeArg* output_def : graph_output_defs) {
+      NodeArg& buffered_output = graph.GetOrCreateNodeArg(output_def->Name() + "_buffered", output_def->TypeAsProto());
+
+      std::vector<onnxruntime::NodeArg*> inputs = {&buffered_output};
+      std::vector<onnxruntime::NodeArg*> outputs = {output_def};
+
+      graph.AddNode(buffered_output.Name(), "Duplicate", "", inputs, outputs, nullptr, kMSDomain);
+      buffered_output_defs.push_back(&buffered_output);
+    }
+  } else {
+    buffered_input_defs = graph_input_defs;
+    buffered_output_defs = graph_output_defs;
+  }
+
+  auto& node = graph.AddNode("node1", op_, op_, buffered_input_defs,
+                             buffered_output_defs, nullptr, domain_);
 
   // Add the attributes if any
   for (auto& add_attribute_fn : add_attribute_funcs)
@@ -516,6 +544,16 @@ void OpTester::AddInitializers(onnxruntime::Graph& graph) {
     // 4. name
     tensor_proto.set_name(data.def_.Name());
     graph.AddInitializedTensor(tensor_proto);
+  }
+}
+
+void OpTester::AddBufferedInputOutput() {
+  enable_buffered_input_outputs_ = true;
+
+  // add kMSDomain to the graph, since the "Duplicate" nodes are needed for inputs/output
+  if (strcmp(domain_, kMSDomain) != 0 &&
+      extra_domain_to_version_.find(kMSDomain) == extra_domain_to_version_.end()) {
+    extra_domain_to_version_.insert({kMSDomain, 1});
   }
 }
 
@@ -741,7 +779,7 @@ void OpTester::Run(
 
     fetches_.clear();
     bool cache_enabled = cached_model_ != nullptr;
-    auto p_model = !cache_enabled ? BuildGraph() : cached_model_;
+    auto p_model = !cache_enabled ? BuildGraph(extra_domain_to_version_) : cached_model_;
     auto& graph = p_model->MainGraph();
 
     Status status = Status::OK();
@@ -841,9 +879,13 @@ void OpTester::Run(
         std::unique_ptr<IExecutionProvider> execution_provider;
         if (provider_type == onnxruntime::kCpuExecutionProvider)
           execution_provider = DefaultCpuExecutionProvider();
-        else if (provider_type == onnxruntime::kCudaExecutionProvider)
-          execution_provider = DefaultCudaExecutionProvider();
-        else if (provider_type == onnxruntime::kDnnlExecutionProvider)
+        else if (provider_type == onnxruntime::kCudaExecutionProvider) {
+          if (device_id_ != -1) {
+            execution_provider = CreateCudaExecutionProvider(device_id_);
+          } else {
+            execution_provider = DefaultCudaExecutionProvider();
+          }
+        } else if (provider_type == onnxruntime::kDnnlExecutionProvider)
           execution_provider = DefaultDnnlExecutionProvider();
         else if (provider_type == onnxruntime::kOpenVINOExecutionProvider)
           execution_provider = DefaultOpenVINOExecutionProvider();

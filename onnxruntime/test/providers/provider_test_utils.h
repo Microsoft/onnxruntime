@@ -440,6 +440,8 @@ class OpTester {
 
   std::vector<MLValue> GetFetches() { return fetches_; }
 
+  void AddBufferedInputOutput();
+
   std::unique_ptr<onnxruntime::Model> BuildGraph(const std::unordered_map<std::string, int>& extra_domain_to_version = {});
 
   // storing p_model as cache
@@ -487,6 +489,10 @@ class OpTester {
     use_determinism_ = use_determinism;
   }
 
+  void SetDeviceId(int device_id) {
+    device_id_ = device_id;
+  }
+
  protected:
   virtual void AddNodes(onnxruntime::Graph& graph, std::vector<onnxruntime::NodeArg*>& graph_input_defs,
                         std::vector<onnxruntime::NodeArg*>& graph_output_defs,
@@ -510,6 +516,10 @@ class OpTester {
                                     const std::string& provider_type);
 
   const char* op_;
+
+  bool enable_buffered_input_outputs_ = false;
+  std::unordered_map<std::string, int> extra_domain_to_version_;
+
   std::vector<Data> input_data_;
   std::vector<Data> output_data_;
   std::vector<OrtValue> fetches_;
@@ -643,6 +653,8 @@ class OpTester {
   bool verify_output_;
 
   bool use_determinism_ = false;
+
+  int device_id_ = -1;
 
   CustomOutputVerifierFn custom_output_verifier_;
 };

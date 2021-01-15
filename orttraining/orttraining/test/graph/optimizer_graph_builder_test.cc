@@ -37,7 +37,7 @@ namespace training {
 namespace test {
 namespace {
 
-const std::vector<const char*> k_weight_names{"weight_1", "weight_2"};
+const std::vector<std::string> k_weight_names{"weight_1", "weight_2"};
 constexpr const char* const k_loss_scaling_factor_name = "loss_scaling_factor";
 constexpr const char* const k_adam_optimizer_op_name = "AdamOptimizer";
 constexpr const char* const k_lamb_optimizer_op_name = "LambOptimizer";
@@ -105,10 +105,16 @@ Status SetUpBaseGraph(Graph& graph) {
   return graph.Resolve(resolve_options);
 }
 
-std::unordered_map<std::string, OptimizerNodeConfig> GetOptInfoMap(const std::string& optim_name) {
+class ZeroOptimizerGraphBuilderTest : public testing::Test {
+ protected:
+  ZeroOptimizerGraphBuilderTest() {}
+};
+
+std::unordered_map<std::string, OptimizerNodeConfig> GetOptInfoMap(const std::string& optim_name,
+                                                                   const std::vector<std::string>& weight_names = k_weight_names) {
   std::unordered_map<std::string, OptimizerNodeConfig> result{};
   std::transform(
-      k_weight_names.begin(), k_weight_names.end(), std::inserter(result, result.end()),
+      weight_names.begin(), weight_names.end(), std::inserter(result, result.end()),
       [&optim_name](const std::string& weight_name) {
         return std::make_pair(
             weight_name, OptimizerNodeConfig{optim_name, nullptr, "Learning_Rate", {}});
@@ -117,8 +123,8 @@ std::unordered_map<std::string, OptimizerNodeConfig> GetOptInfoMap(const std::st
   return result;
 }
 
-std::unordered_map<std::string, OptimizerNodeConfig> GetOptInfoMap() {
-  return GetOptInfoMap(k_adam_optimizer_op_name);
+std::unordered_map<std::string, OptimizerNodeConfig> GetOptInfoMap(const std::vector<std::string>& weight_names = k_weight_names) {
+  return GetOptInfoMap(k_adam_optimizer_op_name, weight_names);
 }
 
 OptimizerBuilderRegistry& GetOptimizerBuilderRegistry() {
@@ -272,13 +278,13 @@ static void TestDefaultOptimizerGraphBuilder(OptimizerGraphConfig config, Graph&
     ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), k_weight_names.size());
     ASSERT_EQ(GetOpCount(op_counts, k_inplace_accumulator_op_name), k_weight_names.size());
     ASSERT_EQ(GetOpCount(op_counts, k_zero_gradient_op_name), k_weight_names.size());
-    ASSERT_GT(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 0);
+    ASSERT_EQ(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 1);
   }
 
   // verify mixed precision operations exist
   if (config.use_mixed_precision) {
-    ASSERT_GT(GetOpCount(op_counts, k_gradient_norm_op_name), 0);
-    ASSERT_GT(GetOpCount(op_counts, k_is_all_finite_op_name), 0);
+    ASSERT_EQ(GetOpCount(op_counts, k_gradient_norm_op_name), 1);
+    ASSERT_EQ(GetOpCount(op_counts, k_is_all_finite_op_name), 1);
   }
 
   // verify optimizers exist
@@ -335,21 +341,20 @@ static void TestAllreduceOptimizerGraphBuilder(OptimizerGraphConfig config, Grap
 
   // verify gradient accumulation operations exist
   if (config.gradient_accumulation_steps > 1) {
-    ASSERT_GT(GetOpCount(op_counts, k_unscale_op_name), 0);
     ASSERT_EQ(GetOpCount(op_counts, k_inplace_accumulator_op_name), k_weight_names.size());
     ASSERT_EQ(GetOpCount(op_counts, k_zero_gradient_op_name), k_weight_names.size());
-    ASSERT_GT(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 0);
+    ASSERT_EQ(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 1);
   }
 
   // verify mixed precision operations exist
   if (config.use_mixed_precision) {
-    ASSERT_GT(GetOpCount(op_counts, k_gradient_norm_op_name), 0);
-    ASSERT_GT(GetOpCount(op_counts, k_is_all_finite_op_name), 0);
+    ASSERT_EQ(GetOpCount(op_counts, k_gradient_norm_op_name), 1);
+    ASSERT_EQ(GetOpCount(op_counts, k_is_all_finite_op_name), 1);
   }
 
   // verify allreduce operations exist
-  ASSERT_GT(GetOpCount(op_counts, k_unscale_op_name), 0);
-  ASSERT_GT(GetOpCount(op_counts, k_all_reduce_op_name), 0);
+  ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), 1);
+  ASSERT_EQ(GetOpCount(op_counts, k_all_reduce_op_name), 1);
 
   // verify optimizers exist
   ASSERT_EQ(GetOpCount(op_counts, k_adam_optimizer_op_name), k_weight_names.size());
@@ -371,10 +376,10 @@ static void TestAdasumOptimizerGraphBuilder(OptimizerGraphConfig config, Graph& 
 
   // verify gradient accumulation operations exist
   if (config.gradient_accumulation_steps > 1) {
-    ASSERT_GT(GetOpCount(op_counts, k_unscale_op_name), 0);
+    ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), 1);
     ASSERT_EQ(GetOpCount(op_counts, k_inplace_accumulator_op_name), k_weight_names.size() * 2);
     ASSERT_EQ(GetOpCount(op_counts, k_zero_gradient_op_name), k_weight_names.size());
-    ASSERT_GT(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 0);
+    ASSERT_EQ(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 1);
   }
 
   // verify mixed precision operations exist
@@ -436,7 +441,7 @@ TEST_F(OptimizerGraphBuilderTest, Adasum_WithGradientAccumulation_WithMixedPreci
   config.loss_scale_input_name = k_loss_scaling_factor_name;
   TestAdasumOptimizerGraphBuilder(config, graph_);
 }
-#endif //ORT_USE_NCCL && USE_MPI
+#endif  //ORT_USE_NCCL && USE_MPI
 
 #ifdef ORT_USE_NCCL
 TEST_F(OptimizerGraphBuilderTest, Allreduce_NoGradientAccumulation_NoMixedPrecision) {
@@ -477,81 +482,165 @@ TEST_F(OptimizerGraphBuilderTest, Allreduce_WithGradientAccumulation_WithMixedPr
   TestAllreduceOptimizerGraphBuilder(config, graph_);
 }
 
-static void TestZeROOptimizerGraphBuilder(OptimizerGraphConfig config, Graph& graph) {
+Status SetUpZeroGraph(Graph& graph, std::vector<std::string>& weight_names, const std::vector<int64_t>& weight_dims) {
+  std::unordered_set<std::string> weight_and_gradient_names{};
+
+  for (size_t i = 0; i < weight_dims.size(); ++i) {
+    const std::string weight_name = "weight_" + std::to_string(i);
+    const std::string gradient_name = GradientBuilderBase::GradientName(weight_name);
+
+    ONNX_NAMESPACE::TensorProto weight_initializer = CreateTensorProto<float>(weight_name, 0.1f, {weight_dims[i]});
+    ONNX_NAMESPACE::TensorProto gradient_initializer = CreateTensorProto<float>(gradient_name, 0.01f, {weight_dims[i]});
+
+    ONNX_NAMESPACE::TypeProto float_tensor_type{};
+    float_tensor_type.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    float_tensor_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(weight_dims[i]);
+
+    graph.GetOrCreateNodeArg(weight_name, &float_tensor_type);
+    graph.AddInitializedTensor(weight_initializer);
+
+    graph.GetOrCreateNodeArg(gradient_name, &float_tensor_type);
+    graph.AddInitializedTensor(gradient_initializer);
+
+    weight_and_gradient_names.emplace(weight_name);
+    weight_and_gradient_names.emplace(gradient_name);
+    weight_names.emplace_back(weight_name);
+  }
+
+  Graph::ResolveOptions resolve_options{};
+  resolve_options.initializer_names_to_preserve = &weight_and_gradient_names;
+  return graph.Resolve(resolve_options);
+}
+
+static void TestZeROOptimizerGraphBuilder(OptimizerGraphConfig config,
+                                          const std::vector<int64_t>& weight_dims) {
+  Model model{"test_model", false, onnxruntime::test::DefaultLoggingManager().DefaultLogger()};
+  Graph& graph{model.MainGraph()};
+  std::vector<std::string> weight_names;
+  ASSERT_STATUS_OK(SetUpZeroGraph(graph, weight_names, weight_dims));
+
   std::unordered_map<std::string, std::string> updated_weight_names_map;
   std::unordered_map<std::string, training::TrainingSession::PartitionInfo> weight_partition_info;
   ZeROOptimizerGraphBuilder optimizer_graph_builder(
-      GetOptimizerBuilderRegistry(), config, GetOptInfoMap(), updated_weight_names_map, weight_partition_info);
+      GetOptimizerBuilderRegistry(), config, GetOptInfoMap(weight_names), updated_weight_names_map, weight_partition_info);
 
   OptimizerOutputKeyMap<std::string> opt_graph_outputs;
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>> weight_to_opt_mapping;
   ASSERT_STATUS_OK(optimizer_graph_builder.Build(graph, weight_to_opt_mapping, opt_graph_outputs));
 
+  int total_weight_bytes = 0;
+  for (auto& weight_dim : weight_dims) {
+    size_t bytes;
+    ORT_ENFORCE(IAllocator::CalcMemSizeForArrayWithAlignment<kAllocAlignment>(weight_dim, sizeof(float), &bytes));
+    total_weight_bytes += bytes;
+  }
+
+  const size_t alignment = config.data_parallel_group_size * 32;
+  const size_t padded_buffer_bytes = ((total_weight_bytes + alignment - 1) / alignment) * alignment;
+  int rank_bytes = padded_buffer_bytes / config.data_parallel_group_size;
+  const size_t rank_start = config.data_parallel_group_rank * rank_bytes;
+  const size_t rank_end = rank_start + rank_bytes;
+
+  int optimizer_node_count = 0;
+  size_t offset = 0;
+  for (size_t i = 0; i < weight_dims.size(); i++) {
+    const size_t tensor_count = weight_dims[i];
+    size_t tensor_bytes = 0;
+    ORT_ENFORCE(IAllocator::CalcMemSizeForArrayWithAlignment<kAllocAlignment>(tensor_count, sizeof(float), &tensor_bytes));
+
+    size_t tensor_start_address = offset;
+    size_t tensor_end_address = tensor_start_address + tensor_count * sizeof(float);
+    if (tensor_start_address < rank_end && tensor_end_address > rank_start) {
+      optimizer_node_count++;
+    }
+    offset += tensor_bytes;
+  }
+
   auto op_counts = CountOpsInGraph(graph, false);
 
   // verify gradient accumulation operations exist
   if (config.gradient_accumulation_steps > 1) {
-    ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), k_weight_names.size());
-    ASSERT_EQ(GetOpCount(op_counts, k_inplace_accumulator_op_name), k_weight_names.size());
-    ASSERT_EQ(GetOpCount(op_counts, k_zero_gradient_op_name), k_weight_names.size());
-    ASSERT_GT(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 0);
+    ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), weight_names.size());
+    ASSERT_EQ(GetOpCount(op_counts, k_inplace_accumulator_op_name), weight_names.size());
+    ASSERT_EQ(GetOpCount(op_counts, k_zero_gradient_op_name), weight_names.size());
+    ASSERT_EQ(opt_graph_outputs.count(OptimizerOutputKey::GradientAccumulation), 1);
   }
 
   // verify mixed precision operations exist
   if (config.use_mixed_precision) {
-    ASSERT_GT(GetOpCount(op_counts, k_gradient_norm_op_name), 0);
-    ASSERT_GT(GetOpCount(op_counts, k_is_all_finite_op_name), 0);
+    if (optimizer_node_count > 0) {
+      ASSERT_EQ(GetOpCount(op_counts, k_gradient_norm_op_name), 1);
+    } else {
+      ASSERT_EQ(GetOpCount(op_counts, k_gradient_norm_op_name), 0);
+    }
+
+    ASSERT_EQ(GetOpCount(op_counts, k_is_all_finite_op_name), 1);
   }
 
   // verify ZeRO operations exist
-  ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), k_weight_names.size());
-  ASSERT_GT(GetOpCount(op_counts, k_reduce_scatter_op_name), 0);
-  ASSERT_GT(GetOpCount(op_counts, k_all_gather_op_name), 0);
+  ASSERT_EQ(GetOpCount(op_counts, k_unscale_op_name), weight_names.size());
+  ASSERT_EQ(GetOpCount(op_counts, k_reduce_scatter_op_name), 1);
+  ASSERT_EQ(GetOpCount(op_counts, k_all_gather_op_name), 1);
 
   // verify optimizers exist
-  ASSERT_EQ(GetOpCount(op_counts, k_adam_optimizer_op_name), k_weight_names.size());
+  ASSERT_EQ(GetOpCount(op_counts, k_adam_optimizer_op_name), optimizer_node_count);
 }
 
-TEST_F(OptimizerGraphBuilderTest, ZeRO_NoGradientAccumulation_NoMixedPrecision) {
+TEST_F(ZeroOptimizerGraphBuilderTest, ZeRO_NoGradientAccumulation_NoMixedPrecision) {
   OptimizerGraphConfig config;
   config.data_parallel_group_size = 4;
   config.use_nccl = true;
   config.deepspeed_zero = ZeROConfig{0};
   config.gradient_accumulation_steps = 1;
   config.use_mixed_precision = false;
-  TestZeROOptimizerGraphBuilder(config, graph_);
+  for (int rank = 0; rank < config.data_parallel_group_size; ++rank) {
+    config.data_parallel_group_rank = rank;
+    TestZeROOptimizerGraphBuilder(config, {12, 2, 312, 1233});
+  }
 }
 
-TEST_F(OptimizerGraphBuilderTest, ZeRO_WithGradientAccumulation_NoMixedPrecision) {
+TEST_F(ZeroOptimizerGraphBuilderTest, ZeRO_WithGradientAccumulation_NoMixedPrecision) {
   OptimizerGraphConfig config;
   config.data_parallel_group_size = 4;
   config.use_nccl = true;
   config.deepspeed_zero = ZeROConfig{0};
   config.gradient_accumulation_steps = 10;
   config.use_mixed_precision = false;
-  TestZeROOptimizerGraphBuilder(config, graph_);
+
+  for (int rank = 0; rank < config.data_parallel_group_size; ++rank) {
+    config.data_parallel_group_rank = rank;
+    TestZeROOptimizerGraphBuilder(config, {123, 22, 312, 123});
+  }
 }
 
-TEST_F(OptimizerGraphBuilderTest, ZeRO_NoGradientAccumulation_WithMixedPrecision) {
+TEST_F(ZeroOptimizerGraphBuilderTest, ZeRO_NoGradientAccumulation_WithMixedPrecision) {
   OptimizerGraphConfig config;
-  config.data_parallel_group_size = 4;
+  config.data_parallel_group_size = 16;
   config.use_nccl = true;
   config.deepspeed_zero = ZeROConfig{0};
   config.gradient_accumulation_steps = 1;
   config.use_mixed_precision = true;
   config.loss_scale_input_name = k_loss_scaling_factor_name;
-  TestZeROOptimizerGraphBuilder(config, graph_);
+
+  for (int rank = 0; rank < config.data_parallel_group_size; ++rank) {
+    config.data_parallel_group_rank = rank;
+    TestZeROOptimizerGraphBuilder(config, {12, 412, 312, 123});
+  }
 }
 
-TEST_F(OptimizerGraphBuilderTest, ZeRO_WithGradientAccumulation_WithMixedPrecision) {
+TEST_F(ZeroOptimizerGraphBuilderTest, ZeRO_WithGradientAccumulation_WithMixedPrecision) {
   OptimizerGraphConfig config;
-  config.data_parallel_group_size = 4;
+  config.data_parallel_group_size = 16;
   config.use_nccl = true;
   config.deepspeed_zero = ZeROConfig{0};
   config.gradient_accumulation_steps = 10;
   config.use_mixed_precision = true;
   config.loss_scale_input_name = k_loss_scaling_factor_name;
-  TestZeROOptimizerGraphBuilder(config, graph_);
+
+  for (int rank = 0; rank < config.data_parallel_group_size; ++rank) {
+    config.data_parallel_group_rank = rank;
+    TestZeROOptimizerGraphBuilder(config, {12, 231, 312, 1233});
+  }
 }
 
 #endif  // ORT_USE_NCCL

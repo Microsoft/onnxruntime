@@ -37,4 +37,16 @@ ONNX_CPU_OPERATOR_KERNEL(
     KernelDefBuilder().TypeConstraint("T", DataTypeImpl::AllTensorTypes()).Alias(0, 0),
     IdentityOp<false>);
 
+namespace contrib {
+
+ONNX_OPERATOR_KERNEL_EX(
+    Duplicate,
+    kMSDomain,
+    1,
+    kCpuExecutionProvider,
+    KernelDefBuilder().TypeConstraint("T", DataTypeImpl::AllTensorTypes()),
+    IdentityOp<false>);
+
+}  //namespace contrib
+
 }  // namespace onnxruntime

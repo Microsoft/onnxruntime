@@ -31,6 +31,7 @@ TensorProto ToTensor<onnxruntime::MLFloat16>(const onnxruntime::MLFloat16& value
   TensorProto t;
   t.set_data_type(TensorProto_DataType_FLOAT16);
   t.add_int32_data(value.val);
+  t.add_dims(1);
   return t;
 }
 
@@ -50,6 +51,7 @@ TensorProto ToTensor<onnxruntime::BFloat16>(const onnxruntime::BFloat16& value) 
   TensorProto t;
   t.set_data_type(TensorProto_DataType_BFLOAT16);
   t.add_int32_data(value.val);
+  t.add_dims(1);
   return t;
 }
 

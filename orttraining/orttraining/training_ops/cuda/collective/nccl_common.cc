@@ -79,7 +79,7 @@ NcclContext::NcclContext() {
 
   // Initialize Data Parallel Group NCCL Communicator
   ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::DataParallel,
-                                    &data_group_comm_);
+                               &data_group_comm_);
   ORT_ENFORCE(ret.IsOK());
 
   // Initialize Horizontal Model Parallel Group NCCL Communicator
@@ -110,11 +110,9 @@ ncclComm_t NcclContext::Comm(training::WorkerGroupType group_type) {
     return data_group_comm_;
   } else if (training::WorkerGroupType::HorizontalParallel == group_type) {
     return horizontal_group_comm_;
-  }
-  else if (training::WorkerGroupType::NodeLocalDataParallel == group_type) {
+  } else if (training::WorkerGroupType::NodeLocalDataParallel == group_type) {
     return node_local_comm_;
-  }
-  else if (training::WorkerGroupType::CrossNodeDataParallel == group_type) {
+  } else if (training::WorkerGroupType::CrossNodeDataParallel == group_type) {
     return cross_node_comm_;
   }
 
