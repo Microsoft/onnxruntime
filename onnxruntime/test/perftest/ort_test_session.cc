@@ -41,13 +41,49 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
 #endif
   } else if (provider_name == onnxruntime::kCudaExecutionProvider) {
 #ifdef USE_CUDA
-    OrtCUDAProviderOptions cuda_options{
-        0,
-        static_cast<OrtCudnnConvAlgoSearch>(performance_test_config.run_config.cudnn_conv_algo),
-        std::numeric_limits<size_t>::max(),
-        0,
-        !performance_test_config.run_config.do_cuda_copy_in_separate_stream};
-    session_options.AppendExecutionProvider_CUDA(cuda_options);
+    const auto& api = Ort::GetApi();
+
+    OrtCUDAProviderOptions* cuda_options;
+    Ort::ThrowOnError(api.CreateCUDAProviderOptions(&cuda_options));
+    std::unique_ptr<OrtCUDAProviderOptions, decltype(api.ReleaseCUDAProviderOptions)> rel_cuda_options(cuda_options, api.ReleaseCUDAProviderOptions);
+
+    std::vector<const char*> cuda_options_keys{"device_id", "arena_extend_strategy", "cuda_mem_limit",
+                                               "cudnn_conv_algo_search", "do_copy_in_default_stream"};
+    std::vector<const char*> cuda_options_values;
+    cuda_options_values.reserve(5);
+
+    // device id
+    cuda_options_values.push_back("0");
+
+    // arena extend strategy
+    cuda_options_values.push_back("kNextPowerOfTwo");
+
+    // cuda mem limit
+    auto size_t_numeric_limits_max_string = std::to_string(std::numeric_limits<size_t>::max());
+    cuda_options_values.push_back(size_t_numeric_limits_max_string.c_str());
+
+    // cudnn conv algo search
+    switch (performance_test_config.run_config.cudnn_conv_algo) {
+      case 0:
+        cuda_options_values.push_back("EXHAUSTIVE");
+        break;
+      case 1:
+        cuda_options_values.push_back("HEURISTIC");
+        break;
+      case 2:
+        cuda_options_values.push_back("DEFAULT");
+        break;
+      default:
+        ORT_THROW("Unsupported value for cudnn_conv_algo. only 0, 1, 2 are supported. Got: ", performance_test_config.run_config.cudnn_conv_algo);
+    }
+
+    // do copy in default stream
+    if (!performance_test_config.run_config.do_cuda_copy_in_separate_stream)
+      cuda_options_values.push_back("1");
+    else
+      cuda_options_values.push_back("0");
+
+    session_options.AppendExecutionProvider_CUDA(*cuda_options);
 #else
     ORT_THROW("CUDA is not supported in this build\n");
 #endif

@@ -255,4 +255,12 @@ ORT_API_STATUS_IMPL(SetGlobalDenormalAsZero, _Inout_ OrtThreadingOptions* option
 ORT_API_STATUS_IMPL(CreateArenaCfg, _In_ size_t max_mem, int arena_extend_strategy, int initial_chunk_size_bytes,
                     int max_dead_bytes_per_chunk, _Outptr_ OrtArenaCfg** out);
 ORT_API(void, ReleaseArenaCfg, _Frees_ptr_opt_ OrtArenaCfg*);
+
+ORT_API_STATUS_IMPL(CreateCUDAProviderOptions, _Outptr_ OrtCUDAProviderOptions** out);
+ORT_API_STATUS_IMPL(UpdateCUDAProviderOptions, _Inout_ OrtCUDAProviderOptions* cuda_provider_options,
+                    _In_reads_(num_keys) const char* const* provider_options_keys,
+                    _In_reads_(num_keys) const char* const* provider_options_values,
+                    size_t num_keys);
+ORT_API(void, ReleaseCUDAProviderOptions, _Frees_ptr_opt_ OrtCUDAProviderOptions*);
+
 }  // namespace OrtApis

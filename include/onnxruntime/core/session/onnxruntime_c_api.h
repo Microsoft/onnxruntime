@@ -165,6 +165,7 @@ ORT_RUNTIME_CLASS(ModelMetadata);
 ORT_RUNTIME_CLASS(ThreadPoolParams);
 ORT_RUNTIME_CLASS(ThreadingOptions);
 ORT_RUNTIME_CLASS(ArenaCfg);
+ORT_RUNTIME_CLASS(CUDAProviderOptions);
 
 #ifdef _WIN32
 typedef _Return_type_success_(return == 0) OrtStatus* OrtStatusPtr;
@@ -250,23 +251,6 @@ typedef enum OrtMemType {
   OrtMemTypeCPU = OrtMemTypeCPUOutput,  // temporary CPU accessible memory allocated by non-CPU execution provider, i.e. CUDA_PINNED
   OrtMemTypeDefault = 0,                // the default allocator for execution provider
 } OrtMemType;
-
-typedef enum OrtCudnnConvAlgoSearch {
-  EXHAUSTIVE,  // expensive exhaustive benchmarking using cudnnFindConvolutionForwardAlgorithmEx
-  HEURISTIC,   // lightweight heuristic based search using cudnnGetConvolutionForwardAlgorithm_v7
-  DEFAULT,     // default algorithm using CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM
-} OrtCudnnConvAlgoSearch;
-
-/// <summary>
-/// Options for the CUDA provider that are passed to SessionOptionsAppendExecutionProvider_CUDA
-/// </summary>
-typedef struct OrtCUDAProviderOptions {
-  int device_id;                                  // cuda device with id=0 as default device.
-  OrtCudnnConvAlgoSearch cudnn_conv_algo_search;  // cudnn conv algo search option
-  size_t cuda_mem_limit;                          // default cuda memory limitation to maximum finite value of size_t.
-  int arena_extend_strategy;                      // default area extend strategy to KNextPowerOfTwo.
-  int do_copy_in_default_stream;
-} OrtCUDAProviderOptions;
 
 /// <summary>
 /// Options for the OpenVINO provider that are passed to SessionOptionsAppendExecutionProvider_OpenVINO
@@ -1146,6 +1130,26 @@ struct OrtApi {
   */
   ORT_API2_STATUS(ModelMetadataGetGraphDescription, _In_ const OrtModelMetadata* model_metadata,
                   _Inout_ OrtAllocator* allocator, _Outptr_ char** value);
+
+  /**
+  * Use this API to create the configuration of a CUDA Execution Provider
+  */
+  ORT_API2_STATUS(CreateCUDAProviderOptions, _Outptr_ OrtCUDAProviderOptions** out);
+
+  /**
+  * Use this API to set the appropriate configuration knobs of a CUDA Execution Provider
+  * Please refer to the following on different key/value pairs to configure a CUDA EP and their meaning:
+  * https://www.onnxruntime.ai/docs/reference/execution-providers/CUDA-ExecutionProvider.html
+  */
+  ORT_API2_STATUS(UpdateCUDAProviderOptions, _Inout_ OrtCUDAProviderOptions* cuda_provider_options,
+                  _In_reads_(num_keys) const char* const* provider_options_keys,
+                  _In_reads_(num_keys) const char* const* provider_options_values,
+                  _In_ size_t num_keys);
+
+  /**
+  * Use this API to release the configuration of a CUDA Execution Provider
+  */
+  ORT_CLASS_RELEASE(CUDAProviderOptions);
 };
 
 /*

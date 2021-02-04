@@ -189,6 +189,9 @@ namespace Microsoft.ML.OnnxRuntime
         public IntPtr CreateArenaCfg;
         public IntPtr ReleaseArenaCfg;
         public IntPtr ModelMetadataGetGraphDescription;
+        public IntPtr CreateCUDAProviderOptions;
+        public IntPtr UpdateCUDAProviderOptions;
+        public IntPtr ReleaseCUDAProviderOptions;
     }
 
     internal static class NativeMethods
@@ -255,6 +258,8 @@ namespace Microsoft.ML.OnnxRuntime
             OrtRegisterCustomOpsLibrary = (DOrtRegisterCustomOpsLibrary)Marshal.GetDelegateForFunctionPointer(api_.RegisterCustomOpsLibrary, typeof(DOrtRegisterCustomOpsLibrary));
             OrtAddSessionConfigEntry = (DOrtAddSessionConfigEntry)Marshal.GetDelegateForFunctionPointer(api_.AddSessionConfigEntry, typeof(DOrtAddSessionConfigEntry));
             OrtAddInitializer = (DOrtAddInitializer)Marshal.GetDelegateForFunctionPointer(api_.AddInitializer, typeof(DOrtAddInitializer));
+            SessionOptionsAppendExecutionProvider_CUDA = (DSessionOptionsAppendExecutionProvider_CUDA)Marshal.GetDelegateForFunctionPointer(
+                                                             api_.SessionOptionsAppendExecutionProvider_CUDA, typeof(DSessionOptionsAppendExecutionProvider_CUDA));
 
             OrtCreateRunOptions = (DOrtCreateRunOptions)Marshal.GetDelegateForFunctionPointer(api_.CreateRunOptions, typeof(DOrtCreateRunOptions));
             OrtReleaseRunOptions = (DOrtReleaseRunOptions)Marshal.GetDelegateForFunctionPointer(api_.ReleaseRunOptions, typeof(DOrtReleaseRunOptions));
@@ -334,6 +339,10 @@ namespace Microsoft.ML.OnnxRuntime
 
             OrtGetAvailableProviders = (DOrtGetAvailableProviders)Marshal.GetDelegateForFunctionPointer(api_.GetAvailableProviders, typeof(DOrtGetAvailableProviders));
             OrtReleaseAvailableProviders = (DOrtReleaseAvailableProviders)Marshal.GetDelegateForFunctionPointer(api_.ReleaseAvailableProviders, typeof(DOrtReleaseAvailableProviders));
+
+            OrtCreateCUDAProviderOptions = (DOrtCreateCUDAProviderOptions)Marshal.GetDelegateForFunctionPointer(api_.CreateCUDAProviderOptions, typeof(DOrtCreateCUDAProviderOptions));
+            OrtUpdateCUDAProviderOptions = (DOrtUpdateCUDAProviderOptions)Marshal.GetDelegateForFunctionPointer(api_.UpdateCUDAProviderOptions, typeof(DOrtUpdateCUDAProviderOptions));
+            OrtReleaseCUDAProviderOptions = (DOrtReleaseCUDAProviderOptions)Marshal.GetDelegateForFunctionPointer(api_.ReleaseCUDAProviderOptions, typeof(DOrtReleaseCUDAProviderOptions));
         }
 
         [DllImport(nativeLib, CharSet = charSet)]
@@ -355,6 +364,37 @@ namespace Microsoft.ML.OnnxRuntime
         public static DOrtDisableTelemetryEvents OrtDisableTelemetryEvents;
 
         #endregion Runtime/Environment API
+
+        #region Provider Options API
+        /// <summary>
+        /// Creates native OrtCUDAProviderOptions instance
+        /// </summary>
+        /// <param name="cudaProviderOptionsInstance">(output) native instance of OrtCUDAProviderOptions</param>
+        public delegate IntPtr /* OrtStatus* */DOrtCreateCUDAProviderOptions(
+            out IntPtr /*(OrtCUDAProviderOptions**)*/ cudaProviderOptionsInstance);
+        public static DOrtCreateCUDAProviderOptions OrtCreateCUDAProviderOptions;
+
+        /// <summary>
+        /// Updates native OrtCUDAProviderOptions instance using given key/value pairs
+        /// </summary>
+        /// <param name="cudaProviderOptionsInstance">native instance of OrtCUDAProviderOptions</param>
+        /// <param name="providerOptionsKeys">configuration keys of OrtCUDAProviderOptions</param>
+        /// <param name="providerOptionsValues">configuration values of OrtCUDAProviderOptions</param>
+        /// <param name="numKeys">number of configuration keys</param>
+        public delegate IntPtr /* OrtStatus* */DOrtUpdateCUDAProviderOptions(
+            IntPtr /*(OrtCUDAProviderOptions*)*/ cudaProviderOptionsInstance,
+            IntPtr[] /*(const char* const *)*/ providerOptionsKeys,
+            IntPtr[] /*(const char* const *)*/ providerOptionsValues,
+            UIntPtr /*(size_t)*/ numKeys);
+        public static DOrtUpdateCUDAProviderOptions OrtUpdateCUDAProviderOptions;
+
+        /// <summary>
+        /// Releases native OrtCUDAProviderOptions instance
+        /// </summary>
+        /// <param name="cudaProviderOptionsInstance">native instance of OrtCUDAProviderOptions to be released</param>
+        public delegate void DOrtReleaseCUDAProviderOptions(IntPtr /*(OrtCUDAProviderOptions*)*/ cudaProviderOptionsInstance);
+        public static DOrtReleaseCUDAProviderOptions OrtReleaseCUDAProviderOptions;
+        #endregion
 
         #region Status API
         public delegate ErrorCode DOrtGetErrorCode(IntPtr /*(OrtStatus*)*/status);
@@ -559,6 +599,16 @@ namespace Microsoft.ML.OnnxRuntime
 
         [DllImport(nativeLib, CharSet = charSet)]
         public static extern IntPtr /*(OrtStatus*)*/ OrtSessionOptionsAppendExecutionProvider_CUDA(IntPtr /*(OrtSessionOptions*) */ options, int device_id);
+
+        /// <summary>
+        /// Append a CUDA EP instance (configured based on given provider options) to the native OrtSessionOptions instance
+        /// </summary>
+        /// <param name="options">Native OrtSessionOptions instance</param>
+        /// <param name="cudaProviderOptions">Native OrtCUDAProviderOptions instance</param>
+        public delegate IntPtr /*(OrtStatus*)*/DSessionOptionsAppendExecutionProvider_CUDA(
+                                               IntPtr /*(OrtSessionOptions*)*/ options,
+                                               IntPtr /*(const OrtCUDAProviderOptions*)*/ cudaProviderOptions);
+        public static DSessionOptionsAppendExecutionProvider_CUDA SessionOptionsAppendExecutionProvider_CUDA;
 
         [DllImport(nativeLib, CharSet = charSet)]
         public static extern IntPtr /*(OrtStatus*)*/ OrtSessionOptionsAppendExecutionProvider_DML(IntPtr /*(OrtSessionOptions*) */ options, int device_id);

@@ -8,7 +8,7 @@
 #include "core/framework/arena_extend_strategy.h"
 #include "core/framework/ortdevice.h"
 #include "core/framework/provider_options.h"
-#include "core/session/onnxruntime_c_api.h"
+#include "core/framework/cuda_provider_options.h"
 
 namespace onnxruntime {
 // Information needed to construct CUDA execution providers.

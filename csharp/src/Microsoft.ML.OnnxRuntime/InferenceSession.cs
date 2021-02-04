@@ -145,9 +145,9 @@ namespace Microsoft.ML.OnnxRuntime
         {
             using (var cleanupList = new DisposableList<IDisposable>())
             {
-                var inputNamesArray = ConvertNamesToUtf8(inputs, v => v.Name, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputs, v => v.Name, cleanupList);
                 var inputValuesArray = GetOrtValuesHandles(inputs, cleanupList);
-                var outputNamesArray = ConvertNamesToUtf8(outputNames, n => n, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputNames, n => n, cleanupList);
 
                 var ortValues = RunImpl(options, inputNamesArray, inputValuesArray, outputNamesArray, cleanupList);
                 return CreateDisposableResult(ortValues, outputNames);
@@ -205,9 +205,9 @@ namespace Microsoft.ML.OnnxRuntime
 
             using (var cleanupList = new DisposableList<IDisposable>())
             {
-                var inputNamesArray = ConvertNamesToUtf8(inputNames, n => n, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputNames, n => n, cleanupList);
                 IntPtr[] inputValuesArray = GetOrtValuesHandles(inputValues, true);
-                var outputNamesArray = ConvertNamesToUtf8(outputNames, n => n, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputNames, n => n, cleanupList);
 
 
                 var ortValues = RunImpl(options, inputNamesArray, inputValuesArray, outputNamesArray, cleanupList);
@@ -262,11 +262,11 @@ namespace Microsoft.ML.OnnxRuntime
             using (var cleanupList = new DisposableList<IDisposable>())
             {
                 // prepare inputs
-                var inputNamesArray = ConvertNamesToUtf8(inputNames, n => n, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputNames, n => n, cleanupList);
                 IntPtr[] inputValuesArray = GetOrtValuesHandles(inputValues, true);
 
                 // prepare outputs
-                var outputNamesArray = ConvertNamesToUtf8(outputNames, n => n, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputNames, n => n, cleanupList);
                 IntPtr[] outputValuesArray = GetOrtValuesHandles(outputValues, false);
 
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtRun(
@@ -310,12 +310,12 @@ namespace Microsoft.ML.OnnxRuntime
             IReadOnlyCollection<NamedOnnxValue> outputs,
             RunOptions options)
         {
-            using(var cleanupList = new DisposableList<IDisposable>())
+            using (var cleanupList = new DisposableList<IDisposable>())
             {
-                var inputNamesArray = ConvertNamesToUtf8(inputs, i => i.Name, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputs, i => i.Name, cleanupList);
                 var inputValuesArray = GetOrtValuesHandles(inputs, cleanupList);
 
-                var outputNamesArray = ConvertNamesToUtf8(outputs, o => o.Name, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputs, o => o.Name, cleanupList);
                 var outputValuesArray = GetOrtValuesHandles(outputs, cleanupList);
 
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtRun(
@@ -367,14 +367,14 @@ namespace Microsoft.ML.OnnxRuntime
                 throw new ArgumentException($"Length of {nameof(outputNames)} ({outputNames.Count}) must match that of {nameof(outputValues)} ({outputValues.Count}).");
             }
 
-            using(var cleanupList = new DisposableList<IDisposable>())
+            using (var cleanupList = new DisposableList<IDisposable>())
             {
                 // prepare inputs
-                var inputNamesArray = ConvertNamesToUtf8(inputs, i => i.Name, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputs, i => i.Name, cleanupList);
                 var inputValuesArray = GetOrtValuesHandles(inputs, cleanupList);
 
                 // prepare outputs
-                var outputNamesArray = ConvertNamesToUtf8(outputNames, n => n, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputNames, n => n, cleanupList);
                 var outputValuesArray = GetOrtValuesHandles(outputValues, false);
 
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtRun(
@@ -428,14 +428,14 @@ namespace Microsoft.ML.OnnxRuntime
                 throw new ArgumentException($"Length of {nameof(inputNames)} ({inputNames.Count}) must match that of {nameof(inputValues)} ({inputValues.Count}).");
             }
 
-            using(var cleanupList = new DisposableList<IDisposable>())
+            using (var cleanupList = new DisposableList<IDisposable>())
             {
                 // prepare inputs
-                var inputNamesArray = ConvertNamesToUtf8(inputNames, n => n, cleanupList);
+                var inputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(inputNames, n => n, cleanupList);
                 var inputValuesArray = GetOrtValuesHandles(inputValues, true);
 
                 // prepare outputs
-                var outputNamesArray = ConvertNamesToUtf8(outputs, o => o.Name, cleanupList);
+                var outputNamesArray = NativeOnnxValueHelper.ConvertNamesToUtf8(outputs, o => o.Name, cleanupList);
                 var outputValuesArray = GetOrtValuesHandles(outputs, cleanupList);
 
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtRun(
@@ -515,7 +515,8 @@ namespace Microsoft.ML.OnnxRuntime
                         var ortValue = ortValues.ElementAt(i);
                         result.Add(DisposableNamedOnnxValue.CreateFromOrtValue(outputNames[i], ortValue));
                     }
-                } catch(Exception e)
+                }
+                catch (Exception e)
                 {
                     result.Dispose();
                     throw e;
@@ -535,34 +536,10 @@ namespace Microsoft.ML.OnnxRuntime
             NativeApiStatus.VerifySuccess(NativeMethods.OrtSessionEndProfiling(_nativeHandle,
                                                                    allocator.Pointer,
                                                                    out nameHandle));
-            using(var allocation = new OrtMemoryAllocation(allocator, nameHandle, 0))
+            using (var allocation = new OrtMemoryAllocation(allocator, nameHandle, 0))
             {
                 return NativeOnnxValueHelper.StringFromNativeUtf8(nameHandle);
             }
-        }
-
-        // Delegate for string extraction from an arbitrary input/output object
-        private delegate string NameExtractor<in TInput>(TInput input);
-
-        /// <summary>
-        /// Run helper
-        /// </summary>
-        /// <param name="names">names to convert to zero terminated utf8 and pin</param>
-        /// <param name="cleanupList">list to add pinned memory to for later disposal</param>
-        /// <returns></returns>
-        private IntPtr[] ConvertNamesToUtf8<T>(IReadOnlyCollection<T> inputs, NameExtractor<T> extractor,
-            DisposableList<IDisposable> cleanupList)
-        {
-            var result = new IntPtr[inputs.Count];
-            for (int i = 0; i < inputs.Count; ++i)
-            {
-                var name = extractor(inputs.ElementAt(i));
-                var utf8Name = NativeOnnxValueHelper.StringToZeroTerminatedUtf8(name);
-                var pinnedHandle = new PinnedGCHandle(GCHandle.Alloc(utf8Name, GCHandleType.Pinned));
-                result[i] = pinnedHandle.Pointer;
-                cleanupList.Add(pinnedHandle);
-            }
-            return result;
         }
 
         /// <summary>
@@ -609,8 +586,8 @@ namespace Microsoft.ML.OnnxRuntime
         }
 
 
-         private DisposableList<OrtValue> RunImpl(RunOptions options, IntPtr[] inputNames, IntPtr[] inputValues, IntPtr[] outputNames,
-            DisposableList<IDisposable> cleanupList)
+        private DisposableList<OrtValue> RunImpl(RunOptions options, IntPtr[] inputNames, IntPtr[] inputValues, IntPtr[] outputNames,
+           DisposableList<IDisposable> cleanupList)
         {
             var ortValues = new DisposableList<OrtValue>(outputNames.Length);
             cleanupList.Add(ortValues);
@@ -680,11 +657,11 @@ namespace Microsoft.ML.OnnxRuntime
         /// </summary>
         public ulong ProfilingStartTimeNs
         {
-           get
-           {
-               return _profilingStartTimeNs;
-           }
-        }  
+            get
+            {
+                return _profilingStartTimeNs;
+            }
+        }
 
         #endregion
 
@@ -757,8 +734,8 @@ namespace Microsoft.ML.OnnxRuntime
                 // set profiling's start time
                 UIntPtr startTime = UIntPtr.Zero;
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtSessionGetProfilingStartTimeNs(_nativeHandle,
-                                                                    out startTime)); 
-                _profilingStartTimeNs = (ulong) startTime;
+                                                                    out startTime));
+                _profilingStartTimeNs = (ulong)startTime;
             }
             catch (OnnxRuntimeException e)
             {
@@ -821,7 +798,7 @@ namespace Microsoft.ML.OnnxRuntime
                                             (UIntPtr)index,
                                             allocator.Pointer,
                                             out nameHandle));
-            using(var ortAllocation = new OrtMemoryAllocation(allocator, nameHandle, 0))
+            using (var ortAllocation = new OrtMemoryAllocation(allocator, nameHandle, 0))
             {
                 str = NativeOnnxValueHelper.StringFromNativeUtf8(nameHandle);
             }
@@ -963,7 +940,7 @@ namespace Microsoft.ML.OnnxRuntime
         /// <param name="disposing">true if invoked from Dispose() method</param>
         protected virtual void Dispose(bool disposing)
         {
-            if(_disposed)
+            if (_disposed)
             {
                 return;
             }
@@ -1137,7 +1114,7 @@ namespace Microsoft.ML.OnnxRuntime
                     }
 
                     // Process each key via the stored key handles
-                    foreach(var allocation in ortAllocationKeys)
+                    foreach (var allocation in ortAllocationKeys)
                     {
                         IntPtr keyHandle = allocation.Pointer;
                         IntPtr valueHandle = IntPtr.Zero;
@@ -1160,9 +1137,9 @@ namespace Microsoft.ML.OnnxRuntime
             {
 
                 // Free ModelMetadata handle
-                 NativeMethods.OrtReleaseModelMetadata(modelMetadataHandle);
+                NativeMethods.OrtReleaseModelMetadata(modelMetadataHandle);
 
-             }
+            }
 
         }
 
