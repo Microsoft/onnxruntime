@@ -8,7 +8,7 @@ jobs:
     AgentPool : 'Win-GPU-2019'
     ArtifactName: 'drop-nuget'
     JobName: 'Windows_CI_GPU_CUDA_Dev'
-    BuildCommand: --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --enable_onnx_tests --use_telemetry --cmake_generator "Visual Studio 16 2019" --use_cuda --cuda_version=10.2 --cuda_home="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.2" --cudnn_home="C:\local\cudnn-10.2-windows10-x64-v8.0.3.33\cuda"
+    BuildCommand: --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --enable_onnx_tests --use_telemetry --cmake_generator "Visual Studio 16 2019" --use_cuda --cuda_version=10.2 --cuda_home="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.2" --cudnn_home="C:\local\cudnn-10.2-windows10-x64-v8.0.3.33\cuda" --cmake_extra_defines onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS=ON
     BuildArch: 'x64'
     msbuildArchitecture: 'amd64'
     EnvSetupScript: 'setup_env_cuda.bat'
