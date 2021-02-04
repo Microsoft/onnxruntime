@@ -35,3 +35,17 @@ e.g.
   OrtReleaseObject(factory);
   OrtCreateSession(env, model_path, session_option, &session);
 ```
+
+# Testing your execution provider
+
+To ease the testing of your execution provider, you can add a new case for it to the `onnx_test_runner` command,
+do this by adding it to `onnxruntime/test/onnx/main.cc` file, following the pattern for other existing providers.
+
+Once you have this in place, you can run the `onnx_test_runner`, like this:
+
+```
+$ cd build/PLATFORM/CONFIGURATION
+$ ./onnx_test_runner -e YOUR_BACKEND ./testdata/ort_minimal_e2e_test_data/
+$ ./onnx_test_runner -e YOUR_BACKEND ./testdata/gemm_activation_fusion/
+```
+
