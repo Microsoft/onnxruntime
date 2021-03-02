@@ -18,6 +18,8 @@ from inspect import signature
 from onnxruntime.training import _utils, ORTModule
 import _test_helpers
 
+# Import autocasting libs
+from torch.cuda import amp
 
 # PyTorch model definitions for tests
 
@@ -405,25 +407,28 @@ def test_input_requires_grad_backward_creates_input_grad(device):
     s.backward()
     assert x.grad is not None
 
-def test_gradient_correctness():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_gradient_correctness(use_fp16):
     device = 'cuda'
-    N, D_in, H, D_out = 32, 128, 500, 10
+    N, D_in, H, D_out = 4, 128, 64, 10
     pt_model = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
     ort_model = ORTModule(copy.deepcopy(pt_model))
 
     def run_step(model, x):
-        prediction = model(x)
-        loss = prediction.sum()
+        with amp.autocast(use_fp16):
+            prediction = model(x)
+            loss = prediction.sum()
         loss.backward()
 
     for step in range(10):
-        x = torch.randn(N, D_in, device=device)
+        x = torch.randn(N, N, D_in, device=device)
         run_step(pt_model, x)
         run_step(ort_model, x)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model, use_fp16=use_fp16)
 
-def test_multiple_forward_only_calls():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_multiple_forward_only_calls(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 784, 500, 10
     pt_model = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
@@ -431,23 +436,26 @@ def test_multiple_forward_only_calls():
 
     for step in range(10):
         x = torch.randn(N, D_in, device=device, requires_grad=False)
-        pt_prediction = pt_model(x)
-        ort_prediction = ort_model(x)
+        with amp.autocast(use_fp16):
+            pt_prediction = pt_model(x)
+            ort_prediction = ort_model(x)
 
-        assert torch.allclose(ort_prediction, pt_prediction)
+        _test_helpers.assert_torch_allclose(ort_prediction, pt_prediction, use_fp16=use_fp16)
 
-def test_multiple_overlapping_forward_backward_calls():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_multiple_overlapping_forward_backward_calls(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 784, 500, 10
     pt_model = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
     ort_model = ORTModule(copy.deepcopy(pt_model))
 
     def run_step(model, x1, x2):
-        prediction1 = model(x1)
-        loss1 = prediction1.sum()
+        with amp.autocast(use_fp16):
+            prediction1 = model(x1)
+            loss1 = prediction1.sum()
 
-        prediction2 = model(x2)
-        loss2 = prediction2.sum()
+            prediction2 = model(x2)
+            loss2 = prediction2.sum()
         
         loss1.backward()
         loss2.backward()
@@ -464,11 +472,12 @@ def test_multiple_overlapping_forward_backward_calls():
         run_step(pt_model, pt_x1, pt_x2)
         run_step(ort_model, ort_x1, ort_x2)
 
-        assert torch.allclose(ort_x1.grad, pt_x1.grad)
-        assert torch.allclose(ort_x2.grad, pt_x2.grad)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model)
+        _test_helpers.assert_torch_allclose(ort_x1.grad, pt_x1.grad, use_fp16=use_fp16)
+        _test_helpers.assert_torch_allclose(ort_x2.grad, pt_x2.grad, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model, use_fp16=use_fp16)
 
-def test_multiple_ortmodules_training():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_multiple_ortmodules_training(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 784, 128, 10
     pt_model1 = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
@@ -477,12 +486,14 @@ def test_multiple_ortmodules_training():
     ort_model2 = ORTModule(copy.deepcopy(pt_model2))
 
     def run_step(model1, model2, x1, x2):
-        prediction1 = model1(x1)
-        loss1 = prediction1.sum()
+        with amp.autocast(use_fp16):
+            prediction1 = model1(x1)
+            loss1 = prediction1.sum()
         loss1.backward()
 
-        prediction2 = model2(x2)
-        loss2 = prediction2.sum()
+        with amp.autocast(use_fp16):
+            prediction2 = model2(x2)
+            loss2 = prediction2.sum()
         loss2.backward()
 
     for step in range(10):
@@ -490,11 +501,12 @@ def test_multiple_ortmodules_training():
         x2 = torch.randn(N, D_in, device=device)
         run_step(pt_model1, pt_model2, x1, x2)
         run_step(ort_model1, ort_model2, x1, x2)
+       
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2, use_fp16=use_fp16)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2)
-
-def test_multiple_ortmodules_common_backbone_training():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_multiple_ortmodules_common_backbone_training(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 64, 128, 64
     pt_model0 = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
@@ -506,8 +518,9 @@ def test_multiple_ortmodules_common_backbone_training():
     ort_model2 = ORTModule(copy.deepcopy(pt_model2))
 
     def run_step(backbone_layers, task_layers, x):
-        prediction = task_layers(backbone_layers(x))
-        loss = prediction.sum()
+        with amp.autocast(use_fp16):
+            prediction = task_layers(backbone_layers(x))
+            loss = prediction.sum()
         loss.backward()
 
     for step in range(10):
@@ -516,18 +529,19 @@ def test_multiple_ortmodules_common_backbone_training():
         run_step(pt_model0, pt_model1, x1)
         run_step(ort_model0, ort_model1, x1)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model0, pt_model0, reset_gradient=False)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model0, pt_model0, reset_gradient=False, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1, use_fp16=use_fp16)
 
         # Run task 2
         x2 = torch.randn(N, D_in, device=device)
-        run_step(pt_model0, pt_model2, x1)
-        run_step(ort_model0, ort_model2, x1)
+        run_step(pt_model0, pt_model2, x2)
+        run_step(ort_model0, ort_model2, x2)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model0, pt_model0, reset_gradient=True)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model0, pt_model0, reset_gradient=True, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2, use_fp16=use_fp16)
 
-def test_multiple_chained_ortmodules_training():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_multiple_chained_ortmodules_training(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 128, 500, 128
     pt_model1 = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
@@ -536,8 +550,9 @@ def test_multiple_chained_ortmodules_training():
     ort_model2 = ORTModule(copy.deepcopy(pt_model2))
 
     def run_step(layers1, layers2, x):
-        prediction = layers2(layers1(x))
-        loss = prediction.sum()
+        with amp.autocast(use_fp16):
+            prediction = layers2(layers1(x))
+            loss = prediction.sum()
         loss.backward()
 
     for step in range(10):
@@ -545,10 +560,11 @@ def test_multiple_chained_ortmodules_training():
         run_step(pt_model1, pt_model2, x)
         run_step(ort_model1, ort_model2, x)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2, use_fp16=use_fp16)
 
-def test_mixed_nnmodule_ortmodules_training():
+@pytest.mark.parametrize("use_fp16", [False, True])
+def test_mixed_nnmodule_ortmodules_training(use_fp16):
     device = 'cuda'
     N, D_in, H, D_out = 32, 128, 500, 128
     pt_model1 = NeuralNetSinglePositionalArgument(D_in, H, D_out).to(device)
@@ -560,10 +576,11 @@ def test_mixed_nnmodule_ortmodules_training():
     ort_model3 = ORTModule(copy.deepcopy(pt_model3))
 
     def run_step(model1, model2, model3, x1, x2):
-        a1 = model1(x1)
-        a2 = model2(x2)
-        a3 = model3(torch.sin(a1), torch.cos(a2))
-        loss = a3.sum()
+        with amp.autocast(use_fp16):
+            a1 = model1(x1)
+            a2 = model2(x2)
+            a3 = model3(torch.sin(a1), torch.cos(a2))
+            loss = a3.sum()
         loss.backward()
 
     for step in range(10):
@@ -572,9 +589,9 @@ def test_mixed_nnmodule_ortmodules_training():
         run_step(pt_model1, pt_model2, pt_model3, x1, x2)
         run_step(ort_model1, ort_model2, ort_model3, x1, x2)
 
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2)
-        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model3, pt_model3)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model1, pt_model1, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model2, pt_model2, use_fp16=use_fp16)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model3, pt_model3, use_fp16=use_fp16)
 
 @pytest.mark.parametrize("device", ['cuda', 'cpu'])
 def test_changes_input_requires_grad_reinitializes_module_gradient_graph_builder(device):
@@ -623,18 +640,27 @@ def test_input_requires_grad_backward_creates_input_grad_as_required0(device):
 
 
 
-@pytest.mark.parametrize("x1_requires_grad, x2_requires_grad", [(True, True), (True, False), (False, False), (False, True)])
-def test_input_requires_grad_backward_creates_input_grad_as_required1(x1_requires_grad, x2_requires_grad):
+@pytest.mark.parametrize("use_fp16, x1_requires_grad, x2_requires_grad", [
+    (False, True, True),
+    (False, True, False),
+    (False, False, False),
+    (False, False, True),
+    (True, True, True),
+    (True, True, False),
+    (True, False, False),
+    (True, False, True)])
+def test_input_requires_grad_backward_creates_input_grad_as_required1(use_fp16, x1_requires_grad, x2_requires_grad):
 
     def run_step(model, x1, x2):
-        y1, y2 = model(x1, x2)
-        s = y2.sum()
+        with amp.autocast(use_fp16):
+            y1, y2 = model(x1, x2)
+            s = y2.sum()
         s.backward()
 
     N, D_in, H, D_out = 32, 784, 500, 10
     device = 'cuda'
     pt_model = NeuralNetMultiplePositionalArgumentsMultipleOutputs1(D_in, H, D_out).to(device)
-    ort_model = ORTModule(pt_model)
+    ort_model = ORTModule(copy.deepcopy(pt_model))
     pt_x1 = torch.randn(N, D_in, device=device, requires_grad=x1_requires_grad)
     pt_x2 = torch.randn(N, D_in, device=device, requires_grad=x2_requires_grad)
 
@@ -650,7 +676,7 @@ def test_input_requires_grad_backward_creates_input_grad_as_required1(x1_require
     assert not x2_requires_grad or ort_x2.grad is not None
     assert not x1_requires_grad or torch.allclose(ort_x1.grad, pt_x1.grad)
     assert not x2_requires_grad or torch.allclose(ort_x2.grad, pt_x2.grad)
-    _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model)
+    _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model, use_fp16=use_fp16)
 
 def test_gpu_reserved_memory_with_torch_no_grad():
     device = 'cuda'
