@@ -15,9 +15,9 @@ import random
 import time
 import datetime
 
-
 import onnxruntime
 from onnxruntime.training import ORTModule
+# from perf_log.ort_module_perf_test_tools import log_perf_metrics
 
 def train(model, optimizer, scheduler, train_dataloader, epoch, device, args):
     # ========================================
@@ -312,6 +312,49 @@ def format_time(elapsed):
     # Format as hh:mm:ss
     return str(datetime.timedelta(seconds=elapsed_rounded))
 
+# def bert_classifier_log_perf_metrics(args, train_dataloader, perf_metrics_start_time):
+#     total_train_steps = 0
+#     if args.train_steps > 0:
+#         total_train_steps = args.train_steps * args.epochs
+#     else:
+#         total_train_steps = len(train_dataloader) * args.epochs
+
+#     perf_metrics = {}
+#     perf_metrics['Model'] = 'orttraining_test_ortmodule_bert_classifier'
+#     perf_metrics['BatchId'] = 'na'
+#     perf_metrics['ModelName'] = 'bert'
+#     perf_metrics['DisplayName'] = 'bert'
+#     perf_metrics['UseMixedPrecision'] = False
+#     perf_metrics['UseAutoCast'] = False
+#     perf_metrics['UseDeepSpeed'] = False
+#     perf_metrics['Optimizer'] = 'AdamW'
+#     perf_metrics['BatchSize'] = args.batch_size
+#     perf_metrics['SeqLen'] = 64                 # MAX_LEN = 64
+#     perf_metrics['PredictionsPerSeq'] = 0       # NA
+#     perf_metrics['NumOfBatches'] = args.epochs * total_train_steps
+#     perf_metrics['WeightUpdateSteps'] = args.epochs * total_train_steps
+#     perf_metrics['Round'] = 0
+#     perf_metrics['GradAccSteps'] = 0
+
+#     perf_metrics_duration = datetime.datetime.now() - perf_metrics_start_time
+#     perf_metrics['AvgTimePerBatch'] = \
+#         perf_metrics_duration.microseconds / total_train_steps
+
+#     perf_metrics['Throughput'] = \
+#         args.batch_size * total_train_steps / perf_metrics_duration.seconds
+
+#     perf_metrics['StabilizedThroughput'] = 0    # TODO
+#     perf_metrics['EndToEndThroughput'] = 0      # TODO
+#     perf_metrics['TotalTime'] = perf_metrics_duration.seconds
+
+#     perf_metrics['AvgCPU'] = 0                  # TODO
+#     perf_metrics['Memory'] = 0                  # TODO
+#     perf_metrics['RunConfig'] = 'na'
+#     perf_metrics['Time'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+#     log_perf_metrics(perf_metrics, args.perf_mysql_server_name, args.perf_power_bi_user_name,
+#         args.perf_power_bi_password, args.perf_power_bi_database, args.perf_repo_path)
+
 def main():
     # 1. Basic setup
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
@@ -339,6 +382,14 @@ def main():
                         help='Number of hidden layers for the BERT model. A vanila BERT has 12 hidden layers (default: 1)')
     parser.add_argument('--data-dir', type=str, default='./cola_public/raw',
                         help='Path to the bert data directory')
+
+    # parser.add_argument('--log_perf_metrics', action='store_true', default=False,
+    #                     help='whether to log perf data')
+    # parser.add_argument('--perf_mysql_server_name', type=str, help='perfmance mysql name')
+    # parser.add_argument('--perf_power_bi_user_name', type=str, help='perfmance power BI account user name')
+    # parser.add_argument('--perf_power_bi_password', type=str, help='perfmance power BI account password')
+    # parser.add_argument('--perf_power_bi_database', type=str, help='perfmance database')
+    # parser.add_argument('--perf_repo_path', type=str, help='path of ort source')
 
     args = parser.parse_args()
 
@@ -408,6 +459,8 @@ def main():
     if torch.cuda.is_available() and not args.no_cuda:
         torch.cuda.manual_seed_all(args.seed)
 
+    # perf_metrics_start_time = datetime.datetime.now()
+
     # 4. Train loop (fine-tune)
     total_training_time, total_test_time, epoch_0_training, validation_accuracy = 0, 0, 0, 0
     for epoch_i in range(0, args.epochs):
@@ -430,6 +483,9 @@ def main():
         print("  Accumulated training without export took: {:.4f}s".format(total_training_time - estimated_export))
     print("  Accumulated training took:                {:.4f}s".format(total_training_time))
     print("  Accumulated validation took:              {:.4f}s".format(total_test_time))
+
+    # if args.log_perf_metrics:
+    #     bert_classifier_log_perf_metrics(args, train_dataloader, perf_metrics_start_time)
 
 if __name__ == '__main__':
     main()
