@@ -78,7 +78,7 @@ struct TrainingConfigurationResult {
 
 // TODO: this method does not handle parallel optimization.
 TrainingConfigurationResult ConfigureSessionForTraining(
-    training::PipelineTrainingSession* sess, TrainingParameters& parameters) {
+    training::TrainingSession* sess, TrainingParameters& parameters) {
   //TODO tix, refactor the mpi related code to populate all fields correctly by default.
   ORT_ENFORCE(parameters.data_parallel_size <= parameters.world_size, "data_parallel_size: ", parameters.data_parallel_size, ", world_size: ", parameters.world_size);
   ORT_ENFORCE(parameters.horizontal_parallel_size <= parameters.world_size, "horizontal_parallel_size: ", parameters.horizontal_parallel_size, ", world_size: ", parameters.world_size);
@@ -116,14 +116,15 @@ TrainingConfigurationResult ConfigureSessionForTraining(
   config.distributed_config.sliced_tensor_names = parameters.sliced_tensor_names;
 
   if (parameters.use_mixed_precision) {
-    training::PipelineTrainingSession::TrainingConfiguration::MixedPrecisionConfiguration mp{};
+    training::TrainingSession::TrainingConfiguration::MixedPrecisionConfiguration mp{};
     mp.use_mixed_precision_initializers = true;
 
     config.mixed_precision_config = mp;
   }
 
+  ORT_ENFORCE(config.distributed_config.pipeline_parallel_size == 1);
   if (config.distributed_config.pipeline_parallel_size > 1) {
-    training::PipelineTrainingSession::TrainingConfiguration::PipelineConfiguration pipeline_config;
+    training::TrainingSession::TrainingConfiguration::PipelineConfiguration pipeline_config;
 
     // Currently don't support auto-partition. User needs to pass in cut information for pipeline
     pipeline_config.do_partition = true;
@@ -177,7 +178,7 @@ TrainingConfigurationResult ConfigureSessionForTraining(
   config.loss_name = parameters.loss_output_name;
 
   if (!parameters.training_optimizer_name.empty()) {
-    training::PipelineTrainingSession::TrainingConfiguration::OptimizerConfiguration opt{};
+    training::TrainingSession::TrainingConfiguration::OptimizerConfiguration opt{};
     opt.name = parameters.training_optimizer_name;
     opt.learning_rate_input_name = parameters.lr_params_feed_name;
     opt.weight_attributes_generator = [&parameters](const std::string& weight_name) {
@@ -239,7 +240,7 @@ TrainingConfigurationResult ConfigureSessionForTraining(
     config.model_with_training_graph_path = ToPathString(parameters.model_with_training_graph_path);
   }
 
-  training::PipelineTrainingSession::TrainingConfigurationResult config_result{};
+  training::TrainingSession::TrainingConfigurationResult config_result{};
 
   OrtPybindThrowIfError(sess->ConfigureForTraining(config, config_result));
 
@@ -369,7 +370,7 @@ void addObjectMethodsForTraining(py::module& m) {
   // Thin wrapper over internal C++ InferenceSession to accommodate custom op library management for the Python user
   struct PyTrainingSession : public PyInferenceSession {
     PyTrainingSession(Environment& env, const PySessionOptions& so)
-        : PyInferenceSession(onnxruntime::make_unique<PipelineTrainingSession>(so, env)) {
+        : PyInferenceSession(onnxruntime::make_unique<TrainingSession>(so, env)) {
     }
   };
 
@@ -401,7 +402,7 @@ void addObjectMethodsForTraining(py::module& m) {
         if (!use_nccl && parameters.world_size > 1)
           CopyMPIContextToTrainingParameters(parameters, sess->GetSessionHandle()->GetLogger());
 #endif
-        const auto config_result = ConfigureSessionForTraining(static_cast<PipelineTrainingSession*>(sess->GetSessionHandle()), parameters);
+        const auto config_result = ConfigureSessionForTraining(static_cast<TrainingSession*>(sess->GetSessionHandle()), parameters);
 
         InitializeSession(sess->GetSessionHandle(), provider_types, provider_options);
 
@@ -416,7 +417,7 @@ void addObjectMethodsForTraining(py::module& m) {
         if (!use_nccl && parameters.world_size > 1)
           CopyMPIContextToTrainingParameters(parameters, sess->GetSessionHandle()->GetLogger());
 #endif
-        const auto config_result = ConfigureSessionForTraining(static_cast<PipelineTrainingSession*>(sess->GetSessionHandle()), parameters);
+        const auto config_result = ConfigureSessionForTraining(static_cast<TrainingSession*>(sess->GetSessionHandle()), parameters);
 
         InitializeSession(sess->GetSessionHandle(), provider_types, provider_options);
 
@@ -424,7 +425,7 @@ void addObjectMethodsForTraining(py::module& m) {
       })
       .def("get_state", [](PyTrainingSession* sess) {
         NameMLValMap state_tensors;
-        ORT_THROW_IF_ERROR(static_cast<PipelineTrainingSession*>(sess->GetSessionHandle())->GetStateTensors(state_tensors));
+        ORT_THROW_IF_ERROR(static_cast<TrainingSession*>(sess->GetSessionHandle())->GetStateTensors(state_tensors));
         auto& data_transfer_manager = sess->GetSessionHandle()->GetDataTransferManager();
         //convert to numpy array
         std::map<std::string, py::object> rmap;
@@ -469,7 +470,7 @@ void addObjectMethodsForTraining(py::module& m) {
           ThrowIfPyErrOccured();
           state_tensors.insert(std::make_pair(initializer.first, ml_value));
         }
-        ORT_THROW_IF_ERROR(static_cast<PipelineTrainingSession*>(sess->GetSessionHandle())->SetStateTensors(state_tensors, strict));
+        ORT_THROW_IF_ERROR(static_cast<TrainingSession*>(sess->GetSessionHandle())->SetStateTensors(state_tensors, strict));
       })
       .def("is_output_fp32_node", [](PyTrainingSession* sess, const std::string& output_name) {
         return static_cast<PipelineTrainingSession*>(sess->GetSessionHandle())->IsGraphOutputFp32Node(output_name);

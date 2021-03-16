@@ -35,6 +35,7 @@ def run_distributed_allreduce_tests(cwd, log):
 
     run_subprocess(command, cwd=cwd, log=log).check_returncode()
 
+@unittest.skip('Skipped because pipeline parallel is disabled.')
 def run_pipeline_parallel_tests(cwd, log):
     log.debug('Running: pipeline parallel tests')
 
