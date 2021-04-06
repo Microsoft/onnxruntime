@@ -319,7 +319,7 @@ set (onnxruntime_shared_lib_test_SRC
           ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/test_model_loading.cc
           ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/test_ort_format_models.cc
           ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/utils.h
-          ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/utils.cc		  
+          ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/utils.cc
           ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/custom_op_utils.h
           ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/custom_op_utils.cc)
 
@@ -966,7 +966,15 @@ if (onnxruntime_LINK_LIBATOMIC)
 endif()
 set_target_properties(onnxruntime_mlas_test PROPERTIES FOLDER "ONNXRuntimeTest")
 
-add_library(custom_op_library SHARED ${REPO_ROOT}/onnxruntime/test/testdata/custom_op_library/custom_op_library.cc)
+if (onnxruntime_USE_CUDA)
+  find_package(CUDA REQUIRED)
+  include_directories("${CUDA_INCLUDE_DIRS}")
+  add_library(custom_op_library SHARED ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/cuda_ops.cu
+                                       ${REPO_ROOT}/onnxruntime/test/testdata/custom_op_library/custom_op_library.cc)
+else()
+  add_library(custom_op_library SHARED ${REPO_ROOT}/onnxruntime/test/testdata/custom_op_library/custom_op_library.cc)
+endif()
+
 target_include_directories(custom_op_library PRIVATE ${REPO_ROOT}/include)
 if(UNIX)
   if (APPLE)

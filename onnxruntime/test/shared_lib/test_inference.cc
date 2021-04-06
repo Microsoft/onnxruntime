@@ -164,6 +164,7 @@ static constexpr PATH_TYPE MODEL_URI = TSTR("testdata/mul_1.onnx");
 static constexpr PATH_TYPE SEQUENCE_MODEL_URI = TSTR("testdata/sequence_length.onnx");
 static constexpr PATH_TYPE CUSTOM_OP_MODEL_URI = TSTR("testdata/foo_1.onnx");
 static constexpr PATH_TYPE CUSTOM_OP_LIBRARY_TEST_MODEL_URI = TSTR("testdata/custom_op_library/custom_op_test.onnx");
+static constexpr PATH_TYPE CUSTOM_CUDA_OP_LIBRARY_TEST_MODEL_URI = TSTR("testdata/custom_op_library/custom_cuda_op_test.onnx");
 static constexpr PATH_TYPE OVERRIDABLE_INITIALIZER_MODEL_URI = TSTR("testdata/overridable_initializer.onnx");
 static constexpr PATH_TYPE NAMED_AND_ANON_DIM_PARAM_URI = TSTR("testdata/capi_symbolic_dims.onnx");
 static constexpr PATH_TYPE MODEL_WITH_CUSTOM_MODEL_METADATA = TSTR("testdata/model_with_valid_ort_config_json.onnx");
@@ -559,6 +560,13 @@ lib_name = "./libcustom_op_library.so";
   void* library_handle = nullptr;
   TestInference<int32_t>(*ort_env, CUSTOM_OP_LIBRARY_TEST_MODEL_URI, inputs, "output", expected_dims_y,
                          expected_values_y, 0, nullptr, lib_name.c_str(), &library_handle);
+
+#ifdef USE_CUDA
+  TestInference<int32_t>(*ort_env, CUSTOM_CUDA_OP_LIBRARY_TEST_MODEL_URI, inputs, "output", expected_dims_y,
+                         expected_values_y, 1, nullptr, lib_name.c_str(), &library_handle);
+#else
+  ORT_UNUSED_PARAMETER(CUSTOM_CUDA_OP_LIBRARY_TEST_MODEL_URI);
+#endif
 
 #ifdef _WIN32
   bool success = ::FreeLibrary(reinterpret_cast<HMODULE>(library_handle));
