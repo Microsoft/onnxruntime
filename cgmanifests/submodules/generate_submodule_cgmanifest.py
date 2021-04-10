@@ -61,8 +61,10 @@ with open(os.path.join(REPO_DIR, 'tools', 'ci_build', 'github', 'linux', 'docker
                 package_filename = None
                 package_url = None
 
+
 def normalize_path_separators(path):
     return path.replace(os.path.sep, "/")
+
 
 proc = subprocess.run(
     ["git", "submodule", "foreach", "--quiet", "--recursive", "{} {} $toplevel/$sm_path".format(

@@ -1,13 +1,13 @@
-#-------------------------------------------------------------------------
+# ------------------------------------------------------------------------
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-#--------------------------------------------------------------------------
+# ------------------------------------------------------------------------
 
-from setuptools import setup, find_packages, Extension
+from setuptools import setup, Extension
 from distutils import log as logger
 from distutils.command.build_ext import build_ext as _build_ext
 from glob import glob
-from os import path, getcwd, environ, remove, walk, makedirs, listdir
+from os import path, getcwd, environ, remove, listdir
 from shutil import copyfile, copytree, rmtree
 import platform
 import subprocess
@@ -101,6 +101,7 @@ class build_ext(_build_ext):
 
 try:
     from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+
     class bdist_wheel(_bdist_wheel):
         def finalize_options(self):
             _bdist_wheel.finalize_options(self)
@@ -127,8 +128,10 @@ try:
                 dest = 'onnxruntime/capi/onnxruntime_pybind11_state_manylinux1.so'
                 logger.info('copying %s -> %s', source, dest)
                 copyfile(source, dest)
-                result = subprocess.run(['patchelf', '--print-needed', dest], check=True, stdout=subprocess.PIPE, universal_newlines=True)
-                cuda_dependencies = ['libcublas.so', 'libcudnn.so', 'libcudart.so', 'libcurand.so', 'libcufft.so', 'libnvToolsExt.so']
+                result = subprocess.run(
+                    ['patchelf', '--print-needed', dest], check=True, stdout=subprocess.PIPE, universal_newlines=True)
+                cuda_dependencies = [
+                    'libcublas.so', 'libcudnn.so', 'libcudart.so', 'libcurand.so', 'libcufft.so', 'libnvToolsExt.so']
                 to_preload = []
                 args = ['patchelf', '--debug']
                 for line in result.stdout.split('\n'):
@@ -145,7 +148,8 @@ try:
                 file = glob(path.join(self.dist_dir, '*linux*.whl'))[0]
                 logger.info('repairing %s for manylinux1', file)
                 try:
-                    subprocess.run(['auditwheel', 'repair', '-w', self.dist_dir, file], check=True, stdout=subprocess.PIPE)
+                    subprocess.run(
+                        ['auditwheel', 'repair', '-w', self.dist_dir, file], check=True, stdout=subprocess.PIPE)
                 finally:
                     logger.info('removing %s', file)
                     remove(file)
@@ -157,37 +161,42 @@ except ImportError as error:
 
 # Additional binaries
 if platform.system() == 'Linux':
-  libs = ['onnxruntime_pybind11_state.so', 'libdnnl.so.1', 'libmklml_intel.so', 'libmklml_gnu.so', 'libiomp5.so', 'mimalloc.so']
-  # DNNL, TensorRT & OpenVINO EPs are built as shared libs
-  libs.extend(['libonnxruntime_providers_shared.so'])
-  libs.extend(['libonnxruntime_providers_dnnl.so'])
-  libs.extend(['libonnxruntime_providers_tensorrt.so'])
-  libs.extend(['libonnxruntime_providers_openvino.so'])
-  # Nuphar Libs
-  libs.extend(['libtvm.so.0.5.1'])
-  if nightly_build:
-    libs.extend(['libonnxruntime_pywrapper.so'])
+    libs = ['onnxruntime_pybind11_state.so',
+            'libdnnl.so.1',
+            'libmklml_intel.so',
+            'libmklml_gnu.so',
+            'libiomp5.so',
+            'mimalloc.so']
+    # DNNL, TensorRT & OpenVINO EPs are built as shared libs
+    libs.extend(['libonnxruntime_providers_shared.so'])
+    libs.extend(['libonnxruntime_providers_dnnl.so'])
+    libs.extend(['libonnxruntime_providers_tensorrt.so'])
+    libs.extend(['libonnxruntime_providers_openvino.so'])
+    # Nuphar Libs
+    libs.extend(['libtvm.so.0.5.1'])
+    if nightly_build:
+        libs.extend(['libonnxruntime_pywrapper.so'])
 elif platform.system() == "Darwin":
-  libs = ['onnxruntime_pybind11_state.so', 'libdnnl.1.dylib', 'mimalloc.so'] # TODO add libmklml and libiomp5 later.
-  # DNNL & TensorRT EPs are built as shared libs
-  libs.extend(['libonnxruntime_providers_shared.dylib'])
-  libs.extend(['libonnxruntime_providers_dnnl.dylib'])
-  libs.extend(['libonnxruntime_providers_tensorrt.dylib'])
-  if nightly_build:
-    libs.extend(['libonnxruntime_pywrapper.dylib'])
+    libs = ['onnxruntime_pybind11_state.so', 'libdnnl.1.dylib', 'mimalloc.so']  # TODO add libmklml and libiomp5 later.
+    # DNNL & TensorRT EPs are built as shared libs
+    libs.extend(['libonnxruntime_providers_shared.dylib'])
+    libs.extend(['libonnxruntime_providers_dnnl.dylib'])
+    libs.extend(['libonnxruntime_providers_tensorrt.dylib'])
+    if nightly_build:
+        libs.extend(['libonnxruntime_pywrapper.dylib'])
 else:
-  libs = ['onnxruntime_pybind11_state.pyd', 'dnnl.dll', 'mklml.dll', 'libiomp5md.dll']
-  # DNNL, TensorRT & OpenVINO EPs are built as shared libs
-  libs.extend(['onnxruntime_providers_shared.dll'])
-  libs.extend(['onnxruntime_providers_dnnl.dll'])
-  libs.extend(['onnxruntime_providers_tensorrt.dll'])
-  libs.extend(['onnxruntime_providers_openvino.dll'])
-  # DirectML Libs
-  libs.extend(['directml.dll'])
-  # Nuphar Libs
-  libs.extend(['tvm.dll'])
-  if nightly_build:
-    libs.extend(['onnxruntime_pywrapper.dll'])
+    libs = ['onnxruntime_pybind11_state.pyd', 'dnnl.dll', 'mklml.dll', 'libiomp5md.dll']
+    # DNNL, TensorRT & OpenVINO EPs are built as shared libs
+    libs.extend(['onnxruntime_providers_shared.dll'])
+    libs.extend(['onnxruntime_providers_dnnl.dll'])
+    libs.extend(['onnxruntime_providers_tensorrt.dll'])
+    libs.extend(['onnxruntime_providers_openvino.dll'])
+    # DirectML Libs
+    libs.extend(['directml.dll'])
+    # Nuphar Libs
+    libs.extend(['tvm.dll'])
+    if nightly_build:
+        libs.extend(['onnxruntime_pywrapper.dll'])
 
 if is_manylinux:
     data = ['capi/libonnxruntime_pywrapper.so'] if nightly_build else []
@@ -295,13 +304,13 @@ version_number = ''
 with open('VERSION_NUMBER') as f:
     version_number = f.readline().strip()
 if nightly_build:
-    #https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables
+    # https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables
     build_suffix = environ.get('BUILD_BUILDNUMBER')
     if build_suffix is None:
-      #The following line is only for local testing
-      build_suffix = str(datetime.datetime.now().date().strftime("%Y%m%d"))
+        # The following line is only for local testing
+        build_suffix = str(datetime.datetime.now().date().strftime("%Y%m%d"))
     else:
-      build_suffix = build_suffix.replace('.','')
+        build_suffix = build_suffix.replace('.', '')
 
     version_number = version_number + ".dev" + build_suffix
 
@@ -309,7 +318,7 @@ if wheel_name_suffix:
     package_name = "{}_{}".format(package_name, wheel_name_suffix)
 
 cmd_classes = {}
-if bdist_wheel is not None :
+if bdist_wheel is not None:
     cmd_classes['bdist_wheel'] = bdist_wheel
 cmd_classes['build_ext'] = build_ext
 
@@ -340,7 +349,7 @@ setup(
     data_files=data_files,
     install_requires=install_requires,
     keywords='onnx machine learning',
-    entry_points= {
+    entry_points={
         'console_scripts': [
             'onnxruntime_test = onnxruntime.tools.onnxruntime_test:main',
         ]

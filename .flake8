@@ -3,7 +3,24 @@ max-line-length = 120
 per-file-ignores =
     __init__.py:F401
 format = [flake8 PEP8 ERROR] %(path)s:%(row)d:%(col)d: %(code)s %(text)s
-# We generally exclude using cmake/flake8.cmake. If something needs to be excluded here
-# The exclude value/s need to be on a newline otherwise it doesn't work (at least on Windows)
-# exclude = 
-#     ./onnxruntime/core/flatbuffers/ort_flatbuffers_py
+exclude =
+    # ignore default build directory
+    ./build,
+    # ignore external dependency files
+    ./cmake/external,
+    # TODO enable
+    ./docs/python,
+    # ignore generated flatbuffers code
+    ./onnxruntime/core/flatbuffers/ort_flatbuffers_py,
+    # TODO enable
+    ./onnxruntime/core/providers/nuphar,
+    # TODO enable
+    ./onnxruntime/python/tools,
+    # ignore test code for now
+    ./onnxruntime/test,
+    # TODO enable
+    ./orttraining,
+    # TODO enable
+    ./samples/python/pytorch_transformer,
+    # ignore server code for now
+    ./server,
