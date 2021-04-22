@@ -563,6 +563,46 @@ GELU (Gaussian Error Linear Unit) approximation: Y=0.5*X*(1+tanh(0.797885*X+0.03
       .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output types to float or half tensors.")
       .TypeConstraint("U", {"tensor(float)"}, "Constrain mean and inv_std_var to float tensors.")
       .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
+
+  static const char* SequencePooling_ver1_doc = R"DOC(sequence pooling and padding trial)DOC";
+
+  ONNX_CONTRIB_OPERATOR_SCHEMA(SequencePooling)
+      .SetDomain(kMSDomain)
+      .SinceVersion(1)
+      .SetDoc(SequencePooling_ver1_doc)
+      .Input(0, "batch_input_tensor", "3D batch_input_tensor with shape (batch_size, sequence_length_for_split, hidden_size)", "T")
+      .Input(1, "batch_sentence_lengthes", "2D batch_sentence_lengthes with shape (batch_size, num_sequences)", "M")
+      .Output(0, "output", "3D output tensor with shape (batch_size, num_sequences, hidden_size)", "T")
+      .TypeConstraint("M", {"tensor(int64)"}, "Constrain input and output integer tensors types")
+      .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output float tensors types.")
+      .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
+        propagateElemTypeFromInputToOutput(ctx, 0, 0);
+        if (!hasInputShape(ctx, 0))
+          return;
+
+        auto& batch_input_tensor_shape = getInputShape(ctx, 0);
+        auto& batch_input_tensor_dims = batch_input_tensor_shape.dim();
+
+        if (batch_input_tensor_dims.size() != 3) {
+          fail_shape_inference("batch_input_tensor should have 3 dimensions");
+        }
+
+        if (!hasInputShape(ctx, 1))
+          return;
+
+        auto& batch_sentence_lengthes_shape = getInputShape(ctx, 1);
+        auto& batch_sentence_lengthes_dims = batch_sentence_lengthes_shape.dim();
+
+        if (batch_sentence_lengthes_dims.size() != 2) {
+          fail_shape_inference("batch_sentence_lengthes should have 2 dimensions");
+        }
+
+        //ONNX_NAMESPACE::TensorShapeProto shape;
+        //*shape.add_dim() = batch_input_tensor_dims[0];
+        //shape.add_dim()->set_dim_value(256);
+        //*shape.add_dim() = batch_input_tensor_dims[2];
+        //ONNX_NAMESPACE::updateOutputShape(ctx, 0, shape);
+      });
 }
 
 void RegisterContribSchemas() {
