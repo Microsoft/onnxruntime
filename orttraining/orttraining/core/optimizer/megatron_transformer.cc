@@ -113,6 +113,21 @@ static uint32_t HashName(const std::string& name) {
   return hash;
 }
 
+static bool FilterConsumeNodeWithOpType(const Node& node) {
+  return node.OpType().compare("MatMul") == 0;
+}
+
+static void ReplaceNodeInput(Graph& graph, Node& node, int input_arg_index, Node& target_node, int output_arg_index,
+                             const std::function<bool(const Node& node)> filter = {}) {
+  const Node::EdgeEnd* edge = graph_utils::GetInputEdge(node, input_arg_index);
+  if (nullptr == edge) {  // handle input/initializer
+    graph_utils::ReplaceNodeInput(node, input_arg_index, *(target_node.MutableOutputDefs()[output_arg_index]));
+  } else {
+    auto input_node = const_cast<Node*>(&edge->GetNode());
+    graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), target_node, output_arg_index, filter);
+  }
+}
+
 template <class T>
 void MegatronTransformer::PartitionBufferByColumn(const T* input,
                                                   const int64_t row_count,
@@ -167,7 +182,7 @@ bool MegatronTransformer::PartitionWeightByColumn(const Graph& graph, const Node
     return false;
   }
 
-  if (stride > 1){
+  if (stride > 1) {
     LOGS_DEFAULT(WARNING) << "Checkpointing is not currently supported for graphs requiring partitioning of weight with stride > 1";
   }
 
@@ -221,16 +236,16 @@ bool MegatronTransformer::PartitionWeightByColumn(const Graph& graph, const Node
           result_buffer.reserve(element_count);
           PartitionBufferByColumn(data_buffer, row_count, column_count, column_stride, stride, result_buffer);
 
-          // We need to maintain the initial optimizer states as an OrtValue, 
+          // We need to maintain the initial optimizer states as an OrtValue,
           // which is converted eventually to a TensorProto in the optimizer builder
-          // after Megatron and Zero partitioning. This approach saves CPU memory 
-          // as creating a TensorProto involves a copy, and by delaying the copy until 
-          // after the partitioning results in a smaller copy only for the optimizer 
+          // after Megatron and Zero partitioning. This approach saves CPU memory
+          // as creating a TensorProto involves a copy, and by delaying the copy until
+          // after the partitioning results in a smaller copy only for the optimizer
           // states currently present on the rank.
-          // Allocate a new buffer to hold the partitioned optimizer state 
+          // Allocate a new buffer to hold the partitioned optimizer state
           // as column partitioning cannot re-use the original
           // buffer as it is a non-contiguous read
-          auto alloc = cpu_execution_provider_ .GetAllocator(0, OrtMemTypeDefault);
+          auto alloc = cpu_execution_provider_.GetAllocator(0, OrtMemTypeDefault);
           p_tensor = onnxruntime::make_unique<Tensor>(element_type,
                                                       partition_shape,
                                                       alloc);
@@ -246,7 +261,7 @@ bool MegatronTransformer::PartitionWeightByColumn(const Graph& graph, const Node
 
           // allocate a new buffer as column partitioning cannot re-use the original
           // buffer as it is a non-contiguous read on original buffer
-          auto alloc = cpu_execution_provider_ .GetAllocator(0, OrtMemTypeDefault);
+          auto alloc = cpu_execution_provider_.GetAllocator(0, OrtMemTypeDefault);
           p_tensor = onnxruntime::make_unique<Tensor>(element_type,
                                                       partition_shape,
                                                       alloc);
@@ -260,7 +275,7 @@ bool MegatronTransformer::PartitionWeightByColumn(const Graph& graph, const Node
                          DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
         initial_states[moments_prefix] = std::move(partitioned);
       } else {
-        LOGS_DEFAULT(WARNING) << "Initial value for optimizer state: " << moments_prefix 
+        LOGS_DEFAULT(WARNING) << "Initial value for optimizer state: " << moments_prefix
                               << " not found for weight: " << original_name;
       }
     }
@@ -371,7 +386,7 @@ bool MegatronTransformer::PartitionWeightByRow(const Graph& graph, const NodeArg
                          DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
         initial_states[moments_prefix] = std::move(partitioned);
       } else {
-        LOGS_DEFAULT(WARNING) << "Initial value for optimizer state: " << moments_prefix 
+        LOGS_DEFAULT(WARNING) << "Initial value for optimizer state: " << moments_prefix
                               << " not found for weight: " << original_name;
       }
     }
@@ -479,13 +494,7 @@ Status MegatronTransformer::TransformGPT2MLP(Graph& graph, bool& modified,
                                    mlp_f_input_defs,
                                    {&mlp_f_out_arg}, {}, kMSDomain);
   mlp_f_node.SetExecutionProviderType(node.GetExecutionProviderType());
-  const Node::EdgeEnd* edge = graph_utils::GetInputEdge(node, 0);
-  if (nullptr == edge) {  // handle input/initializer
-    graph_utils::ReplaceNodeInput(node, 0, *(mlp_f_node.MutableOutputDefs()[0]));
-  } else {
-    auto input_node = const_cast<Node*>(&edge->GetNode());
-    graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), mlp_f_node, 0);
-  }
+  ReplaceNodeInput(graph, node, 0, mlp_f_node, 0, FilterConsumeNodeWithOpType);
 
   const std::vector<NodeArg*> mlp_g_input_defs{matmul2_node.MutableOutputDefs()[0]};
   auto mlp_g_type_info = *matmul2_node.MutableOutputDefs()[0]->TypeAsProto();
@@ -580,7 +589,7 @@ Status MegatronTransformer::TransformBARTMLP(Graph& graph, bool& modified,
                                                            &matmul2_node, transpose_op_ptr});
   if (dropout_node != nullptr) {
     nodes_to_clear_shape.insert(nodes_to_clear_shape.end(), {dropout_node});
-  }                                                         
+  }
 
   auto dense_wi_weight_arg = second_op->MutableInputDefs()[0];
   ONNX_NAMESPACE::TensorProto dense_wi_weight_initializer_partition;
@@ -631,13 +640,7 @@ Status MegatronTransformer::TransformBARTMLP(Graph& graph, bool& modified,
                                    {&mlp_f_out_arg}, {}, kMSDomain);
   counter++;
   mlp_f_node.SetExecutionProviderType(node.GetExecutionProviderType());
-  const Node::EdgeEnd* edge = graph_utils::GetInputEdge(node, 0);
-  if (nullptr == edge) {  // handle input/initializer
-    graph_utils::ReplaceNodeInput(node, 0, *(mlp_f_node.MutableOutputDefs()[0]));
-  } else {
-    auto input_node = const_cast<Node*>(&edge->GetNode());
-    graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetSrcArgIndex(), mlp_f_node, 0);
-  }
+  ReplaceNodeInput(graph, node, 0, mlp_f_node, 0, FilterConsumeNodeWithOpType);
 
   const std::vector<NodeArg*> mlp_g_input_defs{matmul2_node.MutableOutputDefs()[0]};
   auto mlp_g_type_info = *matmul2_node.MutableOutputDefs()[0]->TypeAsProto();
@@ -869,13 +872,7 @@ Status MegatronTransformer::TransformGPT2Attention(Graph& graph, bool& modified,
                                   sa_f_input_defs,
                                   {&sa_f_out_arg}, {}, kMSDomain);
   sa_f_node.SetExecutionProviderType(node.GetExecutionProviderType());
-  const Node::EdgeEnd* edge = graph_utils::GetInputEdge(node, 0);
-  if (nullptr == edge) {  // handle input/initializer
-    graph_utils::ReplaceNodeInput(node, 0, *(sa_f_node.MutableOutputDefs()[0]));
-  } else {
-    auto input_node = const_cast<Node*>(&edge->GetNode());
-    graph_utils::ReplaceDownstreamNodeInput(graph, *input_node, edge->GetDstArgIndex(), sa_f_node, 0);
-  }
+  ReplaceNodeInput(graph, node, 0, sa_f_node, 0, FilterConsumeNodeWithOpType);
 
   const std::vector<NodeArg*> sa_g_input_defs{matmul_node.MutableOutputDefs()[0]};
   auto sa_g_type_info = *matmul_node.MutableOutputDefs()[0]->TypeAsProto();  // copy
@@ -1212,10 +1209,10 @@ Status MegatronTransformer::TransformBARTAttention(Graph& graph, bool& modified,
                                     sa_f_input_defs,
                                     {&sa_f_out_arg}, {}, kMSDomain);
     sa_f_node.SetExecutionProviderType(k_matmul_ptr->GetExecutionProviderType());
-    graph_utils::ReplaceNodeInput(*k_matmul_ptr, 0, *(sa_f_node.MutableOutputDefs()[0]));
-    graph_utils::ReplaceNodeInput(*v_matmul_ptr, 0, *(sa_f_node.MutableOutputDefs()[0]));
+    ReplaceNodeInput(graph, *k_matmul_ptr, 0, sa_f_node, 0, FilterConsumeNodeWithOpType);
+    ReplaceNodeInput(graph, *v_matmul_ptr, 0, sa_f_node, 0, FilterConsumeNodeWithOpType);
     if (shared_same_input) {
-      graph_utils::ReplaceNodeInput(*q_matmul_ptr, 0, *(sa_f_node.MutableOutputDefs()[0]));
+      ReplaceNodeInput(graph, *q_matmul_ptr, 0, sa_f_node, 0, FilterConsumeNodeWithOpType);
     }
     new_consumer_nodes.push_back(&sa_f_node);
   }
@@ -1242,8 +1239,8 @@ Status MegatronTransformer::TransformBARTAttention(Graph& graph, bool& modified,
                                         q_sa_f_input_defs,
                                         {&q_sa_f_out_arg}, {}, kMSDomain);
       q_sa_f_node.SetExecutionProviderType(q_matmul_ptr->GetExecutionProviderType());
+      ReplaceNodeInput(graph, *q_matmul_ptr, 0, q_sa_f_node, 0, FilterConsumeNodeWithOpType);
 
-      graph_utils::ReplaceNodeInput(*q_matmul_ptr, 0, *(q_sa_f_node.MutableOutputDefs()[0]));
       q_new_consumer_nodes.push_back(&q_sa_f_node);
       graph.UpdateConsumerNodes(q_prev_input_node_ptr->Name(), q_new_consumer_nodes);
       // todo: need update the consumer node for the input_node as well.

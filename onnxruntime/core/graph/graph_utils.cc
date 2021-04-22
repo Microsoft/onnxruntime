@@ -644,9 +644,16 @@ size_t RemoveNodeOutputEdges(Graph& graph, Node& node, int output_idx) {
   return output_edges.size();
 }
 
-void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx) {
-  // get the output edges from node for output_idx
-  std::vector<GraphEdge> output_edges = GetNodeOutputEdges(node, output_idx);
+void ReplaceDownstreamNodeInput(Graph& graph, Node& node, size_t output_idx, Node& replacement, size_t replacement_output_idx,
+                                const std::function<bool(const Node& node)>& filter) {
+  std::vector<GraphEdge> output_edges;
+  for (auto it = node.OutputEdgesBegin(), end = node.OutputEdgesEnd(); it != end; ++it) {
+    if (static_cast<size_t>(it->GetSrcArgIndex()) == output_idx) {  // get the output edges from node for output_idx
+      if (!filter || filter(it->GetNode())) {
+        output_edges.push_back(GraphEdge::CreateGraphEdge(node, *it, false));
+      }
+    }
+  }
 
   if (!output_edges.empty()) {
     const auto& replacement_name = replacement.MutableOutputDefs()[replacement_output_idx]->Name();
@@ -720,8 +727,7 @@ void FinalizeNodeFusion(Graph& graph, const std::vector<std::reference_wrapper<N
   }
 }
 
-const Node::EdgeEnd*
-GetInputEdge(const Node& node, int arg_index) {
+const Node::EdgeEnd* GetInputEdge(const Node& node, int arg_index) {
   for (auto it = node.InputEdgesBegin(), end = node.InputEdgesEnd(); it != end; ++it) {
     if (arg_index == it->GetDstArgIndex()) {
       return &(*it);

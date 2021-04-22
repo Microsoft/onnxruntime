@@ -169,6 +169,7 @@ size_t RemoveNodeOutputEdges(Graph& graph, Node& node, int output_idx);
     with an output from a different node. Moves the output edges from 'node' for 'output_idx' to the replacement node.
 @param replacement The node providing the replacement output.
 @param replacement_output_idx The index of the output from 'replacement' to use.
+@Param filter function is used to filter out consumer nodes that needs to be updated.
 
 e.g. Node A produces outputs A1 and A2.
      Node B consumes A2 (edge between A and B for A2) and produces B1.
@@ -178,7 +179,8 @@ e.g. Node A produces outputs A1 and A2.
      to replace B1 (output index 0 for node B) with A2 (output index 1 for node A) as input to the downstream node C.
      The edge that existed between B and C for B1 will be removed, and replaced with an edge between A and C for A2.
 */
-void ReplaceDownstreamNodeInput(Graph& graph, Node& node, int output_idx, Node& replacement, int replacement_output_idx);
+void ReplaceDownstreamNodeInput(Graph& graph, Node& node, size_t output_idx, Node& replacement, size_t replacement_output_idx,
+                                const std::function<bool(const Node& node)>& filter = {});
 
 /** Replace the input to a node with a NodeArg.
 @remarks The replacement only updates the node's input definition and does not create any edges,
