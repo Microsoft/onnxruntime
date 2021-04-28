@@ -289,15 +289,20 @@ typedef struct OrtROCMProviderOptions {
 /// Options for the TensorRT provider that are passed to SessionOptionsAppendExecutionProvider_TensorRT
 /// </summary>
 typedef struct OrtTensorRTProviderOptions {
-  int device_id;                                  // cuda device id.
-  int has_user_compute_stream;                    // indicator of user specified CUDA compute stream.
-  void* user_compute_stream;                      // user specified CUDA compute stream.
-  int has_trt_options;                            // override environment variables with following TensorRT settings at runtime.
-  size_t trt_max_workspace_size;                  // maximum workspace size for TensorRT.
-  int trt_fp16_enable;                            // enable TensorRT FP16 precision. Default 0 = false, nonzero = true
-  int trt_int8_enable;                            // enable TensorRT INT8 precision. Default 0 = false, nonzero = true
-  const char* trt_int8_calibration_table_name;    // TensorRT INT8 calibration table name.
-  int trt_int8_use_native_calibration_table;      // use native TensorRT generated calibration table. Default 0 = false, nonzero = true
+  int device_id;                                // cuda device id.
+  int has_user_compute_stream;                  // indicator of user specified CUDA compute stream.
+  void* user_compute_stream;                    // user specified CUDA compute stream.
+  int has_trt_options;                          // override environment variables with following TensorRT settings at runtime.
+  size_t trt_max_workspace_size;                // maximum workspace size for TensorRT.
+  int trt_fp16_enable;                          // enable TensorRT FP16 precision. Default 0 = false, nonzero = true
+  int trt_int8_enable;                          // enable TensorRT INT8 precision. Default 0 = false, nonzero = true
+  const char* trt_int8_calibration_table_name;  // TensorRT INT8 calibration table name.
+  int trt_int8_use_native_calibration_table;    // use native TensorRT generated calibration table. Default 0 = false, nonzero = true
+  int trt_max_partition_iterations;             // maximum number of iterations allowed in model partitioning for TensorRT.
+  int trt_min_subgraph_size;                    // minimum node size in a subgraph after partitioning.
+  int trt_dump_subgraphs;                       // dump the subgraphs that are transformed into TRT engines in onnx format to the filesystem. Default 0 = false, nonzero = true
+  int trt_engine_cache_enable;                  // enable TensorRT engine caching. Default 0 = false, nonzero = true
+  const char* trt_cache_path;                   // specify path for TensorRT engine and profile files if engine_cache_enable is enabled, or INT8 calibration table file if trt_int8_enable is enabled.
 } OrtTensorRTProviderOptions;
 
 /// <summary>

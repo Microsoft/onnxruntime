@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 ORT_API_STATUS(OrtSessionOptionsAppendExecutionProvider_Tensorrt, _In_ OrtSessionOptions* options, int device_id);
+ORT_API_STATUS(SessionOptionsAppendExecutionProvider_TensorRT, _In_ OrtSessionOptions* options, const OrtTensorRTProviderOptions* tensorrt_options);
 
 #ifdef __cplusplus
 }

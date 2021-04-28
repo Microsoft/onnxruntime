@@ -227,6 +227,54 @@ namespace Microsoft.ML.OnnxRuntime.Tests
             }
         }
 
+
+
+#if USE_TENSORRT
+        [Fact]
+        private void TestTensorRTProviderOptions()
+        {
+            string modelPath = Path.Combine(Directory.GetCurrentDirectory(), "squeezenet.onnx");
+            string calTablPath = Path.Combine(Directory.GetCurrentDirectory(), "squeezenet_calibration.flatbuffers");
+            //Environment.SetEnvironmentVariable("ORT_TENSORRT_ENGINE_CACHE_ENABLE", "1");
+
+            OrtTensorRTProviderOptions trt_options = ProviderOptions.GetDefaultTensorRTProviderOptions();
+            trt_options.device_id = 0;
+            trt_options.trt_int8_calibration_table_name = calTablPath;
+            trt_options.has_trt_options = 1;
+            trt_options.trt_max_workspace_size = (UIntPtr)(1 << 30);
+            trt_options.trt_fp16_enable = 1;
+            trt_options.trt_int8_enable = 1;
+            trt_options.trt_int8_use_native_calibration_table = 0;
+
+            var session = new InferenceSession(modelPath, SessionOptions.MakeSessionOptionWithTensorrtProvider(trt_options));
+            var inputMeta = session.InputMetadata;
+            var container = new List<NamedOnnxValue>();
+            float[] inputData = LoadTensorFromFile(@"bench.in"); // this is the data for only one input tensor for this model
+            foreach (var name in inputMeta.Keys)
+            {
+                Assert.Equal(typeof(float), inputMeta[name].ElementType);
+                Assert.True(inputMeta[name].IsTensor);
+                var tensor = new DenseTensor<float>(inputData, inputMeta[name].Dimensions);
+                container.Add(NamedOnnxValue.CreateFromTensor<float>(name, tensor));
+            }
+
+
+            using (var results = session.Run(container))
+            {
+                // Following code is temporarily commented.
+                // Even though we enable fp16 or int8 through provider options, it could be disabled from TRT EP due to GPU not supporting fp16 or int8.
+                // Once From/ToProviderOptions() has been implemented in TRT EP, better test cases will be added.
+                /*
+                string[] files = Directory.GetFiles(Directory.GetCurrentDirectory(), "*int8*.engine");
+                Assert.True(files.Any());
+                files = Directory.GetFiles(Directory.GetCurrentDirectory(), "*fp16*.engine");
+                Assert.True(files.Any());
+                */
+            }
+    }
+#endif
+
+
         [Theory]
         [InlineData(GraphOptimizationLevel.ORT_DISABLE_ALL, true)]
         [InlineData(GraphOptimizationLevel.ORT_DISABLE_ALL, false)]
@@ -2381,6 +2429,7 @@ namespace Microsoft.ML.OnnxRuntime.Tests
 #endif
 #if USE_TENSORRT
             ,"OrtSessionOptionsAppendExecutionProvider_Tensorrt"
+            ,"SessionOptionsAppendExecutionProvider_TensorRT"
 #endif
 #if USE_MIGRAPHX
             ,"OrtSessionOptionsAppendExecutionProvider_MIGraphX"

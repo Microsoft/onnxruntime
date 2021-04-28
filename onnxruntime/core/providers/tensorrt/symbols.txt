@@ -1,1 +1,2 @@
 OrtSessionOptionsAppendExecutionProvider_Tensorrt
+SessionOptionsAppendExecutionProvider_TensorRT

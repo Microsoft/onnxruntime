@@ -68,6 +68,11 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
     bool trt_int8_enable = false;
     std::string trt_int8_calibration_table_name = "";
     bool trt_int8_use_native_calibration_table = false;
+    int trt_max_partition_iterations = 1000;
+    int trt_min_subgraph_size = 1;
+    bool trt_dump_subgraphs = false;
+    bool trt_engine_cache_enable = false;
+    std::string trt_cache_path = "";
 
     #ifdef _MSC_VER
     std::string ov_string = ToMBString(performance_test_config.run_config.ep_runtime_config_string);
@@ -145,6 +150,11 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
     tensorrt_options.trt_int8_enable = trt_int8_enable;
     tensorrt_options.trt_int8_calibration_table_name = trt_int8_calibration_table_name.c_str();
     tensorrt_options.trt_int8_use_native_calibration_table = trt_int8_use_native_calibration_table;
+    tensorrt_options.trt_max_partition_iterations = trt_max_partition_iterations;
+    tensorrt_options.trt_min_subgraph_size = trt_min_subgraph_size;
+    tensorrt_options.trt_dump_subgraphs = trt_dump_subgraphs;
+    tensorrt_options.trt_engine_cache_enable = trt_engine_cache_enable;
+    tensorrt_options.trt_cache_path = trt_cache_path.c_str();
     session_options.AppendExecutionProvider_TensorRT(tensorrt_options);
 
     OrtCUDAProviderOptions cuda_options{

@@ -394,14 +394,22 @@ TensorrtExecutionProvider::TensorrtExecutionProvider(const TensorrtExecutionProv
   }
 
   // Get environment variables
-  const std::string max_partition_iterations_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kMaxPartitionIterations);
-  if (!max_partition_iterations_env.empty()) {
-    max_partition_iterations_ = std::stoi(max_partition_iterations_env);
+  if (info.has_trt_options) {
+    max_partition_iterations_ = info.max_partition_iterations;
+  } else {
+    const std::string max_partition_iterations_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kMaxPartitionIterations);
+    if (!max_partition_iterations_env.empty()) {
+      max_partition_iterations_ = std::stoi(max_partition_iterations_env);
+    }
   }
 
-  const std::string min_subgraph_size_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kMinSubgraphSize);
-  if (!min_subgraph_size_env.empty()) {
-    min_subgraph_size_ = std::stoi(min_subgraph_size_env);
+  if (info.has_trt_options) {
+    min_subgraph_size_ = info.min_subgraph_size;
+  } else {
+    const std::string min_subgraph_size_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kMinSubgraphSize);
+    if (!min_subgraph_size_env.empty()) {
+      min_subgraph_size_ = std::stoi(min_subgraph_size_env);
+    }
   }
 
   if (info.has_trt_options) {
@@ -451,19 +459,32 @@ TensorrtExecutionProvider::TensorrtExecutionProvider(const TensorrtExecutionProv
     }
   }
 
-  const std::string dump_subgraphs_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kDumpSubgraphs);
-  if (!dump_subgraphs_env.empty()) {
-    dump_subgraphs_ = (std::stoi(dump_subgraphs_env) == 0 ? false : true);
+  if (info.has_trt_options) {
+    dump_subgraphs_ = info.dump_subgraphs;
+  } else {
+    const std::string dump_subgraphs_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kDumpSubgraphs);
+    if (!dump_subgraphs_env.empty()) {
+      dump_subgraphs_ = (std::stoi(dump_subgraphs_env) == 0 ? false : true);
+    }
   }
 
-  const std::string engine_cache_enable_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kEngineCacheEnable);
-  if (!engine_cache_enable_env.empty()) {
-    engine_cache_enable_ = (std::stoi(engine_cache_enable_env) == 0 ? false : true);
+  if (info.has_trt_options) {
+    engine_cache_enable_ = info.engine_cache_enable;
+  } else {
+    const std::string engine_cache_enable_env = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kEngineCacheEnable);
+    if (!engine_cache_enable_env.empty()) {
+      engine_cache_enable_ = (std::stoi(engine_cache_enable_env) == 0 ? false : true);
+    }
   }
 
   if (engine_cache_enable_ || int8_enable_) {
     const std::string engine_cache_path = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kEngineCachePath);
-    cache_path_ = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kCachePath);
+    if (info.has_trt_options) {
+      cache_path_ = info.cache_path;
+    } else {
+      cache_path_ = onnxruntime::GetEnvironmentVar(tensorrt_env_vars::kCachePath);
+    }
+
     if (!engine_cache_path.empty() && cache_path_.empty()) {
       cache_path_ = engine_cache_path;
       LOGS_DEFAULT(WARNING) << "[TensorRT EP] ORT_TENSORRT_ENGINE_CACHE_PATH is deprecated! Please use ORT_TENSORRT_CACHE_PATH to specify engine cache path";

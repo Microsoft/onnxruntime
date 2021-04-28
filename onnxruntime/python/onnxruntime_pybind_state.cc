@@ -573,7 +573,7 @@ static void RegisterExecutionProviders(InferenceSession* sess, const std::vector
                                           sess->GetSessionOptions().enable_cpu_mem_arena));
     } else if (type == kTensorrtExecutionProvider) {
 #ifdef USE_TENSORRT
-      OrtTensorRTProviderOptions params{0, 0, nullptr, 0, 1 << 30, 0, 0, nullptr, 0};
+      OrtTensorRTProviderOptions params{0, 0, nullptr, 0, 1 << 30, 0, 0, nullptr, 0, 1000, 1, 0, 0, nullptr};
       std::string trt_int8_calibration_table_name;
       auto it = provider_options_map.find(type);
       if (it != provider_options_map.end()) {

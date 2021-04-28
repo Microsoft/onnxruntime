@@ -77,6 +77,11 @@ struct TensorrtExecutionProviderInfo {
   bool int8_enable{false}; 
   std::string int8_calibration_table_name{""};
   bool int8_use_native_calibration_table{false};
+  int max_partition_iterations{1000};
+  int min_subgraph_size{1};
+  int dump_subgraphs{0};
+  int engine_cache_enable{0};
+  std::string cache_path{""};
 };
 
 // Information to construct kernel function state.
