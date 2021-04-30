@@ -72,7 +72,7 @@ Version dependencies for older ONNX Runtime releases are listed [here](../refere
 * Default CPU Provider (Eigen + MLAS)
 * GPU Provider - NVIDIA CUDA
 * GPU Provider - DirectML (Windows)
-  * *On Windows, the [DirectML execution provider](https://github.com/microsoft/onnxruntime/tree/master/docs/execution_providers/DirectML-ExecutionProvider.md) is recommended for optimal performance and compatibility with a broad set of GPUs.*
+  * *On Windows, the [DirectML execution provider](../reference/execution-providers/DirectML-ExecutionProvider.html) is recommended for optimal performance and compatibility with a broad set of GPUs.*
 
 If using pip, run `pip install --upgrade pip` prior to downloading.
 
