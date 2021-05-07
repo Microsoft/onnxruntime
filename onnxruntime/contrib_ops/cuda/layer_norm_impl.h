@@ -35,7 +35,7 @@ void HostApplyLayerNorm(
     cudaStream_t stream,
     T* output,
     U* mean,
-    U* invvar,
+    U* inv_std,
     const T* input,
     int n1,
     int n2,

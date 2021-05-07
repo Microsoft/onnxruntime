@@ -38,7 +38,7 @@ void HostLayerNormGradient(
     const T* gamma,
     const T* beta,
     const U* mean,
-    const U* invvar,
+    const U* inv_std,
     int64_t n1,
     int64_t n2,
     T* grad_input,

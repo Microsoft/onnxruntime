@@ -42,7 +42,7 @@ gather_indice_initializer = numpy_helper.from_array(gather_indice_np_vals, "gath
 nodes=[]
 layer_norm1 = helper.make_node('LayerNormalization', 
                                ['input', layer_norm1_weight_initializer.name, layer_norm1_bias_initializer.name],
-                               ['layer_norm1', 'saved_mean1', 'saved_inv_std_var1'],
+                               ['layer_norm1', 'saved_mean1', 'saved_inv_std1'],
                                name='layer_norm_1', epsilon=9.999999960041972e-13, axis=-1)
 nodes.append(layer_norm1)
 
@@ -60,7 +60,7 @@ nodes.append(gelu1)
 
 layer_norm2 = helper.make_node('LayerNormalization',
                                ['gelu1', layer_norm2_weight_initializer.name, layer_norm2_bias_initializer.name],
-                               ['layer_norm2', 'saved_mean2', 'saved_inv_std_var2'],
+                               ['layer_norm2', 'saved_mean2', 'saved_inv_std2'],
                                name='layer_norm_2', epsilon=9.999999960041972e-13, axis=-1)
 nodes.append(layer_norm2)
 

@@ -72,9 +72,9 @@ static void BM_BatchNormOldEigen(benchmark::State& state) {
     inv_std = (var_arr + epsilon_).sqrt().inverse();
     ConstEigenVectorArrayMap<T> mean_arr(mean->Data<T>(), is_spatial_ ? C : sample_size_incl_all_channels);
     // We can fuse the output computation as follows:
-    //   ((x - est_mean) * (inv_var) * scale + bias
+    //   ((x - est_mean) * (inv_std)) * scale + bias
     // to
-    //   (x * inv_var * scale) + (bias - est_mean * inv_var * scale)
+    //   (x * inv_std * scale) + (bias - est_mean * inv_std * scale)
     Eigen::Array<T, Eigen::Dynamic, 1> new_scale = inv_std * scale_arr;
     Eigen::Array<T, Eigen::Dynamic, 1> new_bias = bias_arr - mean_arr * new_scale;
     EigenArrayMap<T> Y_arr(Y->template MutableData<T>(), is_spatial_ ? sample_size : sample_size_incl_all_channels,

@@ -341,7 +341,7 @@ def layer_norm_transform(model):
             layer_norm_output.append(div.output[0])
 
         layer_norm_output.append('saved_mean_' + str(id))
-        layer_norm_output.append('saved_inv_std_var_' + str(id))
+        layer_norm_output.append('saved_inv_std_' + str(id))
 
         epsilon_node = find_input_node(model, add.input[1])
         epsilon = epsilon_node.attribute[0].t.raw_data

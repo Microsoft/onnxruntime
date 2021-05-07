@@ -69,7 +69,7 @@ Status LayerNormGrad<T, simplified>::Compute(OpKernelContext* op_kernel_context)
   if (!simplified) {
     mean = op_kernel_context->Input<Tensor>(input_index++);
   }
-  const Tensor* inv_std_var = op_kernel_context->Input<Tensor>(input_index);
+  const Tensor* inv_std = op_kernel_context->Input<Tensor>(input_index);
 
   const auto& scale_shape = scale->Shape();
 
@@ -82,7 +82,7 @@ Status LayerNormGrad<T, simplified>::Compute(OpKernelContext* op_kernel_context)
   ConstEigenArrayMap<T> X_arr{X->Data<T>(), M, N};
   ConstEigenVectorArrayMap<T> scale_vec{scale->Data<T>(), M};
   ConstEigenVectorArrayMap<float> mean_vec{simplified ? nullptr : mean->Data<float>(), N};
-  ConstEigenVectorArrayMap<float> inv_std_var_vec{inv_std_var->Data<float>(), N};
+  ConstEigenVectorArrayMap<float> inv_std_vec{inv_std->Data<float>(), N};
 
   EigenArrayMap<T> X_grad_arr{X_grad->MutableData<T>(), M, N};
   EigenVectorArrayMap<T> scale_grad_vec{scale_grad->MutableData<T>(), M};
@@ -92,34 +92,34 @@ Status LayerNormGrad<T, simplified>::Compute(OpKernelContext* op_kernel_context)
   using RowVector = Eigen::Array<T, 1, Eigen::Dynamic>;
 
   // A, B, C are calculated as below:
-  // A = Y_grad * (X - mean(X)) * inv_std_var
-  // B = Y_grad * scale * inv_std_var
-  // C = Y_grad * scale * inv_std_var * (X - mean(X)) * inv_std_var
+  // A = Y_grad * (X - mean(X)) * inv_std
+  // B = Y_grad * scale * inv_std
+  // C = Y_grad * scale * inv_std * (X - mean(X)) * inv_std
 
   // Simplified Layer Norm
-  // A = Y_grad * X * inv_std_var
-  // B = Y_grad * scale * inv_std_var
-  // C = Y_grad * scale * inv_std_var * X * inv_std_var
+  // A = Y_grad * X * inv_std
+  // B = Y_grad * scale * inv_std
+  // C = Y_grad * scale * inv_std * X * inv_std
   // A, B, and C are M x N
-  Array X_mean_difference_over_std_var;
+  Array X_mean_difference_over_std;
   if (simplified) {
-    X_mean_difference_over_std_var =
-      X_arr.rowwise() * inv_std_var_vec.cast<T>().transpose();
+    X_mean_difference_over_std =
+      X_arr.rowwise() * inv_std_vec.cast<T>().transpose();
   } else {
-    X_mean_difference_over_std_var =
-      (X_arr.rowwise() - mean_vec.cast<T>().transpose()).rowwise() * inv_std_var_vec.cast<T>().transpose();
+    X_mean_difference_over_std =
+      (X_arr.rowwise() - mean_vec.cast<T>().transpose()).rowwise() * inv_std_vec.cast<T>().transpose();
   }
-  Array A = Y_grad_arr * X_mean_difference_over_std_var;
-  Array B = (Y_grad_arr.colwise() * scale_vec).rowwise() * inv_std_var_vec.cast<T>().transpose();
-  Array C = B * X_mean_difference_over_std_var;
+  Array A = Y_grad_arr * X_mean_difference_over_std;
+  Array B = (Y_grad_arr.colwise() * scale_vec).rowwise() * inv_std_vec.cast<T>().transpose();
+  Array C = B * X_mean_difference_over_std;
 
   RowVector mean_C = C.colwise().mean();  // 1 x N
 
   if (simplified) {
-    X_grad_arr = B - X_mean_difference_over_std_var.rowwise() * mean_C;
+    X_grad_arr = B - X_mean_difference_over_std.rowwise() * mean_C;
   } else {
     RowVector mean_B = B.colwise().mean();  // 1 x N
-    X_grad_arr = B.rowwise() - mean_B - X_mean_difference_over_std_var.rowwise() * mean_C;
+    X_grad_arr = B.rowwise() - mean_B - X_mean_difference_over_std.rowwise() * mean_C;
   }
 
   if (!simplified) {
@@ -143,7 +143,7 @@ Status InvertibleLayerNormGrad<T>::Compute(OpKernelContext* op_kernel_context) c
   const Tensor* Y = op_kernel_context->Input<Tensor>(1);
   const Tensor* scale = op_kernel_context->Input<Tensor>(2);
   const Tensor* bias = op_kernel_context->Input<Tensor>(3);
-  const Tensor* inv_std_var = op_kernel_context->Input<Tensor>(4);
+  const Tensor* inv_std = op_kernel_context->Input<Tensor>(4);
 
   const auto& Y_shape = Y_grad->Shape();
   const auto& X_shape = Y_shape;
@@ -164,7 +164,7 @@ Status InvertibleLayerNormGrad<T>::Compute(OpKernelContext* op_kernel_context) c
   ConstEigenArrayMap<T> Y_arr{Y->Data<T>(), M, N};
   ConstEigenVectorArrayMap<T> scale_vec{scale->Data<T>(), M};
   ConstEigenVectorArrayMap<T> bias_vec{bias->Data<T>(), M};
-  ConstEigenVectorArrayMap<float> inv_std_var_vec{inv_std_var->Data<float>(), N};
+  ConstEigenVectorArrayMap<float> inv_std_vec{inv_std->Data<float>(), N};
 
   EigenArrayMap<T> X_grad_arr{X_grad->MutableData<T>(), M, N};
   EigenVectorArrayMap<T> scale_grad_vec{scale_grad->MutableData<T>(), M};
@@ -174,30 +174,30 @@ Status InvertibleLayerNormGrad<T>::Compute(OpKernelContext* op_kernel_context) c
   using RowVector = Eigen::Array<T, 1, Eigen::Dynamic>;
 
   // A, B, C are calculated as below:
-  // A = Y_grad * (X - mean(X)) * inv_std_var
-  // B = Y_grad * scale * inv_std_var
-  // C = Y_grad * scale * inv_std_var * (X - mean(X)) * inv_std_var
+  // A = Y_grad * (X - mean(X)) * inv_std
+  // B = Y_grad * scale * inv_std
+  // C = Y_grad * scale * inv_std * (X - mean(X)) * inv_std
 
   // A, B, and C are M x N
-  Array X_mean_difference_over_std_var = (Y_arr.colwise() - bias_vec).colwise() / scale_vec;
-  Array A = Y_grad_arr * X_mean_difference_over_std_var;
-  Array B = (Y_grad_arr.colwise() * scale_vec).rowwise() * inv_std_var_vec.cast<T>().transpose();
-  Array C = B * X_mean_difference_over_std_var;
+  Array X_mean_difference_over_std = (Y_arr.colwise() - bias_vec).colwise() / scale_vec;
+  Array A = Y_grad_arr * X_mean_difference_over_std;
+  Array B = (Y_grad_arr.colwise() * scale_vec).rowwise() * inv_std_vec.cast<T>().transpose();
+  Array C = B * X_mean_difference_over_std;
 
-  // mean_B = mean(Y_grad * scale * inv_std_var)
+  // mean_B = mean(Y_grad * scale * inv_std)
   RowVector mean_B = B.colwise().mean();  // 1 x N
 
-  // mean_C = mean(Y_grad * scale * inv_std_var * (X - mean(X)) * inv_std_var)
+  // mean_C = mean(Y_grad * scale * inv_std * (X - mean(X)) * inv_std)
   RowVector mean_C = C.colwise().mean();  // 1 x N
 
-  // X_grad = Y_grad * scale * inv_std_var - mean_B - (X - mean(X)) * inv_std_var * mean_C
-  //        = B - mean_B - (X - mean(X)) * inv_std_var * mean_c
-  X_grad_arr = B.rowwise() - mean_B - X_mean_difference_over_std_var.rowwise() * mean_C;
+  // X_grad = Y_grad * scale * inv_std - mean_B - (X - mean(X)) * inv_std * mean_C
+  //        = B - mean_B - (X - mean(X)) * inv_std * mean_c
+  X_grad_arr = B.rowwise() - mean_B - X_mean_difference_over_std.rowwise() * mean_C;
 
   // bias_grad = sum(Y_grad)
   bias_grad_vec = Y_grad_arr.rowwise().sum();
 
-  // scale_grad = sum(Y_grad * (X - mean(X)) * inv_std_var)
+  // scale_grad = sum(Y_grad * (X - mean(X)) * inv_std)
   //            = sum(A)
   scale_grad_vec = A.rowwise().sum();
 

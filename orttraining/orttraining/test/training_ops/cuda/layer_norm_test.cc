@@ -56,20 +56,20 @@ static void TestLayerNormGrad(
 
   // these inputs are dependent on X_data
   std::vector<float> mean_data(N);         // mean(X)
-  std::vector<float> inv_std_var_data(N);  // 1 / sqrt(mean(X^2) - mean(X)^2 + epsilon)
+  std::vector<float> inv_std_data(N);  // 1 / sqrt(mean(X^2) - mean(X)^2 + epsilon)
   {
     using ConstEigenArrayMap = Eigen::Map<const Eigen::ArrayXX<float>>;
     using EigenRowVectorArrayMap = Eigen::Map<Eigen::Array<float, 1, Eigen::Dynamic>>;
 
     ConstEigenArrayMap X{X_data.data(), M, N};
     EigenRowVectorArrayMap mean{mean_data.data(), N};
-    EigenRowVectorArrayMap inv_std_var{inv_std_var_data.data(), N};
+    EigenRowVectorArrayMap inv_std{inv_std_data.data(), N};
 
     if (op.compare(SIMPLIFIED_LAYER_NORM_GRAD_OP) != 0) {
       mean = X.colwise().mean();
-      inv_std_var = ((X.colwise().squaredNorm() / X.rows()) - mean.square() + k_epsilon_default).rsqrt();
+      inv_std = ((X.colwise().squaredNorm() / X.rows()) - mean.square() + k_epsilon_default).rsqrt();
     } else {
-      inv_std_var = ((X.colwise().squaredNorm() / X.rows()) + k_epsilon_default).rsqrt();
+      inv_std = ((X.colwise().squaredNorm() / X.rows()) + k_epsilon_default).rsqrt();
     }
   }
 
@@ -79,7 +79,7 @@ static void TestLayerNormGrad(
   if (op.compare(SIMPLIFIED_LAYER_NORM_GRAD_OP) != 0) {
     test.AddInput("mean", n_dims, mean_data);
   }
-  test.AddInput("inv_std_var", n_dims, inv_std_var_data);
+  test.AddInput("inv_std", n_dims, inv_std_data);
 
   const auto X_grad_data = FillZeros<float>(n_x_m_dims);
   const auto scale_grad_data = FillZeros<float>(m_dims);
@@ -160,7 +160,7 @@ static void TestInvertibleLayerNormGrad(
 
   // these inputs are dependent on X_data
   std::vector<float> mean_data(N);         // mean(X)
-  std::vector<float> inv_std_var_data(N);  // 1 / sqrt(mean(X^2) - mean(X)^2 + epsilon)
+  std::vector<float> inv_std_data(N);  // 1 / sqrt(mean(X^2) - mean(X)^2 + epsilon)
   std::vector<float> Y_data(N*M);
   {
     using ConstEigenArrayMap = Eigen::Map<const Eigen::ArrayXX<float>>;
@@ -170,19 +170,19 @@ static void TestInvertibleLayerNormGrad(
 
     for (int i = 0; i < N; ++i) {
       mean_data[i] = X.col(i).mean();
-      inv_std_var_data[i] = X.col(i).square().mean() - mean_data[i] * mean_data[i];
+      inv_std_data[i] = X.col(i).square().mean() - mean_data[i] * mean_data[i];
     }
 
-    // Compute Y = ((x - mean) * (inv_var) * scale + bias
+    // Compute Y = ((x - mean) * (inv_std)) * scale + bias
     EigenArrayMap Y(Y_data.data(), M, N);
 
     using EigenVectorArrayMap = Eigen::Map<Eigen::Array<float, Eigen::Dynamic, 1>>;
     using ConstEigenVectorArrayMap = Eigen::Map<const Eigen::Array<float, Eigen::Dynamic, 1>>;
     ConstEigenVectorArrayMap mean(mean_data.data(), N);
-    EigenVectorArrayMap inv_std_var(inv_std_var_data.data(), N);
-    inv_std_var = (inv_std_var + k_epsilon_default).sqrt().inverse();
+    EigenVectorArrayMap inv_std(inv_std_data.data(), N);
+    inv_std = (inv_std + k_epsilon_default).sqrt().inverse();
 
-    Y = (X.rowwise() - mean.transpose()).rowwise() * inv_std_var.transpose();
+    Y = (X.rowwise() - mean.transpose()).rowwise() * inv_std.transpose();
 
     ConstEigenVectorArrayMap scale(scale_data.data(), M);
     ConstEigenVectorArrayMap bias(bias_data.data(), M);
@@ -223,7 +223,7 @@ static void TestInvertibleLayerNormGrad(
     test.AddOutput("scale_grad_data", m_dims, scale_grad_data);
     test.AddOutput("bias_grad_data", m_dims, bias_grad_data);
   }
-  test.AddInput<float>("inv_std_var", n_dims, inv_std_var_data);
+  test.AddInput<float>("inv_std", n_dims, inv_std_data);
 
   if (test_fp16) {
     test.CompareWithCPU(kGpuExecutionProvider, error_tolerance, error_tolerance);
