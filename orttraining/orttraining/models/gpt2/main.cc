@@ -353,7 +353,7 @@ void setup_training_params(GPT2Parameters& params) {
     info.device_id = gsl::narrow<OrtDevice::DeviceId>(MPIContext::GetInstance().GetLocalRank());
 
     params.providers.emplace(kCudaExecutionProvider, CreateExecutionProviderFactory_CUDA(info));
-    params.input_allocator = std::make_shared<CUDAPinnedAllocator>(info.device_id, CUDA_PINNED);
+    params.input_allocator = std::make_shared<CUDAPinnedAllocator>(info.device_id, GPU_PINNED);
   }
 #endif
 

@@ -19,7 +19,7 @@ struct OrtDevice {
   struct MemType {
     // Pre-defined memory types.
     static const MemoryType DEFAULT = 0;
-    static const MemoryType CUDA_PINNED = 1;
+    static const MemoryType GPU_PINNED = 1;
     static const MemoryType HIP_PINNED = 2;
   };
 

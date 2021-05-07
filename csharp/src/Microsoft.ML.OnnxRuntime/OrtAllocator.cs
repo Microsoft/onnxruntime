@@ -22,8 +22,8 @@ namespace Microsoft.ML.OnnxRuntime
     public enum OrtMemType
     {
         CpuInput = -2,                      // Any CPU memory used by non-CPU execution provider
-        CpuOutput = -1,                     // CPU accessible memory outputted by non-CPU execution provider, i.e. CUDA_PINNED
-        Cpu = CpuOutput,                    // temporary CPU accessible memory allocated by non-CPU execution provider, i.e. CUDA_PINNED
+        CpuOutput = -1,                     // CPU accessible memory outputted by non-CPU execution provider, i.e. GPU_PINNED
+        Cpu = CpuOutput,                    // temporary CPU accessible memory allocated by non-CPU execution provider, i.e. GPU_PINNED
         Default = 0,                        // the default allocator for execution provider
     }
 
@@ -155,12 +155,12 @@ namespace Microsoft.ML.OnnxRuntime
         /// Predefined utf8 encoded allocator names. Use them to construct an instance of
         /// OrtMemoryInfo to avoid UTF-16 to UTF-8 conversion costs.
         /// </summary>
-        public static readonly byte[] allocatorCUDA = Encoding.UTF8.GetBytes("Cuda" + Char.MinValue);
+        public static readonly byte[] allocatorGPU = Encoding.UTF8.GetBytes("Gpu" + Char.MinValue);
         /// <summary>
         /// Predefined utf8 encoded allocator names. Use them to construct an instance of
         /// OrtMemoryInfo to avoid UTF-16 to UTF-8 conversion costs.
         /// </summary>
-        public static readonly byte[] allocatorCUDA_PINNED = Encoding.UTF8.GetBytes("CudaPinned" + Char.MinValue);
+        public static readonly byte[] allocatorGPU_PINNED = Encoding.UTF8.GetBytes("GpuPinned" + Char.MinValue);
         /// <summary>
         /// Create an instance of OrtMemoryInfo according to the specification
         /// Memory info instances are usually used to get a handle of a native allocator

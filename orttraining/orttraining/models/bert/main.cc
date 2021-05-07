@@ -615,7 +615,7 @@ void setup_training_params(BertParameters& params) {
     info.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::EXHAUSTIVE;
 
     params.providers.emplace(kCudaExecutionProvider, CreateExecutionProviderFactory_CUDA(info));
-    params.input_allocator = std::make_shared<CUDAPinnedAllocator>(info.device_id, CUDA_PINNED);
+    params.input_allocator = std::make_shared<CUDAPinnedAllocator>(info.device_id, GPU_PINNED);
   }
 #endif
 
@@ -625,7 +625,7 @@ void setup_training_params(BertParameters& params) {
     info.device_id = gsl::narrow<OrtDevice::DeviceId>(MPIContext::GetInstance().GetLocalRank());
 
     params.providers.emplace(kRocmExecutionProvider, CreateExecutionProviderFactory_ROCM(info));
-    params.input_allocator = std::make_shared<ROCMPinnedAllocator>(info.device_id, CUDA_PINNED);
+    params.input_allocator = std::make_shared<ROCMPinnedAllocator>(info.device_id, GPU_PINNED);
   }
 #endif
 

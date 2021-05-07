@@ -48,7 +48,7 @@ class CUDAPinnedAllocator : public IAllocator {
   CUDAPinnedAllocator(OrtDevice::DeviceId device_id, const char* name)
       : IAllocator(
             OrtMemoryInfo(name, OrtAllocatorType::OrtDeviceAllocator,
-                          OrtDevice(OrtDevice::CPU, OrtDevice::MemType::CUDA_PINNED, device_id),
+                          OrtDevice(OrtDevice::CPU, OrtDevice::MemType::GPU_PINNED, device_id),
                           device_id, OrtMemTypeCPUOutput)) {}
 
   void* Alloc(size_t size) override;

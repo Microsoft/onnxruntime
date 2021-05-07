@@ -63,7 +63,7 @@ AllocatorPtr ROCMExecutionProvider::CreateRocmAllocator(OrtDevice::DeviceId devi
   if (external_allocator_info.UseExternalAllocator()) {
     AllocatorCreationInfo default_memory_info(
         [external_allocator_info](OrtDevice::DeviceId id) {
-          return std::make_unique<ROCMExternalAllocator>(id, CUDA, external_allocator_info.alloc, external_allocator_info.free);
+          return std::make_unique<ROCMExternalAllocator>(id, GPU, external_allocator_info.alloc, external_allocator_info.free);
         },
         device_id,
         false);
@@ -73,7 +73,7 @@ AllocatorPtr ROCMExecutionProvider::CreateRocmAllocator(OrtDevice::DeviceId devi
   } else {
     AllocatorCreationInfo default_memory_info(
         [](OrtDevice::DeviceId id) {
-          return std::make_unique<ROCMAllocator>(id, CUDA);
+          return std::make_unique<ROCMAllocator>(id, GPU);
         },
         device_id,
         true,
@@ -95,16 +95,6 @@ ROCMExecutionProvider::PerThreadContext::PerThreadContext(OrtDevice::DeviceId de
   ROCBLAS_CALL_THROW(rocblas_set_stream(rocblas_handle_, stream));
   MIOPEN_CALL_THROW(miopenCreate(&miopen_handle_));
   MIOPEN_CALL_THROW(miopenSetStream(miopen_handle_, stream));
-
-  AllocatorCreationInfo default_memory_info(
-      [](OrtDevice::DeviceId id) {
-        return std::make_unique<ROCMAllocator>(id, CUDA);
-      },
-      device_id,
-      true,
-      {gpu_mem_limit,
-       static_cast<int>(arena_extend_strategy),
-       -1, -1});
 
   // HIP malloc/free is expensive so always use an arena
   allocator_ = CreateRocmAllocator(device_id, gpu_mem_limit, arena_extend_strategy, external_allocator_info);
@@ -1867,7 +1857,7 @@ void ROCMExecutionProvider::RegisterAllocator(std::shared_ptr<AllocatorManager> 
   if (nullptr == rocm_pinned_alloc) {
     AllocatorCreationInfo pinned_memory_info(
         [](OrtDevice::DeviceId device_id) {
-          return std::make_unique<ROCMPinnedAllocator>(device_id, CUDA_PINNED);
+          return std::make_unique<ROCMPinnedAllocator>(device_id, GPU_PINNED);
         },
         DEFAULT_CPU_ALLOCATOR_DEVICE_ID);
 

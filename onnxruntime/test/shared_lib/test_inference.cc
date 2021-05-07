@@ -700,7 +700,7 @@ TEST(CApiTest, get_allocator_cuda) {
   Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(session_options, 0));
   Ort::Session session(*ort_env, NAMED_AND_ANON_DIM_PARAM_URI, session_options);
 
-  Ort::MemoryInfo info_cuda("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
+  Ort::MemoryInfo info_cuda("Gpu", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
   Ort::Allocator cuda_allocator(session, info_cuda);
 
   auto allocator_info = cuda_allocator.GetInfo();
@@ -808,7 +808,7 @@ TEST(CApiTest, io_binding_cuda) {
 #endif
   Ort::Session session(*ort_env, MODEL_URI, session_options);
 
-  Ort::MemoryInfo info_cuda("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
+  Ort::MemoryInfo info_cuda("Gpu", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
 
   Ort::Allocator cuda_allocator(session, info_cuda);
   auto allocator_info = cuda_allocator.GetInfo();

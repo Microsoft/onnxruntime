@@ -17,13 +17,13 @@ TEST(AllocatorTest, CUDAAllocatorTest) {
   CUDA_CALL_THROW(cudaSetDevice(cuda_device_id));
 
   AllocatorCreationInfo default_memory_info(
-      {[](OrtDevice::DeviceId id) { return std::make_unique<CUDAAllocator>(id, CUDA); }, cuda_device_id});
+      {[](OrtDevice::DeviceId id) { return std::make_unique<CUDAAllocator>(id, GPU); }, cuda_device_id});
 
   auto cuda_arena = CreateAllocator(default_memory_info);
 
   size_t size = 1024;
 
-  EXPECT_STREQ(cuda_arena->Info().name, CUDA);
+  EXPECT_STREQ(cuda_arena->Info().name, GPU);
   EXPECT_EQ(cuda_arena->Info().id, cuda_device_id);
   EXPECT_EQ(cuda_arena->Info().mem_type, OrtMemTypeDefault);
   EXPECT_EQ(cuda_arena->Info().alloc_type, OrtArenaAllocator);
@@ -33,11 +33,11 @@ TEST(AllocatorTest, CUDAAllocatorTest) {
   EXPECT_TRUE(cuda_addr);
 
   AllocatorCreationInfo pinned_memory_info(
-      [](int) { return std::make_unique<CUDAPinnedAllocator>(static_cast<OrtDevice::DeviceId>(0), CUDA_PINNED); });
+      [](int) { return std::make_unique<CUDAPinnedAllocator>(static_cast<OrtDevice::DeviceId>(0), GPU_PINNED); });
 
   auto pinned_allocator = CreateAllocator(pinned_memory_info);
 
-  EXPECT_STREQ(pinned_allocator->Info().name, CUDA_PINNED);
+  EXPECT_STREQ(pinned_allocator->Info().name, GPU_PINNED);
   EXPECT_EQ(pinned_allocator->Info().id, 0);
   EXPECT_EQ(pinned_allocator->Info().mem_type, OrtMemTypeCPUOutput);
   EXPECT_EQ(pinned_allocator->Info().alloc_type, OrtArenaAllocator);
@@ -87,7 +87,7 @@ TEST(AllocatorTest, CUDAAllocatorFallbackTest) {
   EXPECT_NE(free, total) << "All memory is free. Test logic does not handle this.";
 
   AllocatorCreationInfo default_memory_info(
-      {[](OrtDevice::DeviceId id) { return std::make_unique<CUDAAllocator>(id, CUDA); },
+      {[](OrtDevice::DeviceId id) { return std::make_unique<CUDAAllocator>(id, GPU); },
        cuda_device_id});
 
   auto cuda_arena = CreateAllocator(default_memory_info);
