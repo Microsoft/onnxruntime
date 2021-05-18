@@ -73,36 +73,25 @@ void Tensor::Init(MLDataType p_type, const TensorShape& shape, void* p_raw_data,
   byte_offset_ = offset;
 }
 
-Tensor::Tensor(Tensor&& other) noexcept
-    : p_data_(other.p_data_),
-      buffer_deleter_(other.buffer_deleter_),
-      shape_(other.shape_),
-      dtype_(other.dtype_),
-      alloc_info_(other.alloc_info_),
-      byte_offset_(other.byte_offset_) {
-  other.dtype_ = DataTypeImpl::GetType<float>()->AsPrimitiveDataType();
-  other.shape_ = TensorShape(std::vector<int64_t>(1, 0));
-  other.p_data_ = nullptr;
-  other.buffer_deleter_ = nullptr;
-  other.byte_offset_ = 0;
-}
-
 Tensor& Tensor::operator=(Tensor&& other) noexcept {
   if (this != &other) {
     ReleaseBuffer();
 
-    dtype_ = other.dtype_;
-    shape_ = other.shape_;
-    alloc_info_ = other.alloc_info_;
-    byte_offset_ = other.byte_offset_;
     p_data_ = other.p_data_;
-    buffer_deleter_ = other.buffer_deleter_;
+    buffer_deleter_ = std::move(other.buffer_deleter_);
+    shape_ = std::move(other.shape_);
+    dtype_ = other.dtype_;
+    alloc_info_ = std::move(other.alloc_info_);
+    byte_offset_ = other.byte_offset_;
+    sparse_meta_ = std::move(other.sparse_meta_);
 
-    other.dtype_ = DataTypeImpl::GetType<float>()->AsPrimitiveDataType();
-    other.shape_ = TensorShape(std::vector<int64_t>(1, 0));
     other.p_data_ = nullptr;
+    assert(!other.buffer_deleter_);
+    other.shape_ = TensorShape(std::vector<int64_t>(1, 0));
+    other.dtype_ = DataTypeImpl::GetType<float>()->AsPrimitiveDataType();
+    other.alloc_info_ = OrtMemoryInfo{};
     other.byte_offset_ = 0;
-    other.buffer_deleter_ = nullptr;
+    assert(!other.sparse_meta_);
   }
   return *this;
 }
@@ -119,11 +108,13 @@ void Tensor::ReleaseBuffer() {
     if (IsDataTypeString()) {
       using string = std::string;
       auto* ptr = static_cast<std::string*>(p_data_);
-      int64_t len = shape_.Size();
+      const int64_t len = shape_.Size();
       for (int64_t i = 0; i < len; i++)
         ptr[i].~string();
     }
     buffer_deleter_->Free(p_data_);
+    p_data_ = nullptr;
+    buffer_deleter_.reset();
   }
 }
 

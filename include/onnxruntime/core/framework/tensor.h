@@ -26,6 +26,61 @@ namespace onnxruntime {
 #pragma GCC diagnostic ignored "-Wnull-dereference"
 #endif
 #endif
+
+////////////////////////////////////////////////////////////////////////
+/// This class holds optional Meta data describing sparse format
+// when Tensor instance holds data in its sparse format.
+/// When Tensor holds sparse data then:
+/// - it holds only non-zero values in its buffer
+/// - its shape is the shape or rather size of the data in the buffer.
+/// - SparseMetadata must return a non nullptr const pointer to an instance of SparseMetadata
+///
+/// and SparseMetadata contains the enumeration member that indicates its format.
+class SparseMetadata {
+ public:
+  virtual ~SparseMetadata() = default;
+  /// <summary>
+  /// Only one class
+  /// </summary>
+  enum SparseFormat {
+    kNVidiaTwoByFour = 1
+  };
+  SparseFormat Format() const { return format_; }
+  /// <summary>
+  /// Safe way to obtain a ptr to a concrete derived class
+  /// </summary>
+  /// <typeparam name="T"></typeparam>
+  /// <returns></returns>
+  template <class T>
+  const T* Get() const;
+
+ protected:
+  explicit SparseMetadata(SparseFormat format) noexcept : format_(format) {}
+
+ private:
+  SparseFormat format_;
+};
+
+/// <summary>
+/// The only supported type for now that does not require any
+/// additional metadata as the data format 2:4 is really dense.
+/// So Tensor itself would hold the data as usual.
+/// </summary>
+class SparseNVidiaTwoByFour : public SparseMetadata {
+ public:
+  SparseNVidiaTwoByFour() : SparseMetadata(kNVidiaTwoByFour) {}
+};
+
+/// <summary>
+/// Specialize for concrete types.
+/// </summary>
+/// <returns></returns>
+template <>
+inline const SparseNVidiaTwoByFour* SparseMetadata::Get<SparseNVidiaTwoByFour>() const {
+  ORT_ENFORCE(format_ == kNVidiaTwoByFour, "Invalid sparse format meta requested");
+  return static_cast<const SparseNVidiaTwoByFour*>(this);
+}
+
 /*
   We want to keep tensor as simple as possible, it is just a placeholder
   for a piece of memory, with additional shape information.
@@ -34,7 +89,16 @@ namespace onnxruntime {
 */
 class Tensor final {
  public:
-  Tensor() = default;  // to allow creating vector<Tensor> to support seq(tensor)
+  // to allow creating vector<Tensor> to support seq(tensor)
+  Tensor() noexcept
+      : p_data_(nullptr),
+        buffer_deleter_(),
+        shape_(),
+        dtype_(nullptr),
+        alloc_info_(),
+        byte_offset_(0),
+        sparse_meta_() {
+  }
 
   /**
    * Create tensor with given type, shape, pre-allocated memory and allocator info.
@@ -50,7 +114,7 @@ class Tensor final {
          ptrdiff_t offset = 0);
 
   /**
-   * Deprecated. The orginal design is this Tensor class won't do any allocation / release.
+   * Deprecated. The original design is this Tensor class won't do any allocation / release.
    * However, this function will allocate the buffer for the shape, and do placement new if p_type is string tensor.
    */
   Tensor(MLDataType p_type, const TensorShape& shape, std::shared_ptr<IAllocator> allocator);
@@ -74,7 +138,10 @@ class Tensor final {
   //Move is allowed
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(Tensor);
 
-  Tensor(Tensor&& other) noexcept;
+  Tensor(Tensor&& other) noexcept
+      : Tensor() {
+    *this = std::move(other);
+  }
 
   Tensor& operator=(Tensor&& other) noexcept;
 
@@ -209,6 +276,20 @@ class Tensor final {
   */
   size_t SizeInBytes() const;
 
+  /**
+  * Get SparseMetada. If it is a dense matrix, it returns nullptr
+  */
+  const SparseMetadata* SparseMeta() const {
+    return sparse_meta_.get();
+  }
+
+  /**
+  * Attach SparseMetadata
+  */
+  void AttachSparseMetadata(std::unique_ptr<SparseMetadata> sparse_meta) {
+    sparse_meta_ = std::move(sparse_meta);
+  }
+
   // More API methods.
  private:
   void Init(MLDataType p_type,
@@ -231,6 +312,7 @@ class Tensor final {
   const PrimitiveDataTypeBase* dtype_;
   OrtMemoryInfo alloc_info_;
   ptrdiff_t byte_offset_;
+  std::unique_ptr<SparseMetadata> sparse_meta_;
 };
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
