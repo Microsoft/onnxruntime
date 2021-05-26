@@ -149,7 +149,7 @@ else()
 endif()
 
 # run the build process (this copies the results back into CMAKE_CURRENT_BINARY_DIR)
-set(GRADLE_ARGS cmakeBuild -DcmakeBuildDir=${CMAKE_CURRENT_BINARY_DIR})
+set(GRADLE_ARGS --console=plain cmakeBuild -DcmakeBuildDir=${CMAKE_CURRENT_BINARY_DIR})
 if(WIN32)
   set(GRADLE_ARGS ${GRADLE_ARGS} -Dorg.gradle.daemon=false)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Android")
