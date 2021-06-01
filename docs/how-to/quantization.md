@@ -82,7 +82,7 @@ See below for a description of the common options to quantize_dynamic, quantize_
 - **model_output**:
 
     file path of model to quantize
-- **op_types_to_quantize**: *defalut: []
+- **op_types_to_quantize**: *default: []*
 
     specify the types of operators to quantize, like ['Conv'] to quantize Conv only. It quantizes all supported operators by default.
 - **per_channel**: *default: False*
@@ -90,10 +90,10 @@ See below for a description of the common options to quantize_dynamic, quantize_
     If True, weights of Conv nodes are quantized per output channel.
   
     If False, they are quantized per tensor. Refer [QLinearConv](https://github.com/onnx/onnx/blob/master/docs/Operators.md#qlinearconv) for more information.
-- **activation_type**: *defalut: QuantType.QUInt8*
+- **activation_type**: *default: QuantType.QUInt8*
 
     quantization data type of activation. It can be QuantType.QInt8 or QuantType.QUInt8
-- **weight_type**: *defalut: QuantType.QUInt8*
+- **weight_type**: *default: QuantType.QUInt8*
 
     quantization data type of weight. It can be QuantType.QInt8 or QuantType.QUInt8
 - **nodes_to_quantize**: *default: []*
