@@ -28,3 +28,6 @@ RUN git clone --single-branch --branch ${ONNXRUNTIME_BRANCH} --recursive ${ONNXR
     pip install /code/onnxruntime/build/Linux/Release/dist/*.whl &&\
     cd .. &&\
     rm -rf onnxruntime cmake-3.14.3-Linux-x86_64
+    
+ RUN apt-get install -y --no-install-recommends libstdc++6 && cp /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/miniconda/lib
+
