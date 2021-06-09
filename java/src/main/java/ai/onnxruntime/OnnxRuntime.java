@@ -165,7 +165,29 @@ final class OnnxRuntime {
       return;
     }
 
-    // 2) The user may explicitly specify the path to their shared library:
+    // Resolve the platform dependent library name.
+    String libraryFileName = System.mapLibraryName(library).replace("jnilib", "dylib");
+
+    // 2) The user may explicitly specify the path to a directory containing all shared libraries:
+    String libraryDirPathProperty = System.getProperty("onnxruntime.native.path");
+    if (libraryDirPathProperty != null) {
+      logger.log(
+              Level.FINE,
+              "Attempting to load native library '"
+                      + library
+                      + "' from specified path: "
+                      + libraryDirPathProperty);
+      File libraryFile = Path.of(libraryDirPathProperty,libraryFileName).toFile();
+      String libraryFilePath = libraryFile.getAbsolutePath();
+      if (!libraryFile.exists()) {
+        throw new IOException("Native library '" + library + "' not found at " + libraryFilePath);
+      }
+      System.load(libraryFilePath);
+      logger.log(Level.FINE, "Loaded native library '" + library + "' from specified path");
+      return;
+    }
+
+    // 3) The user may explicitly specify the path to their shared library:
     String libraryPathProperty = System.getProperty("onnxruntime.native." + library + ".path");
     if (libraryPathProperty != null) {
       logger.log(
@@ -184,10 +206,9 @@ final class OnnxRuntime {
       return;
     }
 
-    // 3) try loading from resources or library path:
+    // 4) try loading from resources or library path:
     // generate a platform specific library name
     // replace Mac's jnilib extension to dylib
-    String libraryFileName = System.mapLibraryName(library).replace("jnilib", "dylib");
     String resourcePath = "/ai/onnxruntime/native/" + OS_ARCH_STR + '/' + libraryFileName;
     File tempFile = tempDirectory.resolve(libraryFileName).toFile();
     try (InputStream is = OnnxRuntime.class.getResourceAsStream(resourcePath)) {
