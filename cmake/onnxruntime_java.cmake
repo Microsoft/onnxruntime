@@ -37,7 +37,7 @@ file(GLOB_RECURSE onnxruntime4j_src "${JAVA_ROOT}/src/main/java/ai/onnxruntime/*
 set(JAVA_OUTPUT_JAR ${JAVA_ROOT}/build/libs/onnxruntime.jar)
 # this jar is solely used to signaling mechanism for dependency management in CMake
 # if any of the Java sources change, the jar (and generated headers) will be regenerated and the onnxruntime4j_jni target will be rebuilt
-set(GRADLE_ARGS clean jar)
+set(GRADLE_ARGS --console=plain clean jar -x test)
 if(WIN32)
   set(GRADLE_ARGS ${GRADLE_ARGS} -Dorg.gradle.daemon=false)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Android")
