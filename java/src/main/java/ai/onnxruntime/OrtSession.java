@@ -762,7 +762,12 @@ public class OrtSession implements AutoCloseable {
      */
     public void addCUDA(int deviceNum) throws OrtException {
       checkClosed();
-      addCUDA(OnnxRuntime.ortApiHandle, nativeHandle, deviceNum);
+      if (OnnxRuntime.extractCUDA()) {
+        addCUDA(OnnxRuntime.ortApiHandle, nativeHandle, deviceNum);
+      } else {
+        throw new OrtException(
+            OrtException.OrtErrorCode.ORT_EP_FAIL, "Failed to find CUDA shared provider");
+      }
     }
 
     /**
@@ -787,7 +792,12 @@ public class OrtSession implements AutoCloseable {
      */
     public void addDnnl(boolean useArena) throws OrtException {
       checkClosed();
-      addDnnl(OnnxRuntime.ortApiHandle, nativeHandle, useArena ? 1 : 0);
+      if (OnnxRuntime.extractDNNL()) {
+        addDnnl(OnnxRuntime.ortApiHandle, nativeHandle, useArena ? 1 : 0);
+      } else {
+        throw new OrtException(
+            OrtException.OrtErrorCode.ORT_EP_FAIL, "Failed to find DNNL shared provider");
+      }
     }
 
     /**
@@ -798,7 +808,12 @@ public class OrtSession implements AutoCloseable {
      */
     public void addOpenVINO(String deviceId) throws OrtException {
       checkClosed();
-      addOpenVINO(OnnxRuntime.ortApiHandle, nativeHandle, deviceId);
+      if (OnnxRuntime.extractOpenVINO()) {
+        addOpenVINO(OnnxRuntime.ortApiHandle, nativeHandle, deviceId);
+      } else {
+        throw new OrtException(
+            OrtException.OrtErrorCode.ORT_EP_FAIL, "Failed to find OpenVINO shared provider");
+      }
     }
 
     /**
@@ -809,7 +824,12 @@ public class OrtSession implements AutoCloseable {
      */
     public void addTensorrt(int deviceNum) throws OrtException {
       checkClosed();
-      addTensorrt(OnnxRuntime.ortApiHandle, nativeHandle, deviceNum);
+      if (OnnxRuntime.extractTensorRT()) {
+        addTensorrt(OnnxRuntime.ortApiHandle, nativeHandle, deviceNum);
+      } else {
+        throw new OrtException(
+            OrtException.OrtErrorCode.ORT_EP_FAIL, "Failed to find TensorRT shared provider");
+      }
     }
 
     /**
