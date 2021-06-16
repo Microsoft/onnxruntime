@@ -310,17 +310,30 @@ Status SliceBase::FillVectorsFromInput(const Tensor& start_tensor,
 template <typename T>
 static Status SliceImpl(OpKernelContext* ctx,
                         const Tensor& input_tensor,
-                        SliceOp::PrepareForComputeMetadata& compute_metadata) {
-  TensorShape output_shape(compute_metadata.output_dims_);
-  auto& output_tensor = *ctx->Output(0, output_shape);
+                        SliceOp::PrepareForComputeMetadata& compute_metadata,
+                        T* output = nullptr,
+                        T* output_end = nullptr) {
+  if (output == nullptr) {
+    TensorShape output_shape(compute_metadata.output_dims_);
+    auto& output_tensor = *ctx->Output(0, output_shape);
 
-  // output tensor's size is 0, nothing to fill - return
-  if (output_shape.Size() == 0)
+    // output tensor's size is 0, nothing to fill - return
+    if (output_shape.Size() == 0)
+      return Status::OK();
+
+    // use MutableDataRaw as actual data type in tensor may not match as we templatize on data size
+    output = reinterpret_cast<T*>(output_tensor.MutableDataRaw());
+    output_end = output + output_tensor.Shape().Size();
+  }
+
+  // Bypass the slice logic when only one element is required (usually happens with shapes).
+  if (compute_metadata.starts_.size() == 1 && std::distance(output, output_end) == 1 && compute_metadata.steps_[0] > 0) {
+    auto dims = input_tensor.Shape().GetDims();
+    size_t start = compute_metadata.starts_[0] >= 0 ? compute_metadata.starts_[0] : ((compute_metadata.starts_[0] + dims[0]) % dims[0]);
+    const T* input = reinterpret_cast<const T*>(input_tensor.DataRaw()) + start;
+    *output = *input;
     return Status::OK();
-
-  // use MutableDataRaw as actual data type in tensor may not match as we templatize on data size
-  T* output = reinterpret_cast<T*>(output_tensor.MutableDataRaw());
-  const auto* output_end = output + output_tensor.Shape().Size();
+  }
 
   auto create_output = [&output, &output_end](SliceIterator<T>& input_iterator) {
     if (input_iterator.SolitaryInnerStep()) {
@@ -360,10 +373,12 @@ template <typename EnabledTypes, typename T>
 static inline bool CallSliceImplIfEnabled(OpKernelContext* ctx,
                                           const Tensor& input_tensor,
                                           SliceOp::PrepareForComputeMetadata& compute_metadata,
-                                          Status& status) {
+                                          Status& status,
+                                          T* output = nullptr,
+                                          T* output_end = nullptr) {
   constexpr bool enabled = utils::HasTypeWithSameSize<EnabledTypes, T>();
   if (enabled) {
-    status = SliceImpl<T>(ctx, input_tensor, compute_metadata);
+    status = SliceImpl<T>(ctx, input_tensor, compute_metadata, output, output_end);
   }
 
   return enabled;
@@ -389,11 +404,22 @@ Status SliceBase::Compute(OpKernelContext* ctx) const {
     ORT_RETURN_IF_ERROR(FillVectorsFromInput(*ctx->Input<Tensor>(1), *ctx->Input<Tensor>(2),
                                              ctx->Input<Tensor>(3), ctx->Input<Tensor>(4),
                                              input_starts, input_ends, input_axes, input_steps));
-
+    if (input_starts.size() > 1 && input_steps.size() == 0 && ctx->GetOperatorThreadPool() != nullptr) {
+      auto status = SliceBase::ComputeParallel(ctx, input_starts, input_ends, input_axes);
+      if (status.IsOK() || status.Code() != StatusCode::NOT_IMPLEMENTED) {
+        return Status::OK();
+      }
+    }
     ORT_RETURN_IF_ERROR(PrepareForCompute(input_starts, input_ends, input_axes, input_steps, compute_metadata));
   }
   // Slice V1-9
   else {
+    if (attr_axes_.size() > 1 && ctx->GetOperatorThreadPool() != nullptr) {
+      auto status = SliceBase::ComputeParallel(ctx, attr_starts_, attr_ends_, attr_axes_);
+      if (status.IsOK() || status.Code() != StatusCode::NOT_IMPLEMENTED) {
+        return Status::OK();
+      }
+    }
     ORT_RETURN_IF_ERROR(PrepareForCompute(attr_starts_, attr_ends_, attr_axes_, compute_metadata));
   }
 
@@ -432,6 +458,133 @@ Status SliceBase::Compute(OpKernelContext* ctx) const {
   }
 
   return status;
+}
+
+Status SliceBase::ComputeParallel(OpKernelContext* ctx,
+                                  const std::vector<int64_t>& i_starts,
+                                  const std::vector<int64_t>& i_ends,
+                                  const std::vector<int64_t>& i_axes) const {
+  const auto* input_tensor_ptr = ctx->Input<Tensor>(0);
+  const auto& input_tensor = *input_tensor_ptr;
+  const auto& input_dimensions = input_tensor.Shape().GetDims();
+
+  SliceOp::PrepareForComputeMetadata main_compute_metadata(input_dimensions);
+  ORT_RETURN_IF_ERROR(PrepareForCompute(i_starts, i_ends, i_axes, main_compute_metadata));
+
+  auto tp = ctx->GetOperatorThreadPool();
+  int n_threads = concurrency::ThreadPool::DegreeOfParallelism(tp) * 4;
+  if (n_threads > main_compute_metadata.output_dims_[0]) {
+    return Status(StatusCategory::NONE, StatusCode::NOT_IMPLEMENTED);
+  }
+
+  TensorShape output_shape(main_compute_metadata.output_dims_);
+
+  // output tensor's size is 0, nothing to fill - return
+  if (output_shape.Size() == 0)
+    return Status::OK();
+
+  int64_t main_stride = 1;
+  for (size_t i = 1; i < main_compute_metadata.output_dims_.size(); ++i) {
+    main_stride *= main_compute_metadata.output_dims_[i];
+  }
+
+  std::vector<SliceOp::PrepareForComputeMetadata> compute_metadata;
+  compute_metadata.reserve(n_threads);
+  for (int i = 0; i < n_threads; ++i) {
+    compute_metadata.emplace_back(input_dimensions);
+  }
+
+  std::vector<int64_t> starts(i_starts);
+  std::vector<int64_t> ends(i_ends);
+  std::vector<int64_t> splits(n_threads + 1);
+  int64_t i_axes0 = i_axes.size() > 0 ? i_axes[0] : 0;
+  int64_t idx = i_starts[0];
+  int64_t end = std::min(
+      input_dimensions[i_axes0],
+      i_ends[0] == -1 ? input_dimensions[i_axes0] : i_ends[0]);
+  for (int i = 0; i < n_threads; ++i) {
+    splits[i] = idx;
+    idx = i_starts[0] + (end - i_starts[0]) * (i + 1) / n_threads;
+    if (i > 0 && splits[i - 1] == splits[i])
+      return Status(StatusCategory::NONE, StatusCode::NOT_IMPLEMENTED);
+  }
+  splits[n_threads] = end;
+
+  auto& output_tensor = *ctx->Output(0, output_shape);
+  void* output = output_tensor.MutableDataRaw();
+
+  for (int i = 0; i < n_threads; ++i) {
+    starts[0] = splits[i];
+    ends[0] = splits[i + 1];
+    ORT_RETURN_IF_ERROR(PrepareForCompute(starts, ends, i_axes, compute_metadata[i]));
+  }
+  for (int i = 1; i < n_threads + 1; ++i) {
+    splits[i] -= splits[0];
+  }
+  splits[0] = 0;
+  std::vector<Status> statuses(n_threads, Status::OK());
+
+  auto fct = [&](ptrdiff_t begin, ptrdiff_t end) {
+    for (ptrdiff_t ith = begin; ith < end; ++ith) {
+      bool supported = false;
+      if (input_tensor.IsDataTypeString()) {
+        if (utils::HasType<EnabledDataTypes, std::string>()) {
+          supported = true;
+          statuses[ith] = SliceImpl<std::string>(
+              ctx, input_tensor, compute_metadata[ith],
+              reinterpret_cast<std::string*>(output) + splits[ith] * main_stride,
+              reinterpret_cast<std::string*>(output) + splits[ith + 1] * main_stride);
+        }
+      } else {
+        const auto element_size = input_tensor.DataType()->Size();
+        // call SliceImpl
+        switch (element_size) {
+          case sizeof(uint32_t):
+            supported = CallSliceImplIfEnabled<EnabledDataTypes, uint32_t>(
+                ctx, input_tensor, compute_metadata[ith], statuses[ith],
+                reinterpret_cast<uint32_t*>(output) + splits[ith] * main_stride,
+                reinterpret_cast<uint32_t*>(output) + splits[ith + 1] * main_stride);
+            break;
+          case sizeof(uint64_t):
+            supported = CallSliceImplIfEnabled<EnabledDataTypes, uint64_t>(
+                ctx, input_tensor, compute_metadata[ith], statuses[ith],
+                reinterpret_cast<uint64_t*>(output) + splits[ith] * main_stride,
+                reinterpret_cast<uint64_t*>(output) + splits[ith + 1] * main_stride);
+            break;
+          case sizeof(uint16_t):
+            supported = CallSliceImplIfEnabled<EnabledDataTypes, uint16_t>(
+                ctx, input_tensor, compute_metadata[ith], statuses[ith],
+                reinterpret_cast<uint16_t*>(output) + splits[ith] * main_stride,
+                reinterpret_cast<uint16_t*>(output) + splits[ith + 1] * main_stride);
+            break;
+          case sizeof(uint8_t):
+            supported = CallSliceImplIfEnabled<EnabledDataTypes, uint8_t>(
+                ctx, input_tensor, compute_metadata[ith], statuses[ith],
+                reinterpret_cast<uint8_t*>(output) + splits[ith] * main_stride,
+                reinterpret_cast<uint8_t*>(output) + splits[ith + 1] * main_stride);
+            break;
+          default:
+            // leave 'supported' as false
+            break;
+        }
+      }
+
+      if (!supported) {
+        statuses[idx] = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported input data type of ", input_tensor.DataType());
+      }
+    }
+  };
+
+  auto slice_size = output_shape.Size() / n_threads;
+  auto cost = TensorOpCost{(double)slice_size, (double)slice_size, (double)slice_size * input_dimensions.size() * 2};
+  concurrency::ThreadPool::TryParallelFor(tp, n_threads, cost, fct);
+
+  for (auto status : statuses) {
+    if (!status.IsOK())
+      return status;
+  }
+
+  return Status::OK();
 }
 
 }  // namespace onnxruntime

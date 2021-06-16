@@ -29,7 +29,7 @@ void RunSliceTest(const std::vector<int64_t>& input_dims,
       testv9.AddAttribute("axes", axes);
     testv9.AddInput<T>("data", input_dims, input_vals);
     testv9.AddOutput<T>("output", output_dims, output_vals);
-    testv9.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider}); // OpenVINO EP: Disabled temporarily
+    testv9.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  // OpenVINO EP: Disabled temporarily
   }
 
   // V10
@@ -157,6 +157,59 @@ TEST(SliceTest, Slice2D_TwoAxes) {
                       {2, 2},
                       {32.0f, 33.0f,
                        42.0f, 43.0f});
+}
+
+TEST(SliceTest, Slice2D_TwoAxes_Many) {
+  std::vector<uint32_t> input_val(1000);
+  for (size_t i = 0; i < input_val.size(); ++i) {
+    input_val[i] = (uint32_t)i;
+  }
+  std::vector<uint32_t> expected_val(98 * 8);
+  size_t pos = 0;
+  size_t ir, ic;
+  for (size_t i = 0; i < input_val.size(); ++i) {
+    ir = i / 10;
+    ic = i % 10;
+    if (ir >= 1 && ic >= 1 && ir < 99 && ic < 9) {
+      expected_val[pos++] = input_val[i];
+    }
+  }
+
+  RunSliceTest<uint32_t>({100, 10},
+                         input_val,
+                         {1, 1},
+                         {99, 9},
+                         {0, 1},
+                         {},
+                         {98, 8},
+                         expected_val);
+}
+
+TEST(SliceTest, Slice2D_TwoAxes_Many10) {
+  std::vector<uint32_t> input_val(1000);
+  for (size_t i = 0; i < input_val.size(); ++i) {
+    input_val[i] = (uint32_t)i;
+  }
+  std::vector<uint32_t> expected_val(98 * 8);
+  size_t pos = 0;
+  size_t ir, ic;
+  for (size_t i = 0; i < input_val.size(); ++i) {
+    ir = i / 10;
+    ic = i % 10;
+    if (ir >= 1 && ic >= 1 && ir < 99 && ic < 9) {
+      expected_val[pos++] = input_val[i];
+    }
+  }
+
+  RunSliceTest<uint32_t>({100, 10},
+                         input_val,
+                         {1, 1},
+                         {99, 9},
+                         {0, 1},
+                         {},
+                         {98, 8},
+                         expected_val,
+                         true);
 }
 
 TEST(SliceTest, Slice2D_TwoAxesEque) {

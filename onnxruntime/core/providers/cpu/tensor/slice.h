@@ -70,6 +70,10 @@ class SliceBase {
   }
 
   Status Compute(OpKernelContext* context) const;
+  Status ComputeParallel(OpKernelContext* context,
+                         const std::vector<int64_t>& starts,
+                         const std::vector<int64_t>& ends,
+                         const std::vector<int64_t>& axes) const;
 
  protected:
   const std::vector<int64_t>& StartsAttribute() const { return attr_starts_; }
