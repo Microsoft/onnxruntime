@@ -799,29 +799,32 @@ install(TARGETS onnx_test_runner
         RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(onnxruntime_BUILD_BENCHMARKS)
-  SET(BENCHMARK_DIR ${TEST_SRC_DIR}/onnx/microbenchmark)
-  onnxruntime_add_executable(onnxruntime_benchmark
-    ${BENCHMARK_DIR}/main.cc
-    ${BENCHMARK_DIR}/modeltest.cc
-    ${BENCHMARK_DIR}/pooling.cc
-    ${BENCHMARK_DIR}/batchnorm.cc
-    ${BENCHMARK_DIR}/batchnorm2.cc
-    ${BENCHMARK_DIR}/tptest.cc
-    ${BENCHMARK_DIR}/eigen.cc
-    ${BENCHMARK_DIR}/gelu.cc
-    ${BENCHMARK_DIR}/activation.cc
-    ${BENCHMARK_DIR}/quantize.cc
-    ${BENCHMARK_DIR}/reduceminmax.cc)
-  target_include_directories(onnxruntime_benchmark PRIVATE ${ONNXRUNTIME_ROOT} ${onnxruntime_graph_header} ${ONNXRUNTIME_ROOT}/core/mlas/inc)
-  if(WIN32)
-    target_compile_options(onnxruntime_benchmark PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler /wd4141>"
+  if (NOT CMAKE_SYSTEM_NAME MATCHES "Android")
+
+    SET(BENCHMARK_DIR ${TEST_SRC_DIR}/onnx/microbenchmark)
+      onnxruntime_add_executable(onnxruntime_benchmark
+      ${BENCHMARK_DIR}/main.cc
+      ${BENCHMARK_DIR}/modeltest.cc
+      ${BENCHMARK_DIR}/pooling.cc
+      ${BENCHMARK_DIR}/batchnorm.cc
+      ${BENCHMARK_DIR}/batchnorm2.cc
+      ${BENCHMARK_DIR}/tptest.cc
+      ${BENCHMARK_DIR}/eigen.cc
+      ${BENCHMARK_DIR}/gelu.cc
+      ${BENCHMARK_DIR}/activation.cc
+      ${BENCHMARK_DIR}/quantize.cc
+      ${BENCHMARK_DIR}/reduceminmax.cc)
+    target_include_directories(onnxruntime_benchmark PRIVATE ${ONNXRUNTIME_ROOT} ${onnxruntime_graph_header} ${ONNXRUNTIME_ROOT}/core/mlas/inc)
+    if(WIN32)
+      target_compile_options(onnxruntime_benchmark PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler /wd4141>"
                       "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/wd4141>")
-    target_compile_options(onnxruntime_benchmark PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
+      target_compile_options(onnxruntime_benchmark PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
             "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
+    endif()
+    target_link_libraries(onnxruntime_benchmark PRIVATE onnx_test_runner_common benchmark::benchmark ${onnx_test_libs})
+    add_dependencies(onnxruntime_benchmark ${onnxruntime_EXTERNAL_DEPENDENCIES})
+    set_target_properties(onnxruntime_benchmark PROPERTIES FOLDER "ONNXRuntimeTest")
   endif()
-  target_link_libraries(onnxruntime_benchmark PRIVATE onnx_test_runner_common benchmark::benchmark ${onnx_test_libs})
-  add_dependencies(onnxruntime_benchmark ${onnxruntime_EXTERNAL_DEPENDENCIES})
-  set_target_properties(onnxruntime_benchmark PROPERTIES FOLDER "ONNXRuntimeTest")
 
   SET(MLAS_BENCH_DIR ${TEST_SRC_DIR}/mlas/bench)
   file(GLOB_RECURSE MLAS_BENCH_SOURCE_FILES "${MLAS_BENCH_DIR}/*.cpp" "${MLAS_BENCH_DIR}/*.h")

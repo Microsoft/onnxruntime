@@ -57,7 +57,7 @@ void QGEMM(benchmark::State& state, bool pack_b) {
 
 
   std::vector<MLAS_GEMM_U8X8_DATA_PARAMS> gemm_data_vec(batch);
-  for (int i = 0; i < batch; i++) {
+  for (size_t i = 0; i < batch; i++) {
     auto& gemm_params = gemm_data_vec[i];
     gemm_params.lda = gemm_shape.K;
     gemm_params.ZeroPointA = a_zero_point;
@@ -81,27 +81,35 @@ void QGEMM(benchmark::State& state, bool pack_b) {
 static void QGemmSize(benchmark::internal::Benchmark* b) {
   b->ArgNames(qgemm_arg_names);
   // Args for  "M", "N", "K", "Batch",
-  std::vector<std::vector<int64_t>> mnk_batch = {
-      {512, 64, 512, 12},
-      {512, 512, 64, 12},
-      {512, 768, 768, 1},
-      {512, 768, 3072, 1},
-      {128, 768, 2304, 1},
-      {128, 768, 2304, 6},
-      {128, 1024, 4096, 1},
-      {128, 1024, 4096, 6},
-      {128, 2048, 8192, 1},
-      {128, 4096, 16384, 1}
-  };
 
-  // Args for Threads
-  for (int64_t threads : {2, 4, 8, 16}) {
-    for (auto& shape : mnk_batch) {
-      std::vector<int64_t> copy(shape);
-      copy.push_back(threads);
-      b->Args(copy);
-    }
-  }
+  b->Args({512, 32128, 768, 1, 1});
+  b->Args({512, 32128, 768, 1, 4});
+  b->Args({512, 32128, 768, 1, 6});
+
+  b->Args({512, 3072, 768, 1, 1});
+  b->Args({512, 3072, 768, 1, 4});
+  b->Args({512, 3072, 768, 1, 6});
+
+  b->Args({512, 768, 3072, 1, 1});
+  b->Args({512, 768, 3072, 1, 4});
+  b->Args({512, 768, 3072, 1, 6});
+
+  b->Args({512, 768, 768, 1, 1});
+  b->Args({512, 768, 768, 1, 4});
+  b->Args({512, 768, 768, 1, 6});
+
+  b->Args({512, 64, 512, 1, 1});
+  b->Args({512, 64, 512, 1, 4});
+  b->Args({512, 64, 512, 1, 6});
+
+  b->Args({512, 512, 64, 12, 1});
+  b->Args({512, 512, 64, 12, 4});
+  b->Args({512, 512, 64, 12, 6});
+
+  b->Args({512, 64, 512, 12, 1});
+  b->Args({512, 64, 512, 12, 4});
+  b->Args({512, 64, 512, 12, 6});
+
 }
 
 
