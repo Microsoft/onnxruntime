@@ -55,6 +55,25 @@ Released in April 2021, ONNX Runtime Training provides a one-line addition for e
 
 Using the ORTModule class wrapper, ONNX Runtime for PyTorch runs the forward and backward passes of the training script using an optimized automatically-exported ONNX computation graph. ORT Training uses the same graph optimizations as ORT Inferencing, allowing for model training acceleration. 
 
+The ORTModule is instantiated from [`torch-ort`](https://github.com/pytorch/ort) backend in PyTorch. This new interface enables a seamless integration for ONNX Runtime training in a PyTorch training code with minimal changes to the existing code.
+
+### Install ONNX Runtime Training package
+
+`pip install torch-ort`
+
+**Note**: This installs the default version of the `torch-ort` and `onnxruntime-training` packages that are mapped to specific versions of the CUDA libraries. Refer to the install options in [ONNXRUNTIME.ai](https://onnxruntime.ai).
+
+### Add ORTModule in the `train.py`
+
+```python
+   from torch_ort import ORTModule
+   .
+   .
+   .
+   model = ORTModule(model)
+```
+
+**Note**: the `model` where ORTModule is wrapped needs to be a derived from the `torch.nn.Module` class.
  
 
 
