@@ -7,23 +7,51 @@
 
 namespace onnxruntime {
 
-template <typename T>
-void print_vec(const std::vector<T>& vec) {
-  std::cout << "[ ";
-  for (auto& v : vec) {
-    std::cout << v << " ";
+std::vector<int64_t> StridesForTensor(const Tensor& dst) {
+  std::vector<int64_t> strides(dst.Shape().NumDimensions());
+  for (std::size_t i = 0; i < dst.Shape().NumDimensions(); i++) {
+    strides[i] = 1;
+    for (std::size_t j = i + 1; j < dst.Shape().NumDimensions(); j++) {
+      strides[i] *= dst.Shape()[j];
+    }
   }
-  std::cout << "]" << std::endl;
+  return strides;
+}
+
+Status DispatchStridedCopy(concurrency::ThreadPool* thread_pool,
+                           Tensor& dst,
+                           std::ptrdiff_t dst_offset,
+                           const std::vector<int64_t> dst_strides,
+                           const TensorShape& copy_shape,
+                           const Tensor& src,
+                           const std::vector<int64_t> src_strides) {
+#define CALL_FOR_TYPE(T) \
+  StridedCopy<T>(thread_pool, dst.MutableData<T>() + dst_offset, copy_shape, dst_strides, src.Data<T>(), src_strides)
+  ORT_RETURN_IF_NOT(dst.DataType() == src.DataType(), "src and dst types must match");
+  if (dst.IsDataType<float>()) {
+    CALL_FOR_TYPE(float);
+  } else if (dst.IsDataType<double>()) {
+    CALL_FOR_TYPE(double);
+  } else if (dst.IsDataType<int32_t>()) {
+    CALL_FOR_TYPE(int32_t);
+  } else if (dst.IsDataType<int64_t>()) {
+    CALL_FOR_TYPE(int64_t);
+  } else if (dst.IsDataTypeString()) {
+    CALL_FOR_TYPE(std::string);
+  } else {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "unsupported data type");
+  }
+  return Status::OK();
 }
 
 template <typename T>
 void StridedCopy(concurrency::ThreadPool* thread_pool,
                  T* dst,
-                 const std::vector<int64_t> dst_shape,
-                 const std::vector<int64_t> dst_strides,
-                 T* src,
-                 const std::vector<int64_t> src_strides) {
-  const size_t dims = dst_shape.size();
+                 const TensorShape& dst_shape,
+                 const std::vector<int64_t>& dst_strides,
+                 const T* src,
+                 const std::vector<int64_t>& src_strides) {
+  const size_t dims = dst_shape.NumDimensions();
   // We will iterate over the output dimensions
   int64_t num_iterations = 1;
   for (size_t dim = 0; dim < dims; dim++) {
@@ -76,13 +104,13 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
       });
 }
 
-#define STRIDED_COPY_IMPL(T)                                          \
-  template void StridedCopy<T>(concurrency::ThreadPool * thread_pool, \
-                               T * dst,                               \
-                               std::vector<int64_t> dst_shape,        \
-                               std::vector<int64_t> dst_strides,      \
-                               T * src,                               \
-                               std::vector<int64_t> src_strides);
+#define STRIDED_COPY_IMPL(T)                                            \
+  template void StridedCopy<T>(concurrency::ThreadPool * thread_pool,   \
+                               T * dst,                                 \
+                               const TensorShape& dst_shape,            \
+                               const std::vector<int64_t>& dst_strides, \
+                               const T* src,                            \
+                               const std::vector<int64_t>& src_strides);
 
 STRIDED_COPY_IMPL(int32_t)
 STRIDED_COPY_IMPL(int64_t)

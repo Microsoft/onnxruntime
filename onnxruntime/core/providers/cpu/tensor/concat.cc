@@ -4,6 +4,7 @@
 #include "core/providers/cpu/tensor/concat.h"
 #include "core/providers/common.h"
 #include "core/framework/TensorSeq.h"
+#include "core/providers/cpu/tensor/copy.h"
 
 namespace onnxruntime {
 
@@ -211,10 +212,12 @@ Status ConcatBase::PrepareForCompute(OpKernelContext* ctx,
 }
 
 // This method computes the output tensor for Concat/ConcatFromSequence ops
-Status ConcatBase::ComputeImpl(Prepare& p) const {
+Status ConcatBase::ComputeImpl(Prepare& p, OpKernelContext* ctx) const {
   int input_count = static_cast<int>(p.inputs.size());
   int64_t initial_output_offset = 0;  // initial offset for each input
-  auto element_bytes = p.output_tensor->DataType()->Size();
+
+  auto output_strides = StridesForTensor(*p.output_tensor);
+
   for (int input_index = 0; input_index < input_count; input_index++) {
     const auto& prep = p.inputs[input_index];
 
@@ -223,36 +226,16 @@ Status ConcatBase::ComputeImpl(Prepare& p) const {
       continue;
 
     auto input_axis_pitch = prep.axis_pitch;
-    const uint8_t* input = static_cast<const uint8_t*>(prep.tensor->DataRaw());
 
-    auto input_size = prep.num_elements;
-
-    // Copy the data across. For every 'input_axis_pitch' values copied, we move over by the 'output_axis_pitch'
-    // TODO: Optimization possibility: There are cases where we simply need to "merge" raw buffers and this
-    // could be done without the pointer house-keeping as below. Some scenarios whether this is possible are:
-    // 1) Concatenating on input axis = 0
-    // 2) Stacking on output axis = 0
-    // 3) Stacking scalars
-    uint8_t* output = static_cast<uint8_t*>(p.output_tensor->MutableDataRaw());
-    int64_t cur_out_offset = 0;
-    int64_t cur_in_offset = 0;
-    for (size_t idx_copy = 0, end = input_size / input_axis_pitch; idx_copy < end; ++idx_copy) {
-      if (p.is_string_type) {
-        size_t out = initial_output_offset + cur_out_offset;
-        for (int idx_item = 0; idx_item < input_axis_pitch; ++idx_item) {
-          reinterpret_cast<std::string*>(output)[out + idx_item] =
-              reinterpret_cast<const std::string*>(input)[cur_in_offset + idx_item];
-        }
-      } else {
-        memcpy(
-            output + (initial_output_offset + cur_out_offset) * element_bytes,
-            input + cur_in_offset * element_bytes,
-            input_axis_pitch * element_bytes);
-      }
-
-      cur_out_offset += p.output_axis_pitch;
-      cur_in_offset += input_axis_pitch;
-    }
+    // Copy the data across
+    auto status = DispatchStridedCopy(ctx->GetOperatorThreadPool(),
+                                      *p.output_tensor,
+                                      initial_output_offset,
+                                      output_strides,
+                                      prep.tensor->Shape(),
+                                      *prep.tensor,
+                                      StridesForTensor(*prep.tensor));
+    ORT_RETURN_IF_ERROR(status);
 
     initial_output_offset += input_axis_pitch;
   }
@@ -283,7 +266,7 @@ Status Concat::Compute(OpKernelContext* ctx) const {
     return Status::OK();
 
   // Compute values to be placed in the output tensor
-  return ComputeImpl(p);
+  return ComputeImpl(p, ctx);
 }
 
 }  // namespace onnxruntime
