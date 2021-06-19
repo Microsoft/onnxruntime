@@ -38,6 +38,7 @@ jobs:
               --enable_pybind \
               --use_openmp \
               --enable_onnx_tests \
+              --build_java \
               --use_dnnl
       workingDirectory: $(Build.SourcesDirectory)
 
