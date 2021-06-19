@@ -49,6 +49,7 @@ class QPad(QuantOperatorBase):
                     self.quantizer.model.add_initializer(quantized_padding_constant_initializer)
                     node.input[2] = quantized_padding_constant_name
                 else:
+                    # TODO: check quantize_inputs after sub graph is supported
                     pad_value_qnodes = self.quantizer._get_quantize_input_nodes(node, 2, self.quantizer.input_qType,
                                                                                 quantized_input_value.scale_name,
                                                                                 quantized_input_value.zp_name)

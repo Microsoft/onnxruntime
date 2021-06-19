@@ -1,8 +1,7 @@
 import onnx
 import itertools
-from .quant_utils import find_by_name
+from .quant_utils import find_by_name, attribute_to_kwarg
 from pathlib import Path
-
 
 class ONNXModel:
     def __init__(self, model):
@@ -131,10 +130,39 @@ class ONNXModel:
                     nodes.append(node)
         return nodes
 
-    def replace_gemm_with_matmul(self):
-        new_nodes = []
+    @staticmethod
+    def __get_initializer(name, graph_path):
+        for gid in range(len(graph_path) - 1, -1, -1):
+            graph = graph_path[gid]
+            for tensor in graph.initializer:
+                if tensor.name == name:
+                    return tensor, graph
+        return None, None
 
-        for node in self.nodes():
+    @staticmethod
+    def __replace_gemm_with_matmul(graph_path):
+        new_nodes = []
+        graph = graph_path[-1]
+        for node in graph.node:
+            graph_attrs = [attr for attr in node.attribute if attr.type == 5 or attr.type == 10]
+            if len(graph_attrs):
+                node_name = node.name
+                kwargs = {}
+                for attr in node.attribute:
+                    if attr.type == 5:
+                        graph_path.append(attr.g)
+                        kv = {attr.name: ONNXModel.__replace_gemm_with_matmul(graph_path)}
+                    elif attr.type == 10:
+                        value = []
+                        for subgraph in attr.graphs:
+                            graph_path.append(subgraph)
+                            value.extend([ONNXModel.__replace_gemm_with_matmul(graph_path)])
+                        kv = {attr.name: value}
+                    else:
+                        kv = attribute_to_kwarg(attr)
+                    kwargs.update(kv)
+                node = onnx.helper.make_node(node.op_type, node.input, node.output, name=node.name, **kwargs)
+
             if node.op_type == 'Gemm':
                 alpha = 1.0
                 beta = 1.0
@@ -152,34 +180,38 @@ class ONNXModel:
                 if alpha == 1.0 and beta == 1.0 and transA == 0:
                     inputB = node.input[1]
                     if transB == 1:
-                        B = self.get_initializer(node.input[1])
+                        B, Bs_graph = ONNXModel.__get_initializer(node.input[1], graph_path)
                         if B:
                             # assume B is not used by any other node
                             B_array = onnx.numpy_helper.to_array(B)
                             B_trans = onnx.numpy_helper.from_array(B_array.T)
                             B_trans.name = B.name
-                            self.remove_initializer(B)
-                            self.add_initializer(B_trans)
+                            Bs_graph.initializer.remove(B)
+                            for input in Bs_graph.input:
+                                if input.name == inputB:
+                                    Bs_graph.input.remove(input)
+                                    break
+                            Bs_graph.initializer.extend([B_trans])
                         else:
                             inputB += '_Transposed'
                             transpose_node = onnx.helper.make_node('Transpose',
                                                                    inputs=[node.input[1]],
                                                                    outputs=[inputB],
-                                                                   name=node.name + '_Transpose')
+                                                                   name=node.name + '_Transpose' if node.name != "" else "")
                             new_nodes.append(transpose_node)
 
                     matmul_node = onnx.helper.make_node(
                         'MatMul',
                         inputs=[node.input[0], inputB],
                         outputs=[node.output[0] + ('_MatMul' if len(node.input) > 2 else '')],
-                        name=node.name + '_MatMul' if node.name else "")
+                        name=node.name + '_MatMul' if node.name != "" else "")
                     new_nodes.append(matmul_node)
 
                     if len(node.input) > 2:
                         add_node = onnx.helper.make_node('Add',
                                                          inputs=[node.output[0] + '_MatMul', node.input[2]],
                                                          outputs=node.output,
-                                                         name=node.name + '_Add' if node.name else "")
+                                                         name=node.name + '_Add' if node.name != "" else "")
                         new_nodes.append(add_node)
 
                 # unsupported
@@ -190,8 +222,14 @@ class ONNXModel:
             else:
                 new_nodes.append(node)
 
-        self.graph().ClearField('node')
-        self.graph().node.extend(new_nodes)
+        graph.ClearField('node')
+        graph.node.extend(new_nodes)
+        graph_path.pop()
+        return graph
+
+    def replace_gemm_with_matmul(self):
+        graph_path = [self.graph()]
+        ONNXModel.__replace_gemm_with_matmul(graph_path)
 
     def save_model_to_file(self, output_path, use_external_data_format=False):
         '''
