@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2021, Oracle and/or its affiliates. All rights reserved.
  * Licensed under the MIT License.
  */
 package ai.onnxruntime;
@@ -56,6 +56,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 /** Tests for the onnx-runtime Java interface. */
 public class InferenceTest {
+  private static final Logger logger = Logger.getLogger(InferenceTest.class.getName());
   private static final Pattern LOAD_PATTERN = Pattern.compile("[,\\[\\] ]");
 
   private static final String propertiesFile = "Properties.txt";
@@ -689,11 +690,33 @@ public class InferenceTest {
   @Test
   @EnabledIfSystemProperty(named = "USE_CUDA", matches = "1")
   public void testCUDA() throws OrtException {
+    runProvider(OrtProvider.CUDA);
+  }
+
+  @Test
+  @EnabledIfSystemProperty(named = "USE_TENSORRT", matches = "1")
+  public void testTensorRT() throws OrtException {
+    runProvider(OrtProvider.TENSOR_RT);
+  }
+
+  @Test
+  @EnabledIfSystemProperty(named = "USE_OPENVINO", matches = "1")
+  public void testOpenVINO() throws OrtException {
+    runProvider(OrtProvider.OPEN_VINO);
+  }
+
+  @Test
+  @EnabledIfSystemProperty(named = "USE_DNNL", matches = "1")
+  public void testDNNL() throws OrtException {
+    runProvider(OrtProvider.DNNL);
+  }
+
+  private void runProvider(OrtProvider provider) throws OrtException {
     EnumSet<OrtProvider> providers = OrtEnvironment.getAvailableProviders();
     assertTrue(providers.size() > 1);
     assertTrue(providers.contains(OrtProvider.CPU));
-    assertTrue(providers.contains(OrtProvider.CUDA));
-    SqueezeNetTuple tuple = openSessionSqueezeNet(0);
+    assertTrue(providers.contains(provider));
+    SqueezeNetTuple tuple = openSessionSqueezeNet(EnumSet.of(provider));
     try (OrtEnvironment env = tuple.env;
         OrtSession session = tuple.session) {
       float[] inputData = tuple.inputData;
@@ -1503,16 +1526,63 @@ public class InferenceTest {
   }
 
   private static SqueezeNetTuple openSessionSqueezeNet() throws OrtException {
-    return openSessionSqueezeNet(-1);
+    return openSessionSqueezeNet(EnumSet.noneOf(OrtProvider.class));
   }
 
-  private static SqueezeNetTuple openSessionSqueezeNet(int cudaDeviceId) throws OrtException {
+  /**
+   * Loads the squeezenet model into a session using the supplied providers.
+   *
+   * @param providers The providers to activate.
+   * @return The squeezenet session, input and output.
+   * @throws OrtException If the native code failed.
+   */
+  private static SqueezeNetTuple openSessionSqueezeNet(EnumSet<OrtProvider> providers)
+      throws OrtException {
     Path squeezeNet = getResourcePath("/squeezenet.onnx");
     String modelPath = squeezeNet.toString();
     OrtEnvironment env = OrtEnvironment.getEnvironment();
     SessionOptions options = new SessionOptions();
-    if (cudaDeviceId != -1) {
-      options.addCUDA(cudaDeviceId);
+    for (OrtProvider p : providers) {
+      switch (p) {
+        case CUDA:
+          options.addCUDA();
+          break;
+        case DNNL:
+          options.addDnnl(false);
+          break;
+        case OPEN_VINO:
+          options.addOpenVINO("");
+          break;
+        case TENSOR_RT:
+          options.addTensorrt(0);
+          break;
+        case NNAPI:
+          options.addNnapi();
+          break;
+        case DIRECT_ML:
+          options.addDirectML(0);
+          break;
+        case ACL:
+          options.addACL(false);
+          break;
+        case ARM_NN:
+          options.addArmNN(false);
+          break;
+        case ROCM:
+          options.addROCM(0, 4 * 1024 * 1024);
+          break;
+        case CORE_ML:
+          options.addCoreML();
+          break;
+        case NUPHAR:
+          options.addNuphar(true, "");
+          break;
+        case VITIS_AI:
+        case RK_NPU:
+        case MI_GRAPH_X:
+        default:
+          logger.warning("Unsupported provider in Java test " + p);
+      }
     }
     OrtSession session = env.createSession(modelPath, options);
     float[] inputData = loadTensorFromFile(getResourcePath("/bench.in"));
