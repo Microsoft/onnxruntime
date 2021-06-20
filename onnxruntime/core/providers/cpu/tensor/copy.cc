@@ -74,6 +74,7 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
             current_index /= dst_shape[dim - 1];
           }
         }
+
         for (std::ptrdiff_t outer_i = first; outer_i < last;) {
           // Compute the src and dst addresses
           size_t dst_idx = 0;
@@ -82,6 +83,7 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
             dst_idx += current_nd_idx[dim] * dst_strides[dim];
             src_idx += current_nd_idx[dim] * src_strides[dim];
           }
+
           // 1d vectorizable inner loop along last dimension
           std::ptrdiff_t inner_end = std::min(last, outer_i + dst_shape[dims - 1] - current_nd_idx[dims - 1]);
           for (std::ptrdiff_t i = outer_i; i < inner_end; i++) {
