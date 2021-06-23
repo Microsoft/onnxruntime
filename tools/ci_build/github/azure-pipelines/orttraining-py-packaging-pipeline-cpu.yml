@@ -1,0 +1,97 @@
+trigger: none
+
+stages:
+- stage: Python_Packaging
+
+  jobs:
+    - job: Linux_Training_CPU_Wheels
+      timeoutInMinutes: 120
+      workspace:
+        clean: all
+      pool: Linux-CPU
+
+      variables:
+        PythonVersion: $(PYTHON_VERSION)
+        DockerFile: 'Dockerfile.manylinux2014_cpu'
+
+      steps:
+      - checkout: self
+        clean: true
+        submodules: recursive
+
+      - template: templates/set-python-manylinux-variables-step.yml
+
+      - template: templates/get-docker-image-steps.yml
+        parameters:
+          Dockerfile: tools/ci_build/github/linux/docker/$(DockerFile)
+          Context: tools/ci_build/github/linux/docker
+          DockerBuildArgs: >-
+            --build-arg PYTHON_VERSION=$(PythonVersion)
+            --build-arg INSTALL_DEPS_EXTRA_ARGS=-tu
+            --build-arg BUILD_UID=$(id -u)
+          Repository: onnxruntimetrainingcpubuild
+
+      - task: CmdLine@2
+        displayName: 'build onnxruntime'
+        inputs:
+          script: |
+            mkdir -p $HOME/.onnx
+            docker run --rm \
+              --volume /data/onnx:/data/onnx:ro \
+              --volume $(Build.SourcesDirectory):/onnxruntime_src \
+              --volume $(Build.BinariesDirectory):/build \
+              --volume /data/models:/build/models:ro \
+              --volume $HOME/.onnx:/home/onnxruntimedev/.onnx \
+              -e NIGHTLY_BUILD \
+              -e BUILD_BUILDNUMBER \
+              onnxruntimetrainingcpubuild \
+                $(PythonManylinuxDir)/bin/python3 /onnxruntime_src/tools/ci_build/build.py \
+                  --build_dir /build --cmake_generator Ninja \
+                  --config Debug Release \
+                  --skip_submodule_sync \
+                  --build_shared_lib \
+                  --parallel \
+                  --build_wheel \
+                  --use_openmp \
+                  --enable_onnx_tests \
+                  --enable_pybind --build_java --build_nodejs --enable_training
+          workingDirectory: $(Build.SourcesDirectory)
+
+      - task: CopyFiles@2
+        displayName: 'Copy Python Wheel to: $(Build.ArtifactStagingDirectory)'
+        inputs:
+          SourceFolder: '$(Build.BinariesDirectory)'
+          Contents: 'Release/dist/*.whl'
+          TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish Artifact: ONNXRuntime python wheel and documentation'
+        inputs:
+          ArtifactName: onnxruntime_training_cpu
+
+      - script: |
+          python3 -m pip install azure-storage-blob==2.1.0
+        displayName: 'python3 -m pip install azure-storage-blob==2.1.0'
+        timeoutInMinutes: 20
+
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: 'AIInfraBuildOnnxRuntimeOSS'
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            files=($(Build.ArtifactStagingDirectory)/Release/dist/*.whl) && \
+            echo ${files[0]} && \
+            tools/ci_build/upload_python_package_to_azure_storage.py \
+                --python_wheel_path ${files[0]} \
+                --account_name onnxruntimepackages \
+                --account_key $(orttrainingpackagestorageaccountkey) \
+                --container_name '$web'
+          condition: succeededOrFailed()
+          displayName: 
+
+      - template: templates/component-governance-component-detection-steps.yml
+        parameters:
+          condition: 'succeeded'
+
+      - template: templates/clean-agent-build-directory-step.yml
