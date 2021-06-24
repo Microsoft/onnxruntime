@@ -22,6 +22,10 @@
 #include "core/optimizer/insert_cast_transformer.h"
 #include "core/framework/session_options.h"
 #include "core/framework/allocatormgr.h"
+#if !defined(ORT_MINIMAL_BUILD)
+#include "onnx/defs/operator_sets.h"
+#include "onnx/defs/schema.h"
+#endif
 #ifdef ENABLE_LANGUAGE_INTEROP_OPS
 #include "core/language_interop_ops/language_interop_ops.h"
 #endif
@@ -193,6 +197,21 @@ class InferenceSession {
     */
   common::Status FilterEnabledOptimizers(const std::unordered_set<std::string>& optimizers_to_disable)
       ORT_MUST_USE_RESULT;
+
+  common::Status AddONNXOpDomain(int onnx_opset_version) ORT_MUST_USE_RESULT;
+
+  static common::Status ORTRegisterONNXOpsetSchema(int onnx_opset_version) {
+    if (ONNX_NAMESPACE::OpSchemaRegistry::Instance()->GetLoadedSchemaVersion() == -1) {
+      if (onnx_opset_version == 0) {
+        // By default if session_onnx_opset_version=0, it registers all ONNX opset schema for all opset versions
+        ONNX_NAMESPACE::RegisterOnnxOperatorSetSchema();
+      } else {
+        // If giving session_onnx_opset_version, only load the latest ones for each opset before specified onnx_opset_version
+        ONNX_NAMESPACE::RegisterOnnxOperatorSetSchema(onnx_opset_version);
+      }
+    }
+    return Status::OK();
+  }
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 

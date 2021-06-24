@@ -617,6 +617,24 @@ namespace Microsoft.ML.OnnxRuntime
         }
         private ExecutionMode _executionMode = ExecutionMode.ORT_SEQUENTIAL;
 
+        /// <summary>
+        /// Sets the ONNX opset version for the session. Default is set to 0 (Load all)
+        /// </summary>
+        /// <value>returns _sessionOnnxOpsetVersion value</value>
+        public int SessionOnnxOpsetVersion
+        {
+            get
+            {
+                return _sessionOnnxOpsetVersion;
+            }
+            set
+            {
+                NativeApiStatus.VerifySuccess(NativeMethods.OrtSetSessionOnnxOpsetVersion(handle, value));
+                _sessionOnnxOpsetVersion = value;
+            }
+        }
+        private int _sessionOnnxOpsetVersion = 0;
+
         #endregion
 
         #region Private Methods

@@ -439,7 +439,6 @@ static ORT_STATUS_PTR CreateSessionAndLoadModel(_In_ const OrtSessionOptions* op
         options == nullptr ? onnxruntime::SessionOptions() : options->value,
         env->GetEnvironment());
   }
-
 #if !defined(ORT_MINIMAL_BUILD) || defined(ORT_MINIMAL_BUILD_CUSTOM_OPS)
   // Add custom domains
   if (options && !options->custom_op_domains_.empty()) {
@@ -1824,6 +1823,21 @@ ORT_API_STATUS_IMPL(OrtApis::SessionGetProfilingStartTimeNs, _In_ const OrtSessi
   API_IMPL_END
 }
 
+ORT_API_STATUS_IMPL(OrtApis::SessionAddONNXOpDomain, int session_onnx_opset_version) {
+  API_IMPL_BEGIN
+#if !defined(ORT_MINIMAL_BUILD)
+  Status status = InferenceSession::ORTRegisterONNXOpsetSchema(session_onnx_opset_version);
+  if (!status.IsOK()) {
+    return ToOrtStatus(status);
+  }
+#else
+  // Does not support selective ONNX opset loading for minimal build
+  (void) session_onnx_opset_version; 
+#endif
+  return nullptr;
+  API_IMPL_END
+}
+
 // End support for non-tensor types
 
 #ifndef USE_ROCM
@@ -2228,6 +2242,8 @@ static constexpr OrtApi ort_api_1_to_8 = {
     // End of Version 8 - DO NOT MODIFY ABOVE (see above text for more information)
 
     // Version 9 - In development, feel free to add/remove/rearrange here
+    &OrtApis::SetSessionOnnxOpsetVersion,
+    &OrtApis::SessionAddONNXOpDomain,
 };
 
 // Assert to do a limited check to ensure Version 1 of OrtApi never changes (will detect an addition or deletion but not if they cancel out each other)

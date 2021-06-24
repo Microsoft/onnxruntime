@@ -119,6 +119,10 @@ struct SessionOptions {
 
   // See onnxruntime_c_api.h for detailed documentation.
   Status AddInitializer(_In_z_ const char* name, _In_ const OrtValue* val) noexcept;
+ 
+  // Specifiy onnx_opset_version to only load the latest ones for each opset before specified onnx_opset_version
+  // By default if session_onnx_opset_version=0, it registers all ONNX opset schema for all opset versions
+  int session_onnx_opset_version = 0;
 };
 
 }  // namespace onnxruntime

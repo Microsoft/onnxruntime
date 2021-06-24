@@ -193,3 +193,8 @@ ORT_API_STATUS_IMPL(OrtApis::AddInitializer, _Inout_ OrtSessionOptions* options,
   }
   return nullptr;
 }
+
+ORT_API_STATUS_IMPL(OrtApis::SetSessionOnnxOpsetVersion, _In_ OrtSessionOptions* options, int session_onnx_opset_version) {
+  options->value.session_onnx_opset_version = session_onnx_opset_version;
+  return nullptr;
+}

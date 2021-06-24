@@ -176,7 +176,6 @@ Status Environment::Initialize(std::unique_ptr<logging::LoggingManager> logging_
 #ifdef USE_DML
       dml::RegisterDmlSchemas();
 #endif
-      RegisterOnnxOperatorSetSchema();
 
 #ifndef DISABLE_ML_OPS
       RegisterOnnxMLOperatorSetSchema();

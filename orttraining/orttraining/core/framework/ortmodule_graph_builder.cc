@@ -6,6 +6,7 @@
 #include "orttraining/core/framework/ortmodule_graph_builder.h"
 #include "orttraining/core/framework/gradient_graph_builder.h"
 #include "orttraining/core/optimizer/graph_transformer_utils.h"
+#include "core/session/inference_session.h"
 
 namespace onnxruntime {
 namespace training {
@@ -14,6 +15,7 @@ using namespace onnxruntime::common;
 
 Status OrtModuleGraphBuilder::Initialize(std::istream& model_istream,
                                          const OrtModuleGraphBuilderConfiguration& config) {
+  InferenceSession::ORTRegisterONNXOpsetSchema(0);
   // Save the model and config.
   ONNX_NAMESPACE::ModelProto model_proto;
   ORT_RETURN_IF_ERROR(Model::Load(model_istream, &model_proto));

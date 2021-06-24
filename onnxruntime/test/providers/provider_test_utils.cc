@@ -778,6 +778,8 @@ void OpTester::Run(
         GTEST_SKIP();
       }
     }
+    // Add ONNX domain opset
+    InferenceSession::ORTRegisterONNXOpsetSchema(0);
 
     fetches_.clear();
     bool cache_enabled = cached_model_ != nullptr;

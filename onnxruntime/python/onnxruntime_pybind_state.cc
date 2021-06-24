@@ -1229,6 +1229,8 @@ Serialized model format will default to ONNX unless:
       .def_readwrite("log_verbosity_level", &PySessionOptions::session_log_verbosity_level,
                      R"pbdoc(VLOG level if DEBUG build and session_log_severity_level is 0.
 Applies to session load, initialization, etc. Default is 0.)pbdoc")
+      .def_readwrite("onnx_opset_version", &PySessionOptions::session_onnx_opset_version,
+                     R"pbdoc(Only load the latest ones before this specified onnx_opset_version. Default is 0.)pbdoc")
       .def_property(
           "intra_op_num_threads",
           [](const PySessionOptions* options) -> int { return options->intra_op_param.thread_pool_size; },

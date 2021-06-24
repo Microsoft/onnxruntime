@@ -758,7 +758,8 @@ namespace Microsoft.ML.OnnxRuntime
         {
             var envHandle = OrtEnv.Handle;
             var session = IntPtr.Zero;
-
+            // Register ONNX opset schema
+            NativeApiStatus.VerifySuccess(NativeMethods.OrtSessionAddONNXOpDomain(options.SessionOnnxOpsetVersion));
             if (prepackedWeightsContainer == null)
             {
                 NativeApiStatus.VerifySuccess(NativeMethods.OrtCreateSession(envHandle, NativeMethods.GetPlatformSerializedString(modelPath),
@@ -780,7 +781,8 @@ namespace Microsoft.ML.OnnxRuntime
         {
             var envHandle = OrtEnv.Handle;
             var session = IntPtr.Zero;
-
+            // Register ONNX opset schema
+            NativeApiStatus.VerifySuccess(NativeMethods.OrtSessionAddONNXOpDomain(options.SessionOnnxOpsetVersion));
             if (prepackedWeightsContainer == null)
             {
 
@@ -808,7 +810,6 @@ namespace Microsoft.ML.OnnxRuntime
             _nativeHandle = session;
             try
             {
-
                 // Initialize input/output metadata
                 _inputMetadata = new Dictionary<string, NodeMetadata>();
                 _outputMetadata = new Dictionary<string, NodeMetadata>();

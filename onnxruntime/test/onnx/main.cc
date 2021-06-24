@@ -19,6 +19,9 @@
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/optimizer/graph_transformer_level.h"
 #include "core/framework/session_options.h"
+#if !defined(ORT_MINIMAL_BUILD)
+#include "core/session/inference_session.h"
+#endif
 #include "core/session/onnxruntime_session_options_config_keys.h"
 
 using namespace onnxruntime;
@@ -113,6 +116,9 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
   bool verbose_logging_required = false;
 
   bool pause = false;
+#if !defined(ORT_MINIMAL_BUILD)
+  InferenceSession::ORTRegisterONNXOpsetSchema(0);
+#endif
   {
     int ch;
     while ((ch = getopt(argc, argv, ORT_TSTR("Ac:hj:Mn:r:e:xvo:d:pz"))) != -1) {

@@ -201,6 +201,8 @@ namespace Microsoft.ML.OnnxRuntime
         public IntPtr ReleasePrepackedWeightsContainer;
         public IntPtr CreateSessionWithPrepackedWeightsContainer;
         public IntPtr CreateSessionFromArrayWithPrepackedWeightsContainer;
+        public IntPtr SetSessionOnnxOpsetVersion;
+        public IntPtr SessionAddONNXOpDomain;
     }
 
     internal static class NativeMethods
@@ -271,6 +273,7 @@ namespace Microsoft.ML.OnnxRuntime
             OrtRegisterCustomOpsLibrary = (DOrtRegisterCustomOpsLibrary)Marshal.GetDelegateForFunctionPointer(api_.RegisterCustomOpsLibrary, typeof(DOrtRegisterCustomOpsLibrary));
             OrtAddSessionConfigEntry = (DOrtAddSessionConfigEntry)Marshal.GetDelegateForFunctionPointer(api_.AddSessionConfigEntry, typeof(DOrtAddSessionConfigEntry));
             OrtAddInitializer = (DOrtAddInitializer)Marshal.GetDelegateForFunctionPointer(api_.AddInitializer, typeof(DOrtAddInitializer));
+            OrtSetSessionOnnxOpsetVersion = (DOrtSetSessionOnnxOpsetVersion)Marshal.GetDelegateForFunctionPointer(api_.SetSessionOnnxOpsetVersion, typeof(DOrtSetSessionOnnxOpsetVersion));
 
             OrtCreateRunOptions = (DOrtCreateRunOptions)Marshal.GetDelegateForFunctionPointer(api_.CreateRunOptions, typeof(DOrtCreateRunOptions));
             OrtReleaseRunOptions = (DOrtReleaseRunOptions)Marshal.GetDelegateForFunctionPointer(api_.ReleaseRunOptions, typeof(DOrtReleaseRunOptions));
@@ -353,7 +356,7 @@ namespace Microsoft.ML.OnnxRuntime
 
             OrtCreatePrepackedWeightsContainer = (DOrtCreatePrepackedWeightsContainer)Marshal.GetDelegateForFunctionPointer(api_.CreatePrepackedWeightsContainer, typeof(DOrtCreatePrepackedWeightsContainer));
             OrtReleasePrepackedWeightsContainer = (DOrtReleasePrepackedWeightsContainer)Marshal.GetDelegateForFunctionPointer(api_.ReleasePrepackedWeightsContainer, typeof(DOrtReleasePrepackedWeightsContainer));
-
+            OrtSessionAddONNXOpDomain = (DOrtSessionAddONNXOpDomain)Marshal.GetDelegateForFunctionPointer(api_.SessionAddONNXOpDomain, typeof(DOrtSessionAddONNXOpDomain));
         }
 
         [DllImport(nativeLib, CharSet = charSet)]
@@ -441,6 +444,9 @@ namespace Microsoft.ML.OnnxRuntime
                                         IntPtr /* (OrtPrepackedWeightsContainer*) */prepackedWeightsContainer,
                                         out IntPtr /* (OrtSession**) */ session);
         public static DOrtCreateSessionFromArrayWithPrepackedWeightsContainer OrtCreateSessionFromArrayWithPrepackedWeightsContainer;
+
+        public delegate IntPtr /*(OrtStatus*)*/ DOrtSessionAddONNXOpDomain(int onnx_opset_version);
+        public static DOrtSessionAddONNXOpDomain OrtSessionAddONNXOpDomain;
 
         public delegate IntPtr /*(ONNStatus*)*/ DOrtRun(
                                                 IntPtr /*(OrtSession*)*/ session,
@@ -685,6 +691,17 @@ namespace Microsoft.ML.OnnxRuntime
                                                                   IntPtr /*(const char*)*/ name,
                                                                   IntPtr /*(OrtValue*)*/ ortValue);
         public static DOrtAddInitializer OrtAddInitializer;
+
+        /// <summary>
+        /// Set ONNX opset version to selectively load ONNX opset schema
+        /// </summary>
+        /// <param name="options">Set ONNX opset version</param>
+        /// <param name="int">ONNX opset version</param>
+        public delegate IntPtr /*(OrtStatus*)*/DOrtSetSessionOnnxOpsetVersion(IntPtr /*(OrtSessionOptions*)*/ options,
+                                                                  int session_onnx_opset_version);
+        public static DOrtSetSessionOnnxOpsetVersion OrtSetSessionOnnxOpsetVersion;
+
+        
         #endregion
 
         #region RunOptions API
