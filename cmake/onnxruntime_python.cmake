@@ -193,6 +193,7 @@ if (onnxruntime_ENABLE_TRAINING)
   )
   file(GLOB onnxruntime_python_ortmodule_srcs CONFIGURE_DEPENDS
     "${ORTTRAINING_SOURCE_DIR}/python/training/ortmodule/*.py"
+    "${ORTTRAINING_SOURCE_DIR}/python/training/ortmodule/experimental/*.py"
   )
   file(GLOB onnxruntime_python_train_tools_srcs CONFIGURE_DEPENDS
     "${REPO_ROOT}/tools/python/register_custom_ops_pytorch_exporter.py"

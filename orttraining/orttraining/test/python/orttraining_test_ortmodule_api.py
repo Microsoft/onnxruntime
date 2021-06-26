@@ -472,7 +472,7 @@ def test_torch_nn_module_to_api(original_device, to_argument):
     model = model.to(to_argument)
     x = x.to(to_argument)
     model(x)
-    assert _utils.get_device_str(model._execution_manager(model._is_training())._device) == \
+    assert _utils.get_device_str(model._module_manager._execution_manager(model._is_training())._device) == \
         _utils.get_device_str(torch.device(to_argument))
 
 def test_model_without_device():
@@ -524,7 +524,7 @@ def test_input_requires_grad_saved(device):
     model = ORTModule(model)
     x = torch.randn(N, D_in, device=device, requires_grad=True) + 1
     model(x)
-    assert model._execution_manager(model._is_training())._input_info.require_grad_names == ['input1']
+    assert model._module_manager._execution_manager(model._is_training())._input_info.require_grad_names == ['input1']
 
 @pytest.mark.parametrize("device", ['cuda', 'cpu'])
 def test_input_requires_grad_backward_creates_input_grad(device):
@@ -1033,12 +1033,12 @@ def test_changes_input_requires_grad_reinitializes_module_gradient_graph_builder
     output_x.backward()
     assert x.grad is None
     module_gradient_graph_builder_training = \
-        model._execution_manager(model._is_training())._graph_builder
+        model._module_manager._execution_manager(model._is_training())._graph_builder
     output_y = torch.sum(model(y))
     output_y.backward()
     assert y.grad is not None
     assert module_gradient_graph_builder_training != \
-        model._execution_manager(model._is_training())._graph_builder
+        model._module_manager._execution_manager(model._is_training())._graph_builder
 
 @pytest.mark.parametrize("device", ['cuda'])
 def test_input_requires_grad_backward_creates_input_grad_as_required0(device):
@@ -1695,7 +1695,7 @@ def test_forward_data_and_model_on_different_devices(data_device, model_device):
     x = torch.randn(N, D_in, device=data_device)
     with pytest.raises(RuntimeError) as runtime_error:
         ort_model(x)
-    assert f"Input argument to forward found on device {torch.device(x.device)}, but expected it to be on module device {ort_model._execution_manager(ort_model._is_training())._device}." in str(runtime_error.value)
+    assert f"Input argument to forward found on device {torch.device(x.device)}, but expected it to be on module device {ort_model._module_manager._execution_manager(ort_model._is_training())._device}." in str(runtime_error.value)
 
 def test_forward_returns_none_type_as_output():
     class NeuralNetNoneTypeOutput(torch.nn.Module):
@@ -1799,26 +1799,26 @@ def test_model_initializer_requires_grad_changes_from_one_forward_to_next():
     model.fc1.requires_grad_(True)
     model = ORTModule(model)
     x = torch.randn(N, D_in, device=device)
-    assert model._module_metadata.original_module.fc1.weight.grad is None
-    assert model._module_metadata.original_module.fc1.bias.grad is None
+    assert model.module.fc1.weight.grad is None
+    assert model.module.fc1.bias.grad is None
 
     # Make sure no exception is raised
     output = model(x)
     loss = torch.sum(output)
     loss.backward()
-    training_session1 = model._execution_manager(model._is_training())._execution_agent
-    weight_grad_2 = model._module_metadata.original_module.fc1.weight.grad
-    bias_grad_2 = model._module_metadata.original_module.fc1.bias.grad
+    training_session1 = model._module_manager._execution_manager(model._is_training())._execution_agent
+    weight_grad_2 = model.module.fc1.weight.grad
+    bias_grad_2 = model.module.fc1.bias.grad
     assert weight_grad_2 is not None
     assert bias_grad_2 is not None
 
-    model._module_metadata.original_module.fc1.requires_grad_(False)
+    model.module.fc1.requires_grad_(False)
     output = model(x)
     loss = torch.sum(output)
     loss.backward()
-    training_session2 = model._execution_manager(model._is_training())._execution_agent
-    weight_grad_3 = model._module_metadata.original_module.fc1.weight.grad
-    bias_grad_3 = model._module_metadata.original_module.fc1.bias.grad
+    training_session2 = model._module_manager._execution_manager(model._is_training())._execution_agent
+    weight_grad_3 = model.module.fc1.weight.grad
+    bias_grad_3 = model.module.fc1.bias.grad
 
     assert training_session1 != training_session2
     assert torch.equal(weight_grad_2, weight_grad_3)
@@ -2142,21 +2142,21 @@ def test_forward_dynamic_args():
         for _ in range(10):
             output = model(*args_size1)
             assert output is not None
-        hash_args_size1 = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_args_size1 = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_args_size1 is not None
 
         # Decrease number of inputs and train some more
         for _ in range(10):
             output = model(*args_size2)
             assert output is not None
-        hash_args_size2 = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_args_size2 = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_args_size2 != hash_args_size1
 
         # Increase number of inputs and train some more
         for _ in range(10):
             output = model(*args_size3)
             assert output is not None
-        hash_args_size3 = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_args_size3 = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_args_size3 != hash_args_size2
 
 
@@ -2178,35 +2178,35 @@ def test_forward_dynamic_kwargs():
         for _ in range(10):
             output = model(one)
             assert output is not None
-        hash_x = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_x = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_x is not None
 
         # Train with x and y as inputs
         for _ in range(10):
             output = model(one,y=one)
             assert output is not None
-        hash_x_y = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_x_y = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_x_y != hash_x
 
         # Train with x and z as inputs
         for _ in range(10):
             output = model(one,z=one)
             assert output is not None
-        hash_x_z = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_x_z = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_x_z != hash_x_y
 
         # Train with x, y and z as inputs
         for _ in range(10):
             output = model(one,y=one, z=one)
             assert output is not None
-        hash_x_y_z = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_x_y_z = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_x_y_z != hash_x_z
 
         # Return to original input with x as input
         for _ in range(10):
             output = model(one)
             assert output is not None
-        hash_x2 = hash(repr(model._execution_manager(model._is_training())._input_info.schema))
+        hash_x2 = hash(repr(model._module_manager._execution_manager(model._is_training())._input_info.schema))
         assert hash_x2 != hash_x_y_z
         assert hash_x2 == hash_x
 
@@ -2358,30 +2358,30 @@ def test_forward_call_default_input():
         # Model only uses a,d out of a,b,c,d
         out = model(one, two, three, four)
         assert out.item() == 5.0
-        if model.training:
+        if model._is_training():
             out.sum().backward()
 
         out = model(one, two, c=three, d=four)
         assert out.item() == 5.0
-        if model.training:
+        if model._is_training():
             out.sum().backward()
 
         # Model only uses a,d,args[-1] out of a,b,c,d,*args
         out = model(one, two, three, four, *args)
         assert out.item() == 7.0
-        if model.training:
+        if model._is_training():
             out.sum().backward()
 
         # Model only uses a,d,args[-1],kw_0 out of a,b,c,d,*args,kw_0
         out = model(one, two, three, four, *args, kw_0=kw_0)
         assert out.item() == 13.0
-        if model.training:
+        if model._is_training():
             out.sum().backward()
 
         # Model only uses a,d,args[-1],kwargs['kwargs_1'] out of a,b,c,d,*args,kw_0,**kwargs
         out = model(one, two, three, four, *args, **kwargs)
         assert out.item() == 15.0
-        if model.training:
+        if model._is_training():
             out.sum().backward()
 
 
@@ -2424,7 +2424,7 @@ def test_forward_call_kwargs_input_unexpected_order():
         y1, y2 = model(**{'input1': input1, 'input2': input2})
         assert y1 is not None
         assert y2 is not None
-        if model.training:
+        if model._is_training():
             loss = y1.sum() + y2.sum()
             loss.backward()
 
@@ -2432,7 +2432,7 @@ def test_forward_call_kwargs_input_unexpected_order():
         y1, y2 = model(**{'input2': input2, 'input1': input1})
         assert y1 is not None
         assert y2 is not None
-        if model.training:
+        if model._is_training():
             loss = y1.sum() + y2.sum()
             loss.backward()
 
@@ -2469,11 +2469,11 @@ def test_forward_call_lots_None():
         #   ORTModule produces the same schema, thus not re-exporting
         #   the model when `forward(a,b)` is used after `forward(**{'a': a, 'b': b})`
         #   or vice-versa
-        model._execution_manager(model._is_training())._onnx_model = None
+        model._module_manager._execution_manager(model._is_training())._onnx_model = None
         out = model(a,b,c,d,e,f,y,z)
         assert out is not None
         assert out.item() == expected
-        if model.training:
+        if model._is_training():
             loss = out.sum()
             loss.backward()
 
@@ -2584,10 +2584,10 @@ def test_changing_bool_input_re_exports_model(bool_arguments):
 
     input1 = torch.randn(N, D_in, device=device)
     ort_model(input1, bool_arguments[0])
-    exported_model1 = ort_model._execution_manager(ort_model._is_training())._onnx_model
+    exported_model1 = ort_model._module_manager._execution_manager(ort_model._is_training())._onnx_model
 
     ort_model(input1, bool_arguments[1])
-    exported_model2 = ort_model._execution_manager(ort_model._is_training())._onnx_model
+    exported_model2 = ort_model._module_manager._execution_manager(ort_model._is_training())._onnx_model
 
     assert exported_model1 != exported_model2
 
@@ -2741,7 +2741,7 @@ def test_unused_parameters_does_not_unnecssarily_reinitilize(model):
     N, D_in, H1, H2, D_out = 64, 784, 500, 400, 10
     model = model.to(device)
     ort_model = ORTModule(copy.deepcopy(model))
-    training_manager = ort_model._execution_manager(ort_model._is_training())
+    training_manager = ort_model._module_manager._execution_manager(ort_model._is_training())
 
     x = torch.randn(N, D_in, device=device)
     _ = ort_model(x)

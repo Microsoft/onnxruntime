@@ -38,7 +38,7 @@ def run_ortmodule_api_tests(cwd, log, transformers_cache):
     run_subprocess(command, cwd=cwd, log=log, env=env).check_returncode()
 
 
-def run_ortmodule_poc_net(cwd, log, no_cuda, data_dir):
+def run_ortmodule_poc_net(cwd, log, no_cuda, onnx, data_dir):
     log.debug('Running: ORTModule POCNet for MNIST with --no-cuda arg {}.'.format(no_cuda))
 
     command = [sys.executable, 'orttraining_test_ortmodule_poc.py']
@@ -47,6 +47,9 @@ def run_ortmodule_poc_net(cwd, log, no_cuda, data_dir):
 
     if data_dir:
         command.extend(['--data-dir', data_dir])
+
+    if onnx:
+        command.extend(['--onnx', onnx])
 
     run_subprocess(command, cwd=cwd, log=log).check_returncode()
 
@@ -95,9 +98,11 @@ def main():
 
     run_ortmodule_api_tests(cwd, log, transformers_cache=args.transformers_cache)
 
-    run_ortmodule_poc_net(cwd, log, no_cuda=False, data_dir=args.mnist)
+    run_ortmodule_poc_net(cwd, log, no_cuda=False, onnx=False, data_dir=args.mnist) 
+    run_ortmodule_poc_net(cwd, log, no_cuda=False, onnx=True, data_dir=args.mnist)
 
-    run_ortmodule_poc_net(cwd, log, no_cuda=True, data_dir=args.mnist)
+    run_ortmodule_poc_net(cwd, log, no_cuda=True, onnx=False, data_dir=args.mnist)
+    run_ortmodule_poc_net(cwd, log, no_cuda=True, onnx=True, data_dir=args.mnist)
 
     run_ortmodule_hf_bert_for_sequence_classification_from_pretrained(cwd, log, no_cuda=False,
         data_dir=args.bert_data, transformers_cache=args.transformers_cache)

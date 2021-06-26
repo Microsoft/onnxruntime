@@ -118,7 +118,7 @@ def assert_optim_state(expected_state, actual_state, rtol=1e-7, atol=0):
 
 def is_dynamic_axes(model):
     # Check inputs
-    for inp in model._execution_manager(model._is_training())._optimized_onnx_model.graph.input:
+    for inp in model._module_manager._execution_manager(model._is_training())._optimized_onnx_model.graph.input:
         shape = inp.type.tensor_type.shape
         if shape:
             for dim in shape.dim:
@@ -126,7 +126,7 @@ def is_dynamic_axes(model):
                     return False
 
     # Check outputs
-    for out in model._execution_manager(model._is_training())._optimized_onnx_model.graph.output:
+    for out in model._module_manager._execution_manager(model._is_training())._optimized_onnx_model.graph.output:
         shape = out.type.tensor_type.shape
         if shape:
             for dim in shape.dim:

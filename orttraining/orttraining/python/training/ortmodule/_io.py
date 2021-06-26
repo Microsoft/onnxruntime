@@ -245,9 +245,8 @@ def unflatten_user_output(output_schema, outputs):
         # Recursively traverse across user_output and replace all _TensorStub
         # with torch.Tensor values from outputs following output_idx
 
-        if user_output is None:
-            return None
-        elif isinstance(user_output, _TensorStub):
+        # Output schema is None when ORTModule starts right with onnx model
+        if isinstance(user_output, _TensorStub) or user_output is None:
             output_idx[0] += 1
             return outputs[output_idx[0]-1]
 
