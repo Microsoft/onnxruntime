@@ -51,6 +51,8 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
                  const std::vector<int64_t>& dst_strides,
                  const T* src,
                  const std::vector<int64_t>& src_strides) {
+  const auto* src_raw = reinterpret_cast<const uint8_t*>(src);
+  auto* dst_raw = reinterpret_cast<uint8_t*>(dst);
   const size_t dims = dst_shape.NumDimensions();
   // We will iterate over the output dimensions
   int64_t num_iterations = 1;
@@ -63,35 +65,44 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
   concurrency::ThreadPool::TryParallelFor(
       thread_pool, num_iterations,
       {static_cast<float>(sizeof(T)), static_cast<float>(sizeof(T)), 1.0F},
-      [dst_shape, dst_strides, dst, src, src_strides, dims](std::ptrdiff_t first, std::ptrdiff_t last) {
+      [dst_shape, dst_strides, dst, dst_raw, src, src_raw, src_strides, dims](std::ptrdiff_t first, std::ptrdiff_t last) {
         // Compute the initial n-dimensional index and addresses
+        auto last_dim_size = dst_shape[dims - 1];
+        auto last_dst_stride = dst_strides[dims - 1];
+        auto last_src_stride = src_strides[dims - 1];
+        bool is_string = std::is_same<T, std::string>::value;
         std::vector<int64_t> current_nd_idx(dims);
         {
-          size_t current_index = first;
+          int64_t current_index = first;
           for (size_t dim = dims; dim > 0; dim--) {
+            auto shape_val = dst_shape[dim - 1];
             // Iterate from dims to 1 so we don't roll over to positive on the bounds check
-            current_nd_idx[dim - 1] = current_index % dst_shape[dim - 1];
-            current_index /= dst_shape[dim - 1];
+            current_nd_idx[dim - 1] = current_index % shape_val;
+            current_index /= shape_val;
           }
         }
 
         for (std::ptrdiff_t outer_i = first; outer_i < last;) {
           // Compute the src and dst addresses
-          size_t dst_idx = 0;
-          size_t src_idx = 0;
+          std::ptrdiff_t dst_idx = 0;
+          std::ptrdiff_t src_idx = 0;
           for (size_t dim = 0; dim < dims; dim++) {
             dst_idx += current_nd_idx[dim] * dst_strides[dim];
             src_idx += current_nd_idx[dim] * src_strides[dim];
           }
 
-          // 1d vectorizable inner loop along last dimension
-          std::ptrdiff_t inner_end = std::min(last, outer_i + dst_shape[dims - 1] - current_nd_idx[dims - 1]);
-          for (std::ptrdiff_t i = outer_i; i < inner_end; i++) {
-            dst[dst_idx] = src[src_idx];
-            dst_idx += dst_strides[dims - 1];
-            src_idx += src_strides[dims - 1];
+          std::ptrdiff_t inner_end = std::min(last, outer_i + last_dim_size - current_nd_idx[dims - 1]);
+          auto iter_size = inner_end - outer_i;
+          if (!is_string && last_dst_stride == 1 && last_src_stride == 1) {
+            memcpy(dst_raw + dst_idx * sizeof(T), src_raw + src_idx * sizeof(T), iter_size * sizeof(T));
+          } else {
+            for (std::ptrdiff_t i = outer_i; i < inner_end; i++) {
+              dst[dst_idx] = src[src_idx];
+              dst_idx += last_dst_stride;
+              src_idx += last_src_stride;
+            }
           }
-          current_nd_idx[dims - 1] += inner_end - outer_i;
+          current_nd_idx[dims - 1] += iter_size;
 
           outer_i = inner_end;
 
