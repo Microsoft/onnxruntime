@@ -1,0 +1,1 @@
+#r "nuget: Microsoft.ML.OnnxRuntime, 1.8.0"
