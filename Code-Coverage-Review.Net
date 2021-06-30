@@ -1,0 +1,99 @@
+Skip to main content
+Sign in
+Azure DevOps Azure Pipelines Run pipeline tests Review test results Review code coverage
+Version
+Search
+Filter by title
+Azure Pipelines
+Use Azure Pipelines
+What is Azure Pipelines?
+Deploy to Azure
+About pipeline tests
+Set up parallel testing (VSTest)
+Set up parallel testing (Test Runner)
+Enable Test Impact Analysis (TIA)
+Enable flaky test management
+Run UI tests
+Run UI tests with Selenium
+Requirements traceability
+Review test results
+Review test Analytics
+Review code coverage
+Review pull request code coverage
+Review code coverage results
+06/23/2020
+2 minutes to read
+
+
+
+
+
+
++3
+In this article
+Example
+View results
+Artifacts
+Tasks
+Help and support
+Azure Pipelines | Azure DevOps Server 2020 | Azure DevOps Server 2019 | TFS 2018 - TFS 2015
+
+
+Code coverage helps you determine the proportion of your project's code that is actually being tested by tests such as unit tests. To increase your confidence of the code changes, and guard effectively against bugs, your tests should exercise - or cover - a large proportion of your code.
+
+Reviewing the code coverage result helps to identify code path(s) that are not covered by the tests. This information is important to improve the test collateral over time by reducing the test debt.
+
+Example
+To view an example of publishing code coverage results for your choice of language, see the Ecosystems section of the Pipelines topics. For example, collect and publish code coverage for JavaScript using Istanbul.
+
+View results
+The code coverage summary can be viewed on the Summary tab on the pipeline run summary.
+
+View code coverage results
+
+The results can be viewed and downloaded on the Code coverage tab.
+
+View and download results on the Code coverage tab.
+
+ Note
+
+Merging code coverage results from multiple test runs is limited to .NET and .NET Core at present. This will be supported for other formats in a future release.
+
+Artifacts
+The code coverage artifacts published during the build can be viewed under the Summary tab on the pipeline run summary.
+
+View code coverage artifact
+
+If you use the Visual Studio Test task to collect coverage for .NET and .NET Core apps, the artifact contains .coverage files that can be downloaded and used for further analysis in Visual Studio.
+
+View .coverage reports
+
+If you publish code coverage using Cobertura or JaCoCo coverage formats, the code coverage artifact contains an HTML file that can be viewed offline for further analysis.
+
+View html reports
+
+ Note
+
+For .NET and .NET Core, the link to download the artifact is available by choosing the code coverage milestone in the build summary.
+
+Tasks
+Publish Code Coverage Results publishes code coverage results to Azure Pipelines or TFS, which were produced by a build in Cobertura or JaCoCo format.
+Built-in tasks such as Visual Studio Test, .NET Core, Ant, Maven, Gulp, Grunt, and Gradle provide the option to publish code coverage data to the pipeline.
+Help and support
+See our troubleshooting page
+Get advice on Stack Overflow, and get support via the Developer Community
+Is this page helpful?
+ Yes  No
+Feedback
+Submit and view feedback for
+
+ 
+ View all page feedback
+English (United States)
+Previous Version Docs
+Blog
+Contribute
+Privacy & Cookies
+Terms of Use
+Trademarks
+© Microsoft 2021
