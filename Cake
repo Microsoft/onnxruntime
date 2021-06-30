@@ -1,0 +1,5 @@
+// Install Microsoft.ML.OnnxRuntime as a Cake Addin
+#addin nuget:?package=Microsoft.ML.OnnxRuntime&version=1.8.0
+
+// Install Microsoft.ML.OnnxRuntime as a Cake Tool
+#tool nuget:?package=Microsoft.ML.OnnxRuntime&version=1.8.0
