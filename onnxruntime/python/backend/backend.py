@@ -115,11 +115,13 @@ class OnnxRuntimeBackend(Backend):
             return cls.prepare(inf, device, **kwargs)
         else:
             # type: ModelProto
-            check_model(model)
+            # check_model serializes the model anyways, so serialize the model once here
+            # and reuse it below in the cls.prepare call to avoid an additional serialization
+            bin = model.SerializeToString()
+            check_model(bin)
             opset_supported, error_message = cls.is_opset_supported(model)
             if not opset_supported:
                 raise unittest.SkipTest(error_message)
-            bin = model.SerializeToString()
             return cls.prepare(bin, device, **kwargs)
 
     @classmethod
