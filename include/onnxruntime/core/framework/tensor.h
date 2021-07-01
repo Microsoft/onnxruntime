@@ -69,7 +69,7 @@ class Tensor final {
    * \param p_type Data type of the tensor
    * \param shape Shape of the tensor
    * \param p_data A preallocated buffer. Can be NULL if the shape is empty.
-   *              Tensor does not own the data and will not delete it
+   *              Tensor will own the memory and will delete it when the tensor instance is destructed.
    * \param deleter Allocator used to free the pre-allocated memory
    * \param offset Offset in bytes to start of Tensor within p_data. 
    */

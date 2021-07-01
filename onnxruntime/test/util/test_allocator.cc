@@ -22,6 +22,7 @@ void* MockedOrtAllocator::Alloc(size_t size) {
   void* p = ::malloc(size);
   if (p == nullptr)
     return p;
+  num_allocations.fetch_add(1);
   *(size_t*)p = size;
   return (char*)p + extra_len;
 }
@@ -37,6 +38,10 @@ void MockedOrtAllocator::Free(void* p) {
 
 const OrtMemoryInfo* MockedOrtAllocator::Info() const {
   return cpu_memory_info;
+}
+
+size_t MockedOrtAllocator::NumAllocations() const {
+  return num_allocations.load();
 }
 
 void MockedOrtAllocator::LeakCheck() {

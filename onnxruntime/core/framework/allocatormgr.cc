@@ -48,11 +48,11 @@ AllocatorPtr CreateAllocator(const AllocatorCreationInfo& info) {
         return nullptr;
     }
 
-#ifdef USE_MIMALLOC
-    return std::shared_ptr<IArenaAllocator>(
+#ifdef USE_MIMALLOC_ARENA_ALLOCATOR
+    return std::shared_ptr<IAllocator>(
         std::make_unique<MiMallocArena>(std::move(device_allocator), max_mem));
 #else
-    return std::shared_ptr<IArenaAllocator>(
+    return std::shared_ptr<IAllocator>(
         std::make_unique<BFCArena>(std::move(device_allocator),
                                    max_mem,
                                    arena_extend_str,

@@ -8,14 +8,14 @@ namespace onnxruntime {
 namespace test {
 
 // Dummy Arena which just call underline device allocator directly.
-class DummyArena : public IArenaAllocator {
+class DummyArena : public IAllocator {
  public:
   explicit DummyArena(std::unique_ptr<IAllocator> resource_allocator)
-      : IArenaAllocator(OrtMemoryInfo(resource_allocator->Info().name,
-                                      OrtAllocatorType::OrtArenaAllocator,
-                                      resource_allocator->Info().device,
-                                      resource_allocator->Info().id,
-                                      resource_allocator->Info().mem_type)),
+      : IAllocator(OrtMemoryInfo(resource_allocator->Info().name,
+                                 OrtAllocatorType::OrtDeviceAllocator,
+                                 resource_allocator->Info().device,
+                                 resource_allocator->Info().id,
+                                 resource_allocator->Info().mem_type)),
         allocator_(std::move(resource_allocator)) {
   }
 
@@ -29,22 +29,6 @@ class DummyArena : public IArenaAllocator {
 
   void Free(void* p) override {
     allocator_->Free(p);
-  }
-
-  void* Reserve(size_t size) override {
-    return Alloc(size);
-  }
-
-  Status Shrink() override {
-    ORT_NOT_IMPLEMENTED(__FUNCTION__, " is not implemented");
-  }
-
-  size_t Used() const override {
-    ORT_NOT_IMPLEMENTED(__FUNCTION__, " is not implemented");
-  }
-
-  size_t Max() const override {
-    ORT_NOT_IMPLEMENTED(__FUNCTION__, " is not implemented");
   }
 
  private:

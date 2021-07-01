@@ -8,7 +8,7 @@
 #include "ort_env.h"
 #include "core/session/ort_apis.h"
 #include "core/session/environment.h"
-#include "core/session/allocator_impl.h"
+#include "core/session/allocator_adapters.h"
 #include "core/common/logging/logging.h"
 #include "core/framework/provider_shutdown.h"
 #include "core/platform/logging/make_platform_default_log_sink.h"
@@ -112,4 +112,8 @@ onnxruntime::common::Status OrtEnv::CreateAndRegisterAllocator(const OrtMemoryIn
                                                                const OrtArenaCfg* arena_cfg) {
   auto status = value_->CreateAndRegisterAllocator(mem_info, arena_cfg);
   return status;
+}
+
+onnxruntime::common::Status OrtEnv::RemoveRegisteredAllocator(const OrtMemoryInfo& mem_info) {
+  return value_->RemoveRegisteredAllocator(mem_info);
 }

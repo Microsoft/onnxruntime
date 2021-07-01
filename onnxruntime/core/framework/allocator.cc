@@ -42,8 +42,6 @@ void* MiMallocAllocator::Alloc(size_t size) {
 void MiMallocAllocator::Free(void* p) {
   mi_free(p);
 }
-
-const OrtMemoryInfo& MiMallocAllocator::Info() const { return *memory_info_; }
 #endif
 
 void* CPUAllocator::Alloc(size_t size) {

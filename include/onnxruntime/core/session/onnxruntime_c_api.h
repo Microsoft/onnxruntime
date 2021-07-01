@@ -12,7 +12,7 @@
 #include <string.h>
 
 // This value is used in structures passed to ORT so that a newer version of ORT will still work with them
-#define ORT_API_VERSION 8
+#define ORT_API_VERSION 9
 
 #ifdef __cplusplus
 extern "C" {
@@ -675,9 +675,9 @@ struct OrtApi {
   ORT_API2_STATUS(AllocatorFree, _Inout_ OrtAllocator* ptr, void* p);
   ORT_API2_STATUS(AllocatorGetInfo, _In_ const OrtAllocator* ptr, _Outptr_ const struct OrtMemoryInfo** out);
 
+  // This API returns a CPU non-arena based allocator
   // The returned pointer doesn't have to be freed.
   // Always returns the same instance on every invocation.
-  // Please note that this is a non-arena based allocator.
   ORT_API2_STATUS(GetAllocatorWithDefaultOptions, _Outptr_ OrtAllocator** out);
 
   // Override symbolic dimensions (by specific denotation strings) with actual values if known at session initialization time to enable
@@ -1009,11 +1009,15 @@ struct OrtApi {
   ORT_API2_STATUS(AddSessionConfigEntry, _Inout_ OrtSessionOptions* options,
                   _In_z_ const char* config_key, _In_z_ const char* config_value);
 
-  /**
+  /** 
+   * This API returns an allocator bound to the provided OrtSession instance according 
+   * to the spec within mem_info if successful
    * \param sess valid OrtSession instance
    * \param mem_info - valid OrtMemoryInfo instance
-   * \param - out a ptr to a new instance of OrtAllocator according to the spec within mem_info
-   *         if successful
+   * \param - out a ptr to an instance of OrtAllocator which wraps the allocator 
+              bound to the OrtSession instance
+              Freeing the returned pointer only frees the OrtAllocator instance and not
+              the wrapped session owned allocator itself.
    * \return OrtStatus or nullptr if successful
    */
   ORT_API2_STATUS(CreateAllocator, _In_ const OrtSession* sess, _In_ const OrtMemoryInfo* mem_info,
@@ -1124,7 +1128,8 @@ struct OrtApi {
    * sharing between multiple sessions that use the same env instance.
    * Lifetime of the created allocator will be valid for the duration of the environment.
    * Returns an error if an allocator with the same OrtMemoryInfo is already registered.
-   * \param mem_info must be non-null.
+   * \param env OrtEnv instance (must be non-null).
+   * \param mem_info (must be non-null).
    * \param arena_cfg if nullptr defaults will be used.
    * See docs/C_API.md for details.
   */
@@ -1390,7 +1395,7 @@ struct OrtApi {
                   _In_ const OrtSessionOptions* options, _Inout_ OrtPrepackedWeightsContainer* prepacked_weights_container,
                   _Outptr_ OrtSession** out);
 
-  /**
+  /*   
    * Append TensorRT execution provider to the session options with TensorRT provider options.
    * If TensorRT is not available (due to a non TensorRT enabled build), this function will return failure.
    * Note: this API is slightly different than SessionOptionsAppendExecutionProvider_TensorRT.
@@ -1425,9 +1430,9 @@ struct OrtApi {
   * \param num_keys - number of keys
   */
   ORT_API2_STATUS(UpdateTensorRTProviderOptions, _Inout_ OrtTensorRTProviderOptionsV2* tensorrt_options,
-                 _In_reads_(num_keys) const char* const* provider_options_keys,
-                 _In_reads_(num_keys) const char* const* provider_options_values,
-                 _In_ size_t num_keys);
+                  _In_reads_(num_keys) const char* const* provider_options_keys,
+                  _In_reads_(num_keys) const char* const* provider_options_values,
+                  _In_ size_t num_keys);
 
   /**
   * Get serialized TensorRT provider options string.
@@ -1445,6 +1450,28 @@ struct OrtApi {
   * Use this API to release the instance of OrtTensorRTProviderV2.
   */
   ORT_CLASS_RELEASE2(TensorRTProviderOptions);
+
+  /**
+   * Registers a custom allocator instance with the env to enable
+   * sharing between multiple sessions that use the same env instance.
+   * Returns an error if an allocator with the same OrtMemoryInfo is already registered.
+   * \param env OrtEnv instance (must be non-null).
+   * \param allocator user provided allocator (must be non-null).
+   * The behavior of this API is exactly the same as CreateAndRegisterAllocator() except
+   * instead of ORT creating an allocator based on provided info, in this case 
+   * ORT uses the user-provided custom allocator.
+   * See docs/C_API.md for details.
+  */
+  ORT_API2_STATUS(RegisterAllocator, _Inout_ OrtEnv* env, _In_ OrtAllocator* allocator);
+
+  /**
+   * Removes any registered allocator for sharing across sessions 
+   * based on provided OrtMemoryInfo.
+   * It is an error if you provide an OrtmemoryInfo not corresponding to any
+   * registered allocators for sharing.
+  */
+  ORT_API2_STATUS(RemoveRegisteredAllocator, _Inout_ OrtEnv* env,
+                  _In_ const OrtMemoryInfo* mem_info);
 };
 
 /*

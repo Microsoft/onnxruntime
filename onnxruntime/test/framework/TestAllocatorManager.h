@@ -2,9 +2,12 @@
 // Licensed under the MIT License.
 
 #pragma once
-#include "core/framework/arena.h"
+
+#include "core/framework/allocator.h"
+
 namespace onnxruntime {
 namespace test {
+
 class AllocatorManager {
  public:
   // the allocator manager is a just for onnx runner to allocate space for input/output tensors.

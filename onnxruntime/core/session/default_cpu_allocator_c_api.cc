@@ -1,19 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <atomic>
 #include "core/framework/utils.h"
+#include "core/framework/allocator.h"
+#include "core/session/allocator_adapters.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/session/ort_apis.h"
-#include <assert.h>
+#include "core/framework/error_code_helper.h"
 
-// In the future we'll have more than one allocator type. Since all allocators are of type 'OrtAllocator' and there is a single
-// OrtReleaseAllocator function, we need to have a common base type that lets us delete them.
-struct OrtAllocatorImpl : OrtAllocator {
-  virtual ~OrtAllocatorImpl() = default;
-};
-
-void ThrowOnError(OrtStatus* status) {
+static void ThrowOnError(OrtStatus* status) {
   if (status) {
     std::string ort_error_message = OrtApis::GetErrorMessage(status);
     OrtErrorCode ort_error_code = OrtApis::GetErrorCode(status);
@@ -22,16 +17,16 @@ void ThrowOnError(OrtStatus* status) {
   }
 }
 
-struct OrtDefaultAllocator : OrtAllocatorImpl {
-  OrtDefaultAllocator() {
-    OrtAllocator::version = ORT_API_VERSION;
-    OrtAllocator::Alloc = [](OrtAllocator* this_, size_t size) { return static_cast<OrtDefaultAllocator*>(this_)->Alloc(size); };
-    OrtAllocator::Free = [](OrtAllocator* this_, void* p) { static_cast<OrtDefaultAllocator*>(this_)->Free(p); };
-    OrtAllocator::Info = [](const OrtAllocator* this_) { return static_cast<const OrtDefaultAllocator*>(this_)->Info(); };
+struct OrtDefaultCpuAllocator : onnxruntime::OrtAllocatorImpl {
+  OrtDefaultCpuAllocator() {
+    OrtAllocatorImpl::version = ORT_API_VERSION;
+    OrtAllocatorImpl::Alloc = [](OrtAllocator* this_, size_t size) { return static_cast<OrtDefaultCpuAllocator*>(this_)->Alloc(size); };
+    OrtAllocatorImpl::Free = [](OrtAllocator* this_, void* p) { static_cast<OrtDefaultCpuAllocator*>(this_)->Free(p); };
+    OrtAllocatorImpl::Info = [](const OrtAllocator* this_) { return static_cast<const OrtDefaultCpuAllocator*>(this_)->Info(); };
     ThrowOnError(OrtApis::CreateCpuMemoryInfo(OrtDeviceAllocator, OrtMemTypeDefault, &cpu_memory_info));
   }
 
-  ~OrtDefaultAllocator() override { OrtApis::ReleaseMemoryInfo(cpu_memory_info); }
+  ~OrtDefaultCpuAllocator() { OrtApis::ReleaseMemoryInfo(cpu_memory_info); }
 
   void* Alloc(size_t size) {
     return onnxruntime::utils::DefaultAlloc(size);
@@ -43,32 +38,16 @@ struct OrtDefaultAllocator : OrtAllocatorImpl {
     return cpu_memory_info;
   }
 
-  ORT_DISALLOW_COPY_AND_ASSIGNMENT(OrtDefaultAllocator);
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(OrtDefaultCpuAllocator);
 
  private:
   OrtMemoryInfo* cpu_memory_info;
 };
 
-#ifndef ORT_NO_EXCEPTIONS
-
-#define API_IMPL_BEGIN try {
-#define API_IMPL_END                                                \
-  }                                                                 \
-  catch (std::exception & ex) {                                     \
-    return OrtApis::CreateStatus(ORT_RUNTIME_EXCEPTION, ex.what()); \
-  }
-
-#else
-
-#define API_IMPL_BEGIN {
-#define API_IMPL_END }
-
-#endif
-
 ORT_API_STATUS_IMPL(OrtApis::GetAllocatorWithDefaultOptions, _Outptr_ OrtAllocator** out) {
   API_IMPL_BEGIN
-  static OrtDefaultAllocator ort_default_allocator;
-  *out = &ort_default_allocator;
+  static OrtDefaultCpuAllocator ort_default_cpu_allocator;
+  *out = &ort_default_cpu_allocator;
   return nullptr;
   API_IMPL_END
 }

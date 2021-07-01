@@ -4,38 +4,9 @@
 #pragma once
 
 #include <string>
-
-#include "core/common/common.h"
-#include "core/framework/allocator.h"
+#include <sstream>
 
 namespace onnxruntime {
-// The interface for arena which manage memory allocations
-// Arena will hold a pool of pre-allocate memories and manage their lifecycle.
-// Need an underline IResourceAllocator to allocate memories.
-// The setting like max_chunk_size is init by IDeviceDescriptor from resource allocator
-class IArenaAllocator : public IAllocator {
- public:
-  IArenaAllocator(const OrtMemoryInfo& info) : IAllocator(info) {}
-  ~IArenaAllocator() override = default;
-  // Alloc call needs to be thread safe.
-  void* Alloc(size_t size) override = 0;
-  // The chunk allocated by Reserve call won't be reused with other request
-  // (i.e.) it is not maintained by the arena and
-  // it will be return to the devices when it is freed.
-  // Reserve call needs to be thread safe.
-  virtual void* Reserve(size_t size) = 0;
-  // Free call needs to be thread safe.
-  void Free(void* p) override = 0;
-  // All unused device allocations maintained by the arena
-  // (i.e.) physical allocations with no chunks in use will be de-allocated.
-  // Shrink call needs to be thread safe.
-  virtual Status Shrink() = 0;
-  virtual size_t Used() const = 0;
-  virtual size_t Max() const = 0;
-  // allocate host pinned memory?
-};
-
-using ArenaPtr = std::shared_ptr<IArenaAllocator>;
 
 // Runtime statistics collected by an allocator.
 struct AllocatorStats {

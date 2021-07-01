@@ -1,11 +1,20 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 #if defined(USE_MIMALLOC_ARENA_ALLOCATOR)
+
 #include "mimalloc.h"
 #include "core/framework/mimalloc_arena.h"
 
 namespace onnxruntime {
+
 MiMallocArena::MiMallocArena(std::unique_ptr<IAllocator> resource_allocator,
                              size_t total_memory)
-    : info_(resource_allocator->Info().name, OrtAllocatorType::OrtArenaAllocator, resource_allocator->Info().device, resource_allocator->Info().id, resource_allocator->Info().mem_type) {
+    : IAllocator(OrtMemoryInfo(resource_allocator->Info().name,
+                               OrtAllocatorType::OrtDeviceAllocator,
+                               resource_allocator->Info().device,
+                               resource_allocator->Info().id,
+                               resource_allocator->Info().mem_type)) {
   stats_.bytes_limit = total_memory;
 }
 
@@ -20,10 +29,6 @@ void MiMallocArena::Free(void* p) {
   mi_free(p);
 }
 
-void* MiMallocArena::Reserve(size_t size) {
-  return mi_malloc(size);
-}
-
 // mimalloc only maintains stats when compiled under debug (which in turn sets MI_STAT)
 void MiMallocArena::GetStats(AllocatorStats* stats) {
 #if (MI_STAT > 1)
@@ -35,16 +40,10 @@ void MiMallocArena::GetStats(AllocatorStats* stats) {
   *stats = stats_;
 }
 
-size_t MiMallocArena::Used() const {
-#if (MI_STAT > 1)
-  return mi_heap_get_default()->tld->stats.malloc.current;
-#else
-  return 0;
-#endif
-}
-
 size_t MiMallocArena::AllocatedSize(const void* ptr) {
   return mi_usable_size(ptr);
 }
+
 }  // namespace onnxruntime
+
 #endif

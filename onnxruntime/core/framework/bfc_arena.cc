@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/framework/allocator.h"
 #include "core/framework/bfc_arena.h"
 #include <type_traits>
 
@@ -11,11 +12,11 @@ BFCArena::BFCArena(std::unique_ptr<IAllocator> resource_allocator,
                    int initial_chunk_size_bytes,
                    int max_dead_bytes_per_chunk,
                    int initial_growth_chunk_size_bytes)
-    : IArenaAllocator(OrtMemoryInfo(resource_allocator->Info().name,
-                                    OrtAllocatorType::OrtArenaAllocator,
-                                    resource_allocator->Info().device,
-                                    resource_allocator->Info().id,
-                                    resource_allocator->Info().mem_type)),
+    : IAllocator(OrtMemoryInfo(resource_allocator->Info().name,
+                               OrtAllocatorType::OrtArenaAllocator,
+                               resource_allocator->Info().device,
+                               resource_allocator->Info().id,
+                               resource_allocator->Info().mem_type)),
       device_allocator_(std::move(resource_allocator)),
       free_chunks_list_(kInvalidChunkHandle),
       next_allocation_id_(1),

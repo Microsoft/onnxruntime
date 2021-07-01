@@ -5,6 +5,7 @@
 
 #include "core/common/common.h"
 #include "core/framework/fence.h"
+#include "core/framework/allocator_stats.h"
 #include "core/session/onnxruntime_c_api.h"
 #include "ortdevice.h"
 #include "ortmemoryinfo.h"
@@ -55,8 +56,22 @@ class IAllocator {
   @remarks Use SafeInt when calculating the size of memory to allocate using Alloc.
   */
   virtual void* Alloc(size_t size) = 0;
+
   virtual void Free(void* p) = 0;
+
+  // TODO: Find a better name than Reserve() and update in all places.
+  // Reserve() is an interface exposed for an implementation of IAllocator
+  // to optionally implement some allocation logic that by-passes any arena-based
+  // logic that may be housed in the Alloc() implementation.
+  // There are SessionOptions config(s) that allow users to allocate some memory
+  // by-passing arena-based logic.
+  // By default, the base implementation  just calls Alloc().
+  virtual void* Reserve(size_t size) { return Alloc(size); }
+
   const OrtMemoryInfo& Info() const { return memory_info_; };
+
+  // Each implementation of IAllocator can override and provide their own implementation
+  virtual void GetStats(AllocatorStats* /*stats*/) { return; }
 
   /**
      optional CreateFence interface, as provider like DML has its own fence

@@ -4,7 +4,9 @@
 #include "my_allocator.h"
 
 namespace onnxruntime {
-MyEPAllocator::MyEPAllocator(OrtDevice::DeviceId device_id) : IAllocator(OrtMemoryInfo(MyEP, OrtAllocatorType::OrtArenaAllocator, OrtDevice(MyEPDevice, OrtDevice::MemType::DEFAULT, device_id))) {
+MyEPAllocator::MyEPAllocator(OrtDevice::DeviceId device_id)
+    : IAllocator(OrtMemoryInfo(MyEP, OrtAllocatorType::OrtArenaAllocator,
+                               OrtDevice(MyEPDevice, OrtDevice::MemType::DEFAULT, device_id))) {
 }
 
 void* MyEPAllocator::Alloc(size_t size) {

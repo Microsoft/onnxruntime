@@ -1270,63 +1270,131 @@ TEST(CApiTest, get_available_providers_cpp) {
   ASSERT_TRUE(std::find(providers.begin(), providers.end(), "CUDAExecutionProvider") != providers.end());
 #endif
 }
+TEST(CApiTest, TestSharedAllocators) {
+  OrtEnv* env_ptr = (OrtEnv*)(*ort_env);
 
-// This test uses the CreateAndRegisterAllocator API to register an allocator with the env,
-// creates 2 sessions and then runs those 2 sessions one after another
-TEST(CApiTest, TestSharedAllocatorUsingCreateAndRegisterAllocator) {
-  // simple inference test
   // prepare inputs
   std::vector<Input> inputs(1);
   Input& input = inputs.back();
   input.name = "X";
   input.dims = {3, 2};
   input.values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  auto allocator_for_input_memory_allocation = std::make_unique<MockedOrtAllocator>();
 
-  // prepare expected inputs and outputs
+  // prepare expected outputs
   std::vector<int64_t> expected_dims_y = {3, 2};
   std::vector<float> expected_values_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
-  OrtEnv* env_ptr = (OrtEnv*)(*ort_env);
 
-  OrtMemoryInfo* mem_info = nullptr;
-  const auto& api = Ort::GetApi();
-  ASSERT_TRUE(api.CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem_info) == nullptr);
-  std::unique_ptr<OrtMemoryInfo, decltype(api.ReleaseMemoryInfo)> rel_info(mem_info, api.ReleaseMemoryInfo);
-
-  OrtArenaCfg* arena_cfg = nullptr;
-  ASSERT_TRUE(api.CreateArenaCfg(0, -1, -1, -1, &arena_cfg) == nullptr);
-  std::unique_ptr<OrtArenaCfg, decltype(api.ReleaseArenaCfg)> rel_arena_cfg(arena_cfg, api.ReleaseArenaCfg);
-
-  ASSERT_TRUE(api.CreateAndRegisterAllocator(env_ptr, mem_info, arena_cfg) == nullptr);
-
-  // test for duplicates
-  std::unique_ptr<OrtStatus, decltype(api.ReleaseStatus)> status_releaser(
-      api.CreateAndRegisterAllocator(env_ptr, mem_info, arena_cfg),
-      api.ReleaseStatus);
-  ASSERT_FALSE(status_releaser.get() == nullptr);
-
+  // Create session options and configure it appropriately
   Ort::SessionOptions session_options;
-  auto default_allocator = std::make_unique<MockedOrtAllocator>();
+  // Turn on sharing of the allocator between sessions
   session_options.AddConfigEntry(kOrtSessionOptionsConfigUseEnvAllocators, "1");
 
-  // create session 1
-  Ort::Session session1(*ort_env, MODEL_URI, session_options);
-  RunSession<float>(default_allocator.get(),
-                    session1,
-                    inputs,
-                    "Y",
-                    expected_dims_y,
-                    expected_values_y,
-                    nullptr);
+  const auto& api = Ort::GetApi();
 
-  // create session 2
-  Ort::Session session2(*ort_env, MODEL_URI, session_options);
-  RunSession<float>(default_allocator.get(),
-                    session2,
-                    inputs,
-                    "Y",
-                    expected_dims_y,
-                    expected_values_y,
-                    nullptr);
+  // CASE 1: We test creating and registering an ORT-internal allocator implementation instance
+  // for sharing between sessions
+  {
+    OrtMemoryInfo* mem_info = nullptr;
+    ASSERT_TRUE(api.CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem_info) == nullptr);
+    std::unique_ptr<OrtMemoryInfo, decltype(api.ReleaseMemoryInfo)> rel_info(mem_info, api.ReleaseMemoryInfo);
+
+    OrtArenaCfg* arena_cfg = nullptr;
+    ASSERT_TRUE(api.CreateArenaCfg(0, -1, -1, -1, &arena_cfg) == nullptr);
+    std::unique_ptr<OrtArenaCfg, decltype(api.ReleaseArenaCfg)> rel_arena_cfg(arena_cfg, api.ReleaseArenaCfg);
+
+    // This creates an ORT-internal allocator instance and registers it in the environment for sharing
+    // NOTE: On x86 builds arenas are not supported and will default to using non-arena based allocator
+    ASSERT_TRUE(api.CreateAndRegisterAllocator(env_ptr, mem_info, arena_cfg) == nullptr);
+
+    // Test that duplicates are handled
+    std::unique_ptr<OrtStatus, decltype(api.ReleaseStatus)> status_releaser(
+        api.CreateAndRegisterAllocator(env_ptr, mem_info, arena_cfg),
+        api.ReleaseStatus);
+    ASSERT_FALSE(status_releaser.get() == nullptr);
+
+    {
+      // create session 1
+      Ort::Session session1(*ort_env, MODEL_URI, session_options);
+      RunSession<float>(allocator_for_input_memory_allocation.get(),
+                        session1,
+                        inputs,
+                        "Y",
+                        expected_dims_y,
+                        expected_values_y,
+                        nullptr);
+
+      // create session 2
+      Ort::Session session2(*ort_env, MODEL_URI, session_options);
+      RunSession<float>(allocator_for_input_memory_allocation.get(),
+                        session2,
+                        inputs,
+                        "Y",
+                        expected_dims_y,
+                        expected_values_y,
+                        nullptr);
+    }
+
+    // Remove the registered shared allocator for part 2 of this test
+    // where-in we will register a custom allocator for the same device.
+    ASSERT_TRUE(api.RemoveRegisteredAllocator(env_ptr, mem_info) == nullptr);
+  }
+
+  // CASE 2: We test registering a custom allocator implementation
+  // for sharing between sessions
+  {
+    // This creates a custom  allocator instance and registers it in the environment for sharing
+    // NOTE: This is a very basic allocator implementation. For optimal performance, allocations
+    // need to be aligned for certain devices/build configurations/math libraries.
+    // See docs/C_API.md for details.
+    MockedOrtAllocator custom_allocator;
+    ASSERT_TRUE(api.RegisterAllocator(env_ptr, &custom_allocator) == nullptr);
+
+    // Test that duplicates are handled
+    std::unique_ptr<OrtStatus, decltype(api.ReleaseStatus)>
+        status_releaser(
+            api.RegisterAllocator(env_ptr, &custom_allocator),
+            api.ReleaseStatus);
+    ASSERT_FALSE(status_releaser.get() == nullptr);
+
+    {
+      // Keep this scoped to destroy the underlying sessions after use
+      // This should trigger frees in our custom allocator
+
+      // create session 1
+      Ort::Session session1(*ort_env, MODEL_URI, session_options);
+      RunSession<float>(allocator_for_input_memory_allocation.get(),
+                        session1,
+                        inputs,
+                        "Y",
+                        expected_dims_y,
+                        expected_values_y,
+                        nullptr);
+
+      // create session 2
+      Ort::Session session2(*ort_env, MODEL_URI, session_options);
+      RunSession<float>(allocator_for_input_memory_allocation.get(),
+                        session2,
+                        inputs,
+                        "Y",
+                        expected_dims_y,
+                        expected_values_y,
+                        nullptr);
+    }
+
+    // Remove the registered shared allocator from the global environment
+    // (common to all tests) to prevent its accidental usage elsewhere
+    ASSERT_TRUE(api.RemoveRegisteredAllocator(env_ptr, custom_allocator.Info()) == nullptr);
+
+    // Ensure that the registered custom allocator was indeed used for both sessions
+    // We should have seen 2 allocations per session (one for the sole initializer
+    // and one for the output). So, for two sessions, we should have seen 4 allocations.
+    size_t num_allocations = custom_allocator.NumAllocations();
+    ASSERT_TRUE(num_allocations == 4);
+
+    // Ensure that there was no leak
+    custom_allocator.LeakCheck();
+  }
 }
 
 TEST(CApiTest, TestSharingOfInitializerAndItsPrepackedVersion) {

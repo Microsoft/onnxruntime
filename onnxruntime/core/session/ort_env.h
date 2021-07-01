@@ -69,6 +69,11 @@ struct OrtEnv {
   onnxruntime::common::Status CreateAndRegisterAllocator(const OrtMemoryInfo& mem_info,
                                                          const OrtArenaCfg* arena_cfg = nullptr);
 
+  /**
+   * Removes registered allocator that was previously registered for sharing between multiple sessions.
+  */
+  onnxruntime::common::Status RemoveRegisteredAllocator(const OrtMemoryInfo& mem_info);
+
  private:
   static OrtEnv* p_instance_;
   static onnxruntime::OrtMutex m_;

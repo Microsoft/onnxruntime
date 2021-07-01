@@ -21,7 +21,7 @@
 #include "core/framework/session_state.h"
 #include "core/framework/tensorprotoutils.h"
 #include "core/framework/utils.h"
-#include "core/framework/arena.h"
+#include "core/framework/bfc_arena.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/framework/mem_buffer.h"
 #include "core/framework/tensor_allocator.h"
@@ -43,14 +43,12 @@ static common::Status AllocateBufferUsingDeviceAllocatorFromShapeAndType(const T
   p_data = nullptr;
   if (shape_size > 0) {
     SafeInt<size_t> mem_size = 0;
-    if (!alloc->CalcMemSizeForArray(SafeInt<size_t>(shape_size), type->Size(), &mem_size))
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed memory size calculation");
 
-    if (alloc->Info().alloc_type == OrtArenaAllocator)
-      // Reserve() uses the device allocator to make the allocation
-      p_data = static_cast<IArenaAllocator*>(alloc.get())->Reserve(mem_size);
-    else
-      p_data = alloc->Alloc(mem_size);
+    if (!alloc->CalcMemSizeForArray(SafeInt<size_t>(shape_size), type->Size(), &mem_size)) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed memory size calculation");
+    }
+
+    p_data = alloc->Reserve(mem_size);
   }
 
   return Status::OK();
