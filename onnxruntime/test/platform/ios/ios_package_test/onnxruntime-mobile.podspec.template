@@ -14,6 +14,5 @@ Pod::Spec.new do |spec|
   spec.platform             = :ios, '13.0'
   # if you are going to use a file as the spec.source, add 'file:' before your file path
   spec.source               = { :http => '${ORT_BASE_FRAMEWORK_ARCHIVE}' }
-  spec.vendored_frameworks  = 'onnxruntime.framework'
-  spec.source_files         = 'onnxruntime.framework/Headers/*.h'
+  spec.vendored_frameworks  = '${ORT_FRAMEWORK_NAME}'
 end

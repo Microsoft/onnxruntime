@@ -1,14 +1,12 @@
 {
-    "build_osx_archs": [
-        {
-            "sysroot": "iphoneos",
-            "arch": "arm64"
-        },
-        {
-            "sysroot": "iphonesimulator",
-            "arch": "x86_64"
-        }
-    ],
+    "build_osx_archs": {
+        "iphoneos": [
+            "arm64"
+        ],
+        "iphonesimulator": [
+            "x86_64"
+        ]
+    },
     "build_params": [
         "--ios",
         "--parallel",

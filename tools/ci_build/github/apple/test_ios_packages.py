@@ -27,9 +27,17 @@ def _test_ios_packages(args):
     if not c_framework_dir.is_dir():
         raise FileNotFoundError('c_framework_dir {} is not a folder.'.format(c_framework_dir))
 
-    framework_path = os.path.join(c_framework_dir, 'onnxruntime.framework')
-    if not pathlib.Path(framework_path).exists():
-        raise FileNotFoundError('{} does not have onnxruntime.framework'.format(c_framework_dir))
+    has_framework = pathlib.Path(os.path.join(c_framework_dir, 'onnxruntime.framework')).exists()
+    has_xcframework = pathlib.Path(os.path.join(c_framework_dir, 'onnxruntime.xcframework')).exists()
+
+    if not has_framework and not has_xcframework:
+        raise FileNotFoundError('{} does not have onnxruntime.framework/xcframework'.format(c_framework_dir))
+
+    if has_framework and has_xcframework:
+        raise ValueError('Cannot proceed when both onnxruntime.framework '
+                         'and onnxruntime.xcframework exist')
+
+    framework_name = 'onnxruntime.framework' if has_framework else 'onnxruntime.xcframework'
 
     # create a temp folder
     import tempfile
@@ -41,7 +49,7 @@ def _test_ios_packages(args):
         # shutil.make_archive require target file as full path without extension
         zip_base_filename = os.path.join(local_pods_dir, 'onnxruntime-mobile')
         zip_file_path = zip_base_filename + '.zip'
-        shutil.make_archive(zip_base_filename, 'zip', root_dir=c_framework_dir, base_dir='onnxruntime.framework')
+        shutil.make_archive(zip_base_filename, 'zip', root_dir=c_framework_dir, base_dir=framework_name)
 
         # copy the test project to the temp_dir
         test_proj_path = os.path.join(REPO_DIR, 'onnxruntime', 'test', 'platform', 'ios', 'ios_package_test')
@@ -56,6 +64,7 @@ def _test_ios_packages(args):
 
         # replace the target strings
         file_data = file_data.replace('${ORT_BASE_FRAMEWORK_ARCHIVE}', 'file:' + zip_file_path)
+        file_data = file_data.replace('${ORT_FRAMEWORK_NAME}', framework_name)
         with open(os.path.join(REPO_DIR, 'VERSION_NUMBER')) as version_file:
             file_data = file_data.replace('${ORT_VERSION}', version_file.readline().strip())
 

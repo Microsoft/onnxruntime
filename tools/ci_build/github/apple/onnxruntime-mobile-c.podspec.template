@@ -2,14 +2,18 @@ Pod::Spec.new do |spec|
     spec.name                   = "onnxruntime-mobile-c"
     spec.version                = "${ORT_VERSION}"
     spec.authors                = { "ONNX Runtime" => "onnxruntime@microsoft.com" }
-    spec.license                = { :type => "MIT" }
+    spec.license                = { :type => "MIT", :file => 'LICENSE' }
     spec.homepage               = "https://github.com/microsoft/onnxruntime"
     spec.source                 = { :http => "_ORT_DOWNLOAD_URL_" }
     spec.summary                = "ONNX Runtime Mobile C/C++ Pod"
     spec.platform               = :ios, "${CMAKE_OSX_DEPLOYMENT_TARGET}"
-    spec.vendored_frameworks    = "onnxruntime.framework"
+    spec.vendored_frameworks    = "onnxruntime.xcframework"
     spec.weak_framework         = 'CoreML'
-    spec.source_files           = 'onnxruntime.framework/Headers/*.h'
+
+    # arm64 iphonesimulator is not supported in this release
+    spec.pod_target_xcconfig    = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'arm64' }
+    spec.user_target_xcconfig   = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'arm64' }
+
     spec.description            = <<-DESC
     A preview pod for ONNX Runtime Mobile C/C++ library. Pods for Objective-C and Swift coming soon.
                                     DESC
