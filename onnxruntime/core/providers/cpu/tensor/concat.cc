@@ -216,7 +216,18 @@ Status ConcatBase::ComputeImpl(Prepare& p, OpKernelContext* ctx) const {
   int input_count = static_cast<int>(p.inputs.size());
   int64_t initial_output_offset = 0;  // initial offset for each input
 
-  auto output_strides = StridesForTensor(*p.output_tensor);
+  auto output_strides_full = StridesForTensor(*p.output_tensor);
+  auto num_dims = p.output_tensor->Shape().NumDimensions();
+  // if we are stacking, skip the dimension that will be stacked along in the output strides
+  // (the striding for that dimension is handled by the initial_output_offset)
+  // Note that output_strides_full is only used later when is_stack_ is true, so it's safe to move
+  auto output_strides_for_copy = is_stack_ ? std::vector<int64_t>(num_dims - 1) : std::move(output_strides_full);
+  if (is_stack_) {
+    for (int64_t i = 0; i < static_cast<int64_t>(num_dims - 1); i++) {
+      auto read_i = (i >= axis_) ? i + 1 : i;
+      output_strides_for_copy[i] = output_strides_full[read_i];
+    }
+  }
 
   for (int input_index = 0; input_index < input_count; input_index++) {
     const auto& prep = p.inputs[input_index];
@@ -225,19 +236,22 @@ Status ConcatBase::ComputeImpl(Prepare& p, OpKernelContext* ctx) const {
     if (prep.num_elements == 0)
       continue;
 
-    auto input_axis_pitch = prep.axis_pitch;
-
-    // Copy the data across
+    // parallel copy the data across
     auto status = DispatchStridedCopy(ctx->GetOperatorThreadPool(),
                                       *p.output_tensor,
                                       initial_output_offset,
-                                      output_strides,
+                                      output_strides_for_copy,
                                       prep.tensor->Shape(),
                                       *prep.tensor,
                                       StridesForTensor(*prep.tensor));
     ORT_RETURN_IF_ERROR(status);
 
-    initial_output_offset += input_axis_pitch;
+    // advance along the axis that we are concatenating on (by the size of the axis of the tensor that we just copied)
+    if (is_stack_) {
+      initial_output_offset += output_strides_full[p.axis];
+    } else {
+      initial_output_offset += prep.tensor->Shape()[p.axis] * output_strides_for_copy[p.axis];
+    }
   }
 
   return Status::OK();

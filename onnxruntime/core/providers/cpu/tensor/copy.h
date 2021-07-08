@@ -15,10 +15,11 @@ Status DispatchStridedCopy(concurrency::ThreadPool* thread_pool,
 template <typename T>
 void StridedCopy(concurrency::ThreadPool* thread_pool,
                  T* dst,
-                 const TensorShape& dst_shape,
                  const std::vector<int64_t>& dst_strides,
+                 const TensorShape& copy_shape,
                  const T* src,
                  const std::vector<int64_t>& src_strides);
 
 std::vector<int64_t> StridesForTensor(const Tensor& tensor);
+std::vector<int64_t> StridesForTensor(const Tensor& tensor, size_t skip_dim);
 }  // namespace onnxruntime

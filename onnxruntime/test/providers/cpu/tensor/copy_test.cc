@@ -28,7 +28,7 @@ TEST_F(CopyTest, Contiguous1D) {
 
   int dst[10];
 
-  StridedCopy<int>(tp.get(), dst, {10}, {1}, src, {1});
+  StridedCopy<int>(tp.get(), dst, {1}, {10}, src, {1});
 
   for (int i = 0; i < 10; i++) {
     EXPECT_EQ(src[i], dst[i]);
@@ -43,7 +43,7 @@ TEST_F(CopyTest, Contiguous3D) {
 
   double dst[3 * 4 * 5];
 
-  StridedCopy<double>(tp.get(), dst, {3, 4, 5}, {20, 5, 1}, src, {20, 5, 1});
+  StridedCopy<double>(tp.get(), dst, {20, 5, 1}, {3, 4, 5}, src, {20, 5, 1});
 
   for (int i = 0; i < 3 * 4 * 5; i++) {
     EXPECT_EQ(src[i], dst[i]);
@@ -62,7 +62,7 @@ TEST_F(CopyTest, Transpose4D) {
 
   std::vector<int64_t> dst_strides = {60, 5, 15, 1};
   std::vector<int64_t> src_strides = {60, 20, 5, 1};
-  StridedCopy<double>(tp.get(), dst, {2, 3, 4, 5}, dst_strides, src, src_strides);
+  StridedCopy<double>(tp.get(), dst, dst_strides, {2, 3, 4, 5}, src, src_strides);
 
   // stride to access the dst tensor as if it were contiguous
   std::vector<int64_t> contig_dst_strides = {60, 15, 5, 1};
@@ -96,7 +96,7 @@ TEST_F(CopyTest, Concat2D) {
   std::vector<int64_t> dst_strides = {5, 1};
   std::vector<int64_t> src_strides = {2, 1};
   std::ptrdiff_t offset = 3;
-  StridedCopy<double>(tp.get(), dst + offset, {6, 2}, dst_strides, src, src_strides);
+  StridedCopy<double>(tp.get(), dst + offset, dst_strides, {6, 2}, src, src_strides);
 
   for (int i0 = 0; i0 < 10; i0++) {
     for (int i1 = 0; i1 < 5; i1++) {
