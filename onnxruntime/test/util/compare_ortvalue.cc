@@ -33,7 +33,25 @@ using __half_raw = ::Eigen::half_impl::__half;
 }  // namespace Eigen
 #endif
 
+#define TEST_RETURN_IF_NOT(condition, compare_result, ...)                                                    \
+  if (!(condition)) {                                                                                         \
+    return std::make_pair(compare_result, ::onnxruntime::MakeString(ORT_WHERE.ToString(), " ", __VA_ARGS__)); \
+  }
+
+#define TEST_RETURN_IF_ERROR(stmt, ...)                                                                                \
+  {                                                                                                                    \
+    auto result_pair = (stmt);                                                                                         \
+    if (result_pair.first != COMPARE_RESULT::SUCCESS) {                                                                \
+      result_pair.second = ::onnxruntime::MakeString(ORT_WHERE.ToString(), " ", __VA_ARGS__, " ", result_pair.second); \
+      return result_pair;                                                                                              \
+    }                                                                                                                  \
+  }
+
 namespace {
+
+const char* ElementTypeToString(MLDataType type) {
+  return DataTypeImpl::ToString(type);
+}
 
 template <typename T>
 bool IsResultCloselyMatch(const T& outvalue, const T& expected_value, const double diff, const double tol) {
@@ -232,8 +250,44 @@ std::pair<COMPARE_RESULT, std::string> CompareSeqOfMapToFloat(const T& real_outp
   return std::make_pair(COMPARE_RESULT::SUCCESS, "");
 }
 
-const char* ElementTypeToString(MLDataType type) {
-  return DataTypeImpl::ToString(type);
+std::pair<COMPARE_RESULT, std::string> CompareSparseTensors(const SparseTensor& actual, const SparseTensor& expected,
+                                                            double per_sample_tolerance, double relative_per_sample_tolerance,
+                                                            bool post_processing) {
+  TEST_RETURN_IF_NOT(actual.DataType() == expected.DataType(), COMPARE_RESULT::TYPE_MISMATCH,
+                     "Expected type: ", ElementTypeToString(expected.DataType()),
+                     " actual: ", ElementTypeToString(actual.DataType()));
+
+  TEST_RETURN_IF_NOT(actual.Shape() == expected.Shape(), COMPARE_RESULT::SHAPE_MISMATCH,
+                     "Expected dense shape: ", expected.Shape(),
+                     " Actual: ", actual.Shape());
+
+  TEST_RETURN_IF_NOT(actual.Format() == expected.Format(), COMPARE_RESULT::TYPE_MISMATCH,
+                     "Expected sparse format", expected.Format(),
+                     " actual: ", actual.Format());
+
+  TEST_RETURN_IF_ERROR(CompareTwoTensors(actual.Values(), expected.Values(),
+                                         per_sample_tolerance, relative_per_sample_tolerance, post_processing),
+                       "While comparing sparse values");
+
+  if (actual.Format() == SparseFormat::kCoo) {
+    auto actual_view = actual.AsCoo();
+    auto expected_view = expected.AsCoo();
+
+    TEST_RETURN_IF_ERROR(CompareTwoTensors(actual_view.Index(), expected_view.Index(),
+                                           per_sample_tolerance, relative_per_sample_tolerance, post_processing),
+                         "Comparing COO indices");
+  } else if (actual.Format() == SparseFormat::kCsrc) {
+    auto actual_view = actual.AsCsr();
+    auto expected_view = expected.AsCsr();
+    TEST_RETURN_IF_ERROR(CompareTwoTensors(actual_view.Inner(), expected_view.Inner(),
+                                           per_sample_tolerance, relative_per_sample_tolerance, post_processing),
+                         "Comparing Csr(c) inner indices");
+    TEST_RETURN_IF_ERROR(CompareTwoTensors(actual_view.Outer(), expected_view.Outer(),
+                                           per_sample_tolerance, relative_per_sample_tolerance, post_processing),
+                         "Comparing Csr(c) outer indices");
+  }
+
+  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
 }
 
 // The expected_shape could contain unknown dimensions, but the real_shape cannot
@@ -297,6 +351,14 @@ std::pair<COMPARE_RESULT, std::string> CompareOrtValue(const OrtValue& o, const 
     }
     return CompareTwoTensors(outvalue, expected_tensor, per_sample_tolerance, relative_per_sample_tolerance,
                              post_processing);
+  } else if (o.IsSparseTensor()) {
+    TEST_RETURN_IF_NOT(expected_mlvalue.IsSparseTensor(), COMPARE_RESULT::TYPE_MISMATCH,
+                       "SparseTensor is not expected as output");
+    TEST_RETURN_IF_ERROR(CompareSparseTensors(o.Get<SparseTensor>(), expected_mlvalue.Get<SparseTensor>(),
+                                              per_sample_tolerance, relative_per_sample_tolerance,
+                                              post_processing),
+                         "while comaring sparse tensors");
+    return std::make_pair(COMPARE_RESULT::SUCCESS, "");
   } else if (o.IsTensorSequence()) {
     auto& expected_tensor_seq = expected_mlvalue.Get<TensorSeq>();
     auto expected_tensor_count = expected_tensor_seq.Size();

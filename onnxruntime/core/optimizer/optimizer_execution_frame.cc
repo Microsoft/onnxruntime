@@ -20,8 +20,10 @@ namespace onnxruntime {
 OptimizerExecutionFrame::Info::Info(const std::vector<const Node*>& nodes,
                                     const InitializedTensorSet& initialized_tensor_set,
                                     const Path& model_path,
-                                    const IExecutionProvider& execution_provider)
-    : execution_provider_(execution_provider) {
+                                    const IExecutionProvider& execution_provider,
+                                    const std::function<bool(const std::string&)>& is_sparse_initializer_func)
+    : execution_provider_(execution_provider),
+      is_sparse_initializer_func_(is_sparse_initializer_func) {
   allocator_ptr_ = execution_provider_.GetAllocator(device_id_, mem_type_);
   ORT_ENFORCE(allocator_ptr_, "Failed to get allocator for optimizer");
 
@@ -66,7 +68,10 @@ OptimizerExecutionFrame::Info::Info(const std::vector<const Node*>& nodes,
 OptimizerExecutionFrame::Info::Info(const std::vector<const Node*>& nodes,
                                     const std::unordered_map<std::string, OrtValue>& initialized_tensor_set,
                                     const Path& model_path,
-                                    const IExecutionProvider& execution_provider) : execution_provider_(execution_provider) {
+                                    const IExecutionProvider& execution_provider,
+                                    const std::function<bool(const std::string&)>& is_sparse_initializer_func)
+    : execution_provider_(execution_provider),
+      is_sparse_initializer_func_(is_sparse_initializer_func) {
   allocator_ptr_ = execution_provider_.GetAllocator(device_id_, mem_type_);
   ORT_ENFORCE(allocator_ptr_, "Failed to get allocator for optimizer");
 
@@ -117,7 +122,7 @@ OptimizerExecutionFrame::OptimizerExecutionFrame(const Info& info,
                                                  const std::vector<OrtValue>& fetches)
     : IExecutionFrame(info.GetMLValueNameIdxMap(), info.GetNodeIndexInfo(), fetch_mlvalue_idxs),
       info_(info) {
-  Init(std::vector<int>(), std::vector<OrtValue>(), info.GetInitializers(), fetches);
+  Init(std::vector<int>(), std::vector<OrtValue>(), info.GetInitializers(), info.GetSparseInitializerLookupFunc(), fetches);
 }
 
 AllocatorPtr OptimizerExecutionFrame::GetAllocatorImpl(const OrtMemoryInfo& info) const {
@@ -128,10 +133,13 @@ Status OptimizerExecutionFrame::CopyTensor(const Tensor& src, Tensor& dest) cons
   return info_.GetDataTransferManager().CopyTensor(src, dest);
 }
 
+const DataTransferManager& OptimizerExecutionFrame::GetDataTransferManager() const {
+  return info_.GetDataTransferManager();
+}
+
 // This method is not thread safe!
 // Return S_OK and nullptr if index map to an value that is an unused optional input/output
-Status OptimizerExecutionFrame::CreateNodeOutputMLValueImpl(OrtValue& ort_value, int ort_value_idx,
-                                                            const TensorShape* shape, size_t nnz) {
+Status OptimizerExecutionFrame::CreateNodeOutputMLValueImpl(OrtValue& ort_value, int ort_value_idx, const TensorShape* shape) {
   const DataTypeImpl* ml_type = utils::GetMLDataType(*(info_.GetMLValueIdxNodeArgMap().at(ort_value_idx)));
   if (ml_type == nullptr)
     return Status(common::ONNXRUNTIME, common::INVALID_ARGUMENT,
@@ -139,7 +147,7 @@ Status OptimizerExecutionFrame::CreateNodeOutputMLValueImpl(OrtValue& ort_value,
   if (ml_type->IsSparseTensorType()) {
     auto element_type = ml_type->AsSparseTensorType()->GetElementType();
     auto container_type = DataTypeImpl::GetType<SparseTensor>();
-    auto sparse = std::make_unique<SparseTensor>(element_type, *shape, nnz, info_.GetAllocator());
+    auto sparse = std::make_unique<SparseTensor>(element_type, *shape, info_.GetAllocator());
     ort_value.Init(sparse.release(), container_type, container_type->GetDeleteFunc());
     return Status::OK();
   }

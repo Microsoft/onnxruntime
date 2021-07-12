@@ -11,11 +11,13 @@
 #include "core/framework/data_types.h"
 #include "core/framework/tensor.h"
 #include "core/framework/TensorSeq.h"
-#endif
 
 namespace onnxruntime {
 class SparseTensor;
 }  // namespace onnxruntime
+
+#endif
+
 
 /**
    Represents both tensors and non-tensors.

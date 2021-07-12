@@ -92,6 +92,26 @@ def check_and_normalize_provider_args(providers, provider_options, available_pro
     return list(provider_name_to_options.keys()), list(provider_name_to_options.values())
 
 
+def numpy_array_to_cuda(ort_device, numpy_array_on_cpu):
+    '''
+    The function allocates a numpy array on the specified CUDA device and copies
+    the content of numpy_array_on_cpu. It preserves the dtype and the shape.
+    Only numeric types are supported and only in CUDA enabled builds.
+    No attempt is made to verify that the source is indeed on CPU
+    '''
+    return C.numpy_array_to_cuda(numpy_array_on_cpu, ort_device._get_c_device())
+
+
+def numpy_array_to_cpu(numpy_array_on_cuda):
+    '''
+    The function allocates a numpy array in the host memory and copies
+    the content of numpy_array_on_cuda. It preserves the dtype and the shape.
+    Only numeric types are supported and only in CUDA enabled builds.
+    No attempt is made to verify that the source is indeed on CUDA
+    '''
+    return C.numpy_array_to_cpu(numpy_array_on_cuda)
+
+
 class Session:
     """
     This is the main class used to run a model.
@@ -194,6 +214,47 @@ class Session:
                 # Fallback only once.
                 self.disable_fallback()
                 return self._sess.run(output_names, input_feed, run_options)
+            else:
+                raise
+
+    def run_with_ort_values(self, output_names, input_dict_ort_values, run_options=None):
+        """
+        Compute the predictions.
+
+        :param output_names: name of the outputs
+        :param input_feed: dictionary ``{ input_name: input_ort_value }``
+         See ``OrtValue`` class how to create OrtValue from numpy array or SparseTensor
+        :param run_options: See :class:`onnxruntime.RunOptions`.
+        :return an array of OrtValues
+        ::
+
+            sess.run([output_name], {input_name: x})
+        """
+        def invoke(sess, output_names, input_dict_ort_values, run_options):
+            input_dict = {}
+            for n, v in input_dict_ort_values.items():
+                input_dict[n] = v._get_c_value()
+            result = sess.run_with_ort_values(input_dict, output_names, run_options)
+            ort_values = [OrtValue(v) for v in result]
+            return ort_values
+
+        num_required_inputs = len(self._inputs_meta)
+        num_inputs = len(input_dict_ort_values)
+        # the graph may have optional inputs used to override initializers. allow for that.
+        if num_inputs < num_required_inputs:
+            raise ValueError("Model requires {} inputs. Input Feed contains {}".format(num_required_inputs, num_inputs))
+        if not output_names:
+            output_names = [output.name for output in self._outputs_meta]
+        try:
+            return invoke(self._sess, output_names, input_dict_ort_values, run_options)
+        except C.EPFail as err:
+            if self._enable_fallback:
+                print("EP Error: {} using {}".format(str(err), self._providers))
+                print("Falling back to {} and retrying.".format(self._fallback_providers))
+                self.set_providers(self._fallback_providers)
+                # Fallback only once.
+                self.disable_fallback()
+                return invoke(self._sess, output_names, input_dict_ort_values, run_options)
             else:
                 raise
 
@@ -465,6 +526,9 @@ class OrtValue:
             raise ValueError("`Provided ortvalue` needs to be of type " +
                              "`onnxruntime.capi.onnxruntime_pybind11_state.OrtValue`")
 
+    def _get_c_value(self):
+        return self._ortvalue
+
     @staticmethod
     def ortvalue_from_numpy(numpy_obj, device_type='cpu', device_id=0):
         '''
@@ -495,6 +559,20 @@ class OrtValue:
         return OrtValue(C.OrtValue.ortvalue_from_shape_and_type(shape, element_type,
                         C.OrtDevice(get_ort_device_type(device_type), C.OrtDevice.default_memory(), device_id)))
 
+    @staticmethod
+    def ort_value_from_sparse_tensor(sparse_tensor):
+        '''
+        The function will construct an OrtValue instance from a valid SparseTensor
+        The new instance of OrtValue will assume the ownership of sparse_tensor
+        '''
+        return OrtValue(C.OrtValue.ort_value_from_sparse_tensor(sparse_tensor._get_c_tensor()))
+
+    def as_sparse_tensor(self):
+        '''
+        The function will return SparseTensor contained in this OrtValue
+        '''
+        return SparseTensor(self._ortvalue.as_sparse_tensor())
+
     def data_ptr(self):
         '''
         Returns the address of the first element in the OrtValue's data buffer
@@ -521,13 +599,203 @@ class OrtValue:
 
     def is_tensor(self):
         '''
-        Returns True if the OrtValue is a Tensor, else returns False
+        Returns True if the OrtValue contains a Tensor, else returns False
         '''
         return self._ortvalue.is_tensor()
+
+    def is_sparse_tensor(self):
+        '''
+        Returns True if the OrtValue contains a SparseTensor, else returns False
+        '''
+        return self._ortvalue.is_sparse_tensor()
+
+    def is_tensor_sequence(self):
+        '''
+        Returns True if the OrtValue contains a Tensor Sequence, else returns False
+        '''
+        return self._ortvalue.is_tensor_sequence()
 
     def numpy(self):
         '''
         Returns a Numpy object from the OrtValue.
         Valid only for OrtValues holding Tensors. Throws for OrtValues holding non-Tensors.
+        Use accessors to gain a reference to non-Tensor objects such as SparseTensor
         '''
         return self._ortvalue.numpy()
+
+
+class OrtDevice:
+    '''
+    A data structure that exposes the underlying C++ OrtDevice
+    '''
+    def __init__(self, c_ort_device):
+        '''
+        Internal constructor
+        '''
+        if isinstance(c_ort_device, C.OrtDevice):
+            self._ort_device = c_ort_device
+        else:
+            raise ValueError("`Provided object` needs to be of type " +
+                             "`onnxruntime.capi.onnxruntime_pybind11_state.OrtDevice`")
+
+    def _get_c_device(self):
+        '''
+        Internal accessor to underlying object
+        '''
+        return self._ort_device
+
+    @staticmethod
+    def make(ort_device_name, device_id):
+        return OrtDevice(C.OrtDevice(get_ort_device_type(ort_device_name),
+                                     C.OrtDevice.default_memory(), device_id))
+
+    def device_id(self):
+        return self._ort_device.device_id()
+
+    def device_type(self):
+        return self._ort_device.device_type()
+
+
+class SparseTensor:
+    '''
+    A data structure that project the C++ SparseTensor object
+    The class provides API to work with the object.
+    Depending on the format, the class will hold more than one buffer
+    depending on the format
+    '''
+    def __init__(self, sparse_tensor):
+        '''
+        Internal constructor
+        '''
+        if isinstance(sparse_tensor, C.SparseTensor):
+            self._tensor = sparse_tensor
+        else:
+            # An end user won't hit this error
+            raise ValueError("`Provided object` needs to be of type " +
+                             "`onnxruntime.capi.onnxruntime_pybind11_state.SparseTensor`")
+
+    def _get_c_tensor(self):
+        return self._tensor
+
+    @staticmethod
+    def sparse_coo_from_numpy(shape, values, coo_indices, ort_device):
+        '''
+        Factory method to construct a SparseTensor in COO format from given arguments
+        :param shape: 1-D  numpy array(int64) or a python list that contains a dense_shape of the sparse tensor
+         must be on cpu memory
+        :param values: a homogeneous, contiguous 1-D numpy array that contains non-zero elements of the tensor
+         of a type.
+        :param coo_indices:  contiguous numpy array(int64) that contains COO indices for the tensor. coo_indices may
+         have a 1-D shape when it contains a linear index of non-zero values and its length must be equal to
+         that of the values. It can also be of 2-D shape, in which has it contains pairs of coordinates for
+         each of the nnz values and its length must be exactly twice of the values length.
+        :param ort_device - describes the backing memory owned by the supplied nummpy arrays. Only CPU memory is
+         suppored for non-numeric data types.
+
+         For primitive types, the method will map values and coo_indices arrays into native memory and will use
+         them as backing storage. It will increment the reference count for numpy arrays and it will decrement it
+         on GC. The buffers may reside in any storage either CPU or GPU.
+         For strings and objects, it will create a copy of the arrays in CPU memory as ORT does not support those
+         on other devices and their memory can not be mapped.
+        '''
+        return SparseTensor(C.SparseTensor.sparse_coo_from_numpy(shape, values, coo_indices,
+                            ort_device._get_c_device()))
+
+    @staticmethod
+    def sparse_csr_from_numpy(shape, values, inner_indices, outer_indices, ort_device):
+        '''
+        Factory method to construct a SparseTensor in CSR format from given arguments
+        :param shape: 1-D numpy array(int64) or a python list that contains a dense_shape of the
+         sparse tensor (rows, cols) must be on cpu memory
+        :param values: a  contiguous, homogeneous 1-D numpy array that contains non-zero elements of the tensor
+         of a type.
+        :param inner_indices:  contiguous 1-D numpy array(int64) that contains CSR inner indices for the tensor.
+         Its length must be equal to that of the values.
+        :param outer_indices:  contiguous 1-D numpy array(int64) that contains CSR outer indices for the tensor.
+         Its length must be equal to the number of rows + 1.
+        :param ort_device - describes the backing memory owned by the supplied nummpy arrays. Only CPU memory is
+         suppored for non-numeric data types.
+
+         For primitive types, the method will map values and indices arrays into native memory and will use them as
+         backing storage. It will increment the reference count and it will decrement then count when it is GCed.
+         The buffers may reside in any storage either CPU or GPU.
+         For strings and objects, it will create a copy of the arrays in CPU memory as ORT does not support those
+         on other devices and their memory can not be mapped.
+        '''
+        return SparseTensor(C.SparseTensor.sparse_csr_from_numpy(shape, values, inner_indices, outer_indices,
+                            ort_device._get_c_device()))
+
+    def values(self):
+        '''
+        The method returns a numpy array that is backed by the native memory
+        if the data type is numeric. Otherwise, the returned numpy array that contains
+        copies of the strings.
+        '''
+        return self._tensor.values()
+
+    def as_coo_view(self):
+        '''
+        The method will return coo representation of the sparse tensor which will enable
+        querying COO indices. If the instance did not contain COO format, it would throw.
+        You can query coo indices as:
+          coo_indices = sparse_tensor.as_coo_view().indices()
+          which will return a numpy array that is backed by the native memory
+        '''
+        return self._tensor.get_coo_data()
+
+    def as_csrc_view(self):
+        '''
+        The method will return CSR(C) representation of the sparse tensor which will enable
+        querying CRS(C) indices. If the instance dit not contain CSR(C) format, it would throw.
+        You can query indices as:
+          inner_ndices = sparse_tensor.as_csrc_view().inner()
+          outer_ndices = sparse_tensor.as_csrc_view().outer()
+          returning numpy arrays backed by the native memory
+        '''
+        return self._tensor.get_csrc_data()
+
+    def as_blocksparse_view(self):
+        '''
+        The method will return coo representation of the sparse tensor which will enable
+        querying BlockSparse indices. If the instance did not contain BlockSparse format, it would throw.
+        You can query coo indices as:
+          block_sparse_indices = sparse_tensor.as_blocksparse_view().indices()
+          which will return a numpy array that is backed by the native memory
+        '''
+        return self._tensor.get_blocksparse_data()
+
+    def to_cuda(self, ort_device):
+        '''
+        Returns a copy of this instance on the specified cuda device
+        :param ort_device with name 'cuda' and valid gpu device id
+        The method will throw if:
+        - this instance contains strings
+        - this instance is already on GPU. Cross GPU copy is not supported
+        - CUDA is not present in this build
+        - if the specified device is not valid
+        '''
+        return SparseTensor(self._tensor.to_cuda(ort_device._get_c_device()))
+
+    def format(self):
+        '''
+        Returns a OrtSparseFormat enumeration
+        '''
+        return self._tensor.format
+
+    def shape(self):
+        '''
+        Returns a numpy array(int64) containing a dense shape of a sparse tensor
+        '''
+        return self._tensor.shape()
+
+    def data_type(self):
+        '''
+        Returns a string data type of the data in the OrtValue
+        '''
+        return self._tensor.data_type()
+
+    def device_name(self):
+        '''
+        Returns the name of the device where the SparseTensor data buffers reside e.g. cpu, cuda
+        '''
+        return self._tensor.device_name().lower()

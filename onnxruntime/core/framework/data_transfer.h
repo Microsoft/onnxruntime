@@ -3,12 +3,19 @@
 
 #pragma once
 
-#include "core/common/status.h"
-#ifndef SHARED_PROVIDER
-#include "core/framework/tensor.h"
-#endif
+#include <functional>
+#include <vector>
+
+struct OrtDevice;
 
 namespace onnxruntime {
+#ifndef SHARED_PROVIDER
+class Tensor;
+class SparseTensor;
+#endif
+namespace common {
+class Status;
+}
 
 // Data transfer interface.
 class IDataTransfer {
@@ -28,6 +35,14 @@ class IDataTransfer {
 
   // batched copy. default implementation copies each entry sequentially, and returns on first failure.
   virtual common::Status CopyTensors(const std::vector<SrcDstPair>& src_dst_pairs) const;
+
+  struct SparseSrcDstPair {
+    std::reference_wrapper<const SparseTensor> src;
+    std::reference_wrapper<SparseTensor> dst;
+    int exec_queue_id;
+  };
+
+  virtual common::Status CopyTensors(const std::vector<SparseSrcDstPair>& src_dst_pairs) const;
 };
 
 class CPUDataTransfer : public IDataTransfer {

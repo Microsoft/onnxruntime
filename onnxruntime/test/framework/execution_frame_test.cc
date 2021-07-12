@@ -150,11 +150,11 @@ TEST_F(ExecutionFrameTest, OutputShapeValidationTest) {
   ASSERT_TRUE(p_ml_value != nullptr);
 
   // Calling the method with correct shape. It should work without any warnings.
-  ASSERT_STATUS_OK(frame.GetOrCreateNodeOutputMLValue(int(node->Index()), 1, &actual_shape_same_as_input, p_ml_value, *node, size_t(0)));
+  ASSERT_STATUS_OK(frame.GetOrCreateNodeOutputMLValue(int(node->Index()), 1, &actual_shape_same_as_input, p_ml_value, *node));
 
   frame.ReleaseMLValue(1);
   // Calling the method with in-correct shape. It should work but this time it should display a warning message.
-  ASSERT_STATUS_OK(frame.GetOrCreateNodeOutputMLValue(int(node->Index()), 1, &actual_shape_diff_from_input, p_ml_value, *node, size_t(0)));
+  ASSERT_STATUS_OK(frame.GetOrCreateNodeOutputMLValue(int(node->Index()), 1, &actual_shape_diff_from_input, p_ml_value, *node));
 }
 
 TEST_F(ExecutionFrameTest, FeedInDataTest) {
@@ -468,6 +468,48 @@ TEST(ExecutionFrameTestInit, InitializerAsOutput) {
     const auto& initializers = session.GetSessionState().GetInitializedTensors();
     EXPECT_NE(results[0].Get<Tensor>().DataRaw(), initializers.at(0).Get<Tensor>().DataRaw());
     EXPECT_THAT(results[0].Get<Tensor>().DataAsSpan<float>(), ::testing::ContainerEq(gsl::make_span(expected)));
+  }
+}
+
+TEST(ExecutionFrameTestInit, SparseInitializerAsOutput) {
+
+  const std::vector<int64_t> dense_shape{3, 3};
+  std::vector<float> dense_data = {
+      0, 0, 1.764052391052246f,
+      0.40015721321105957f, 0, 0.978738009929657f,
+      0, 0, 0};
+
+  const std::vector<float> expected_values = {1.764052391052246f, 0.40015721321105957f, 0.978738009929657f};
+  const std::vector<int64_t> expected_linear_indices = {2, 3, 5};
+
+  //sparse_initializer_as_output.onnx
+  SessionOptions so;
+
+  // test if pre-allocated fetch is provided the initializer values are copied into that buffer
+  {
+    InferenceSession session(so, GetEnvironment());
+    ASSERT_STATUS_OK(session.Load(ORT_TSTR("testdata/sparse_initializer_as_output.onnx")));
+    ASSERT_STATUS_OK(session.Initialize());
+
+    auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
+    auto p_tensor = std::make_unique<SparseTensor>();
+
+    std::vector<OrtValue> results;
+    results.resize(1);
+    auto ml_type = DataTypeImpl::GetType<SparseTensor>();
+    results[0].Init(p_tensor.release(), ml_type, ml_type->GetDeleteFunc());
+    RunOptions ro;
+    ASSERT_STATUS_OK(session.Run(ro, {}, {}, {"values"}, &results, nullptr));
+
+    ASSERT_TRUE(results[0].IsAllocated());
+    ASSERT_TRUE(results[0].IsSparseTensor());
+    const SparseTensor& result = results[0].Get<SparseTensor>();
+    ASSERT_EQ(result.DataType(), DataTypeImpl::GetType<float>());
+    EXPECT_THAT(result.Shape().GetDims(), ::testing::ContainerEq(dense_shape));
+    ASSERT_EQ(result.NumValues(), 3U);
+    EXPECT_THAT(result.Values().DataAsSpan<float>(), ::testing::ContainerEq(gsl::make_span(expected_values)));
+    auto coo_view = result.AsCoo();
+    EXPECT_THAT(coo_view.Index().DataAsSpan<int64_t>(), ::testing::ContainerEq(gsl::make_span(expected_linear_indices)));
   }
 }
 

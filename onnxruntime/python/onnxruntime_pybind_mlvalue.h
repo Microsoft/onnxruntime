@@ -6,6 +6,7 @@
 
 #include <pybind11/iostream.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
 #include "core/common/logging/logging.h"
@@ -16,35 +17,46 @@
 #include "core/framework/ml_value.h"
 #include "core/session/inference_session.h"
 
-
 namespace onnxruntime {
 namespace python {
-
-namespace py = pybind11;
 
 extern const char* PYTHON_ORTVALUE_OBJECT_NAME;
 extern const char* PYTHON_ORTVALUE_NATIVE_OBJECT_ATTR;
 
 bool IsNumericNumpyType(int npy_type);
 
-bool IsNumericNumpyArray(py::object& py_object);
+bool IsNumericNumpyArray(const pybind11::object& py_object);
+
+bool IsNumpyArray(pybind11::object& obj);
+
+int GetNumpyArrayType(const pybind11::object& obj);
+
+bool IsNumericDType(const pybind11::dtype& dtype);
+
+TensorShape GetShape(const pybind11::array& arr);
 
 int OnnxRuntimeTensorToNumpyType(const DataTypeImpl* tensor_type);
 
 MLDataType NumpyTypeToOnnxRuntimeType(int numpy_type);
 
+MLDataType NumpyToOnnxRuntimeTensorType(int numpy_type);
+
 using MemCpyFunc = void (*)(void*, const void*, size_t);
 
 void CpuToCpuMemCpy(void*, const void*, size_t);
 
-void AddTensorAsPyObj(const OrtValue& val, std::vector<pybind11::object>& pyobjs,
-                      const DataTransferManager* data_transfer_manager,
-                      const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions);
+void CopyDataToTensor(const pybind11::array& py_array, int npy_type, Tensor& tensor, MemCpyFunc mem_cpy_to_device = CpuToCpuMemCpy);
 
-void AddNonTensorAsPyObj(const OrtValue& val, std::vector<pybind11::object>& pyobjs,
-                         const DataTransferManager* data_transfer_manager,
-                         const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions);
+pybind11::object AddTensorAsPyObj(const OrtValue& val, const DataTransferManager* data_transfer_manager,
+                                  const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions);
 
+pybind11::object GetPyObjectFromSparseTensor(size_t pos, const OrtValue& ort_value, const DataTransferManager* data_transfer_manager);
+
+pybind11::object AddNonTensorAsPyObj(const OrtValue& val,
+                                     const DataTransferManager* data_transfer_manager,
+                                     const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions);
+
+OrtMemoryInfo GetMemoryInfoPerDeviceType(const OrtDevice& ort_device);
 
 #ifdef USE_CUDA
 
@@ -57,6 +69,8 @@ const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* GetCudaToHostMemCpy
 bool IsCudaDeviceIdValid(const onnxruntime::logging::Logger& logger, int id);
 
 AllocatorPtr GetCudaAllocator(OrtDevice::DeviceId id);
+
+std::unique_ptr<IDataTransfer> GetGPUDataTransfer();
 
 #endif
 
@@ -74,12 +88,11 @@ const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* GetRocmToHostMemCpy
 
 #endif
 
-
 void CreateGenericMLValue(const onnxruntime::InputDefList* input_def_list, const AllocatorPtr& alloc,
-                          const std::string& name_input, py::object& value, OrtValue* p_mlvalue,
+                          const std::string& name_input, const pybind11::object& value, OrtValue* p_mlvalue,
                           bool accept_only_numpy_array = false, bool use_numpy_data_memory = true, MemCpyFunc mem_cpy_to_device = CpuToCpuMemCpy);
 
-void GetPyObjFromTensor(const Tensor& rtensor, py::object& obj,
+void GetPyObjFromTensor(const Tensor& rtensor, pybind11::object& obj,
                         const DataTransferManager* data_transfer_manager = nullptr,
                         const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions = nullptr);
 

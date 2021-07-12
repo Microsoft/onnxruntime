@@ -79,5 +79,27 @@ OrtValue FromDlpack(PyObject* dlpack_tensor, const bool is_bool_tensor) {
 
 #endif
 
+void PySparseTensor::Init(std::unique_ptr<SparseTensor>&& instance) {
+  auto sparse_tensor(std::move(instance));
+  auto ml_type = DataTypeImpl::GetType<SparseTensor>();
+  ort_value_.Init(sparse_tensor.get(), ml_type, ml_type->GetDeleteFunc());
+  sparse_tensor.release();
+}
+
+PySparseTensor::~PySparseTensor() {
+  // pybind11 will deref and potentially destroy its objects
+  // that we use to hold a reference and it may throw python errors
+  // so we want to do it in a controlled manner
+  auto None = py::none();
+  for (auto& obj : backing_storage_) {
+    try {
+      obj = None;
+    } catch (py::error_already_set& ex) {
+      // we need it mutable to properly log and discard it
+      ex.discard_as_unraisable(__func__);
+    }
+  }
+}
+
 }  // namespace python
 }  // namespace onnxruntime

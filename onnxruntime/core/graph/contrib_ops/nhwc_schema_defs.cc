@@ -93,7 +93,8 @@ class NhwcInferenceContext : public InferenceContext {
   const SparseTensorProto* getInputSparseData(size_t) const override {
     return nullptr;
   }
-  
+
+
  private:
   InferenceContext& ctx_;
   TypeProto input_type_;

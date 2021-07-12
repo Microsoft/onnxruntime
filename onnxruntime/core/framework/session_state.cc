@@ -186,7 +186,7 @@ Status SessionState::CreateKernels(const KernelRegistryManager& kernel_registry_
 const SequentialExecutionPlan* SessionState::GetExecutionPlan() const { return p_seq_exec_plan_.get(); }
 
 Status SessionState::AddInitializedTensor(int ort_value_index, const OrtValue& ort_value, const OrtCallback* d,
-                                          bool constant) {
+                                          bool constant, bool sparse) {
   auto p = initialized_tensors_.insert({ort_value_index, ort_value});
   if (!p.second)
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "duplicated ort_value index:", ort_value_index,
@@ -200,6 +200,10 @@ Status SessionState::AddInitializedTensor(int ort_value_index, const OrtValue& o
     constant_initialized_tensors_.insert({ort_value_index, ort_value});
   }
 
+  if (sparse) {
+    sparse_initialized_tensors_.insert(ort_value_index);
+  }
+
   return Status::OK();
 }
 
@@ -207,6 +211,10 @@ const std::unordered_map<int, OrtValue>& SessionState::GetInitializedTensors() c
 
 const std::unordered_map<int, OrtValue>& SessionState::GetConstantInitializedTensors() const {
   return constant_initialized_tensors_;
+}
+
+bool SessionState::IsSparseInitializer(int ort_value_index) const {
+  return sparse_initialized_tensors_.count(ort_value_index) > 0;
 }
 
 #ifdef ENABLE_TRAINING
@@ -1155,8 +1163,8 @@ Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_
           Env::Default(), graph_location, *graph_viewer_,
           execution_providers_.GetDefaultCpuAllocator(),
           ort_value_name_idx_map_, initializer_allocation_order, *tensor_allocator,
-          [this](int idx, const OrtValue& value, const OrtCallback& d, bool constant) -> Status {
-            return AddInitializedTensor(idx, value, &d, constant);
+          [this](int idx, const OrtValue& value, const OrtCallback& d, bool constant, bool sparse) -> Status {
+            return AddInitializedTensor(idx, value, &d, constant, sparse);
           },
           logger_, data_transfer_mgr_, *p_seq_exec_plan_.get(), session_options));
 #if !defined(ORT_MINIMAL_BUILD) && defined(ORT_MEMORY_PROFILE)

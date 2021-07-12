@@ -74,7 +74,7 @@ class OpKernelContext {
   // and shape must specify the shape of the underlying dense-tensor.
   // Memory allocation for the output may happen when this method is invoked,
   // unless static optimization pre-allocates it.
-  SparseTensor* Output(int index, size_t num_values, const TensorShape& shape);
+  SparseTensor* OutputSparse(int index, const TensorShape& shape);
 
   // Retrieve indexed shape obtained from memory planning before actual
   // computation. If the indexed shape cannot be inferred, this function returns
@@ -183,7 +183,7 @@ class OpKernelContext {
   // Creates the OrtValue* based on the shape, if it does not exist
   // The parameter nnz is used only for sparse-tensors and indicates the
   // number of non-zero values (the number of elements in the values buffer allocated).
-  OrtValue* OutputMLValue(int index, const TensorShape& shape, size_t nnz = 0);
+  OrtValue* OutputMLValue(int index, const TensorShape& shape);
 
  private:
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(OpKernelContext);
@@ -210,7 +210,16 @@ template <>
 inline Tensor* OpKernelContext::Output<Tensor>(int index) {
   OrtValue* p_ml_value = GetOutputMLValue(index);
   ORT_ENFORCE(p_ml_value, "Please fetch output tensor with specified shape.");
+  ORT_ENFORCE(p_ml_value->IsTensor(), "Must be an existing tensor");
   return p_ml_value->GetMutable<Tensor>();
+}
+
+template <>
+inline SparseTensor* OpKernelContext::Output<SparseTensor>(int index) {
+  OrtValue* p_ml_value = GetOutputMLValue(index);
+  ORT_ENFORCE(p_ml_value, "Please fetch output sparse tensor with specified shape.");
+  ORT_ENFORCE(p_ml_value->IsSparseTensor(), "Must be an existing sparse tensor");
+  return p_ml_value->GetMutable<SparseTensor>();
 }
 
 }  // namespace onnxruntime

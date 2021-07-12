@@ -125,12 +125,42 @@ inline bool HasShape(const ONNX_NAMESPACE::TypeProto_Tensor& ten_proto) {
   return ten_proto.has_shape();
 }
 
-#ifndef SHARED_PROVIDER
+inline bool HasSparseTensorType(const ONNX_NAMESPACE::TypeProto& type_proto) {
+  return type_proto.value_case() == ONNX_NAMESPACE::TypeProto::kSparseTensorType;
+}
+
 inline bool HasShape(const ONNX_NAMESPACE::TypeProto_SparseTensor& ten_proto) {
   // XXX: Figure out how do in proto3
   return ten_proto.has_shape();
 }
-#endif
+
+inline bool HasElemType(const ONNX_NAMESPACE::TypeProto_SparseTensor& ten_proto) {
+  return ten_proto.elem_type() != ONNX_NAMESPACE::TensorProto::UNDEFINED;
+}
+
+inline bool HasShape(const ONNX_NAMESPACE::TypeProto& type_proto) {
+  if (HasTensorType(type_proto) && HasShape(type_proto.tensor_type())) {
+    return true;
+  }
+  return HasSparseTensorType(type_proto) && HasShape(type_proto.sparse_tensor_type());
+}
+
+inline bool HasElementType(const ONNX_NAMESPACE::TypeProto& type_proto) {
+  if (HasTensorType(type_proto) && HasElemType(type_proto.tensor_type())) {
+    return true;
+  }
+  return HasSparseTensorType(type_proto) && HasElemType(type_proto.sparse_tensor_type());
+}
+
+inline const ONNX_NAMESPACE::TensorShapeProto& GetShape(const ONNX_NAMESPACE::TypeProto& type_proto) {
+  if (HasTensorType(type_proto) && HasShape(type_proto.tensor_type())) {
+    return type_proto.tensor_type().shape();
+  }
+  if (HasSparseTensorType(type_proto) && HasShape(type_proto.sparse_tensor_type())) {
+    return type_proto.sparse_tensor_type().shape();
+  }
+  ORT_THROW("TypeProto must have shape for this to run");
+}
 
 inline bool HasRawData(const ONNX_NAMESPACE::TensorProto& ten_proto) {
   // Can not be UNDEFINED and can not be STRING but test for STRING is usually performed separately
@@ -157,10 +187,6 @@ inline bool HasName(const ONNX_NAMESPACE::TensorProto& ten_proto) {
 
 inline bool HasElemType(const ONNX_NAMESPACE::TypeProto_Sequence& seq_proto) {
   return seq_proto.elem_type().value_case() != ONNX_NAMESPACE::TypeProto::VALUE_NOT_SET;
-}
-
-inline bool HasElemType(const ONNX_NAMESPACE::TypeProto_SparseTensor& ten_proto) {
-  return ten_proto.elem_type() != ONNX_NAMESPACE::TensorProto::UNDEFINED;
 }
 
 inline bool HasName(const ONNX_NAMESPACE::SparseTensorProto& ten_proto) {
@@ -287,5 +313,6 @@ common::Status UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initiali
                                      const Path& model_path,
                                      std::unique_ptr<unsigned char[]>& unpacked_tensor,
                                      size_t& tensor_byte_size) ORT_MUST_USE_RESULT;
+
 }  // namespace utils
 }  // namespace onnxruntime

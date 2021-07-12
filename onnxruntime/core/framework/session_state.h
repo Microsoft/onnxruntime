@@ -144,8 +144,10 @@ class SessionState {
      * execution frame to setup the appropriate OrtValue vectors.
      * This function will take a shallow copy of d if d is not NULL.
      * If 'constant' is true the tensor value cannot be overridden by an input at runtime.
+     * If 'sparse' is true the tensor value represents a densified weight that was initially stored in the model
+     * as sparse tensor.
      */
-  Status AddInitializedTensor(int ort_value_index, const OrtValue& ort_value, const OrtCallback* d, bool constant);
+  Status AddInitializedTensor(int ort_value_index, const OrtValue& ort_value, const OrtCallback* d, bool constant, bool sparse);
 
   /**
      * Gets the map of ort_value_index to initialized tensors (weights) so that it can be used by the
@@ -160,6 +162,8 @@ class SessionState {
      * The lifetime of returned OrtValues are limited by this SessionState object.
      */
   const std::unordered_map<int, OrtValue>& GetConstantInitializedTensors() const;
+
+  bool IsSparseInitializer(int ort_value_index) const;
 
 #ifdef ENABLE_TRAINING
   /**
@@ -420,6 +424,12 @@ class SessionState {
   std::unordered_map<int, OrtValue> initialized_tensors_;  // key is ort_value_index
   // subset of initialized_tensors_ that are constant and cannot be overridden at runtime
   std::unordered_map<int, OrtValue> constant_initialized_tensors_;
+
+  // This is an auxiliary lookup to check if the OrtValue was actually a sparse tensor
+  // this is needed because we currently convert all sparse initializer into dense Tensors
+  // if and when we actually place SparseTensor instances (we should) into OrtValues, we
+  // will not need this structure.
+  std::unordered_set<int> sparse_initialized_tensors_;
 
   // This data structure is for uninitializing string tensors and
   // munmap memory region and close file descriptor

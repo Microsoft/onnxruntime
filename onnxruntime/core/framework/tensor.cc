@@ -7,6 +7,7 @@
 #include "core/common/safeint.h"
 #include "core/framework/allocatormgr.h"
 #include "core/framework/data_types.h"
+#include "core/framework/utils.h"
 
 namespace onnxruntime {
 
@@ -65,10 +66,7 @@ void Tensor::Init(MLDataType p_type, const TensorShape& shape, void* p_raw_data,
   // for string tensors, if this tensor own the buffer (caller passed in the deleter)
   // do the placement new for strings on pre-allocated buffer.
   if (buffer_deleter_ && IsDataTypeString()) {
-    auto* ptr = static_cast<std::string*>(p_data_);
-    for (int64_t i = 0, n = shape_size; i < n; ++i) {
-      new (ptr + i) std::string();
-    }
+    utils::ConstructStrings(p_data_, shape_size);
   }
   byte_offset_ = offset;
 }
@@ -113,17 +111,7 @@ Tensor::~Tensor() {
 
 void Tensor::ReleaseBuffer() {
   if (buffer_deleter_) {
-    // if current tensor is responsible for deleting the buffer
-    // and it is a string tensor, need to explicitly call string(s)
-    // __dtor(s).
-    if (IsDataTypeString()) {
-      using string = std::string;
-      auto* ptr = static_cast<std::string*>(p_data_);
-      int64_t len = shape_.Size();
-      for (int64_t i = 0; i < len; i++)
-        ptr[i].~string();
-    }
-    buffer_deleter_->Free(p_data_);
+    utils::ReleaseTensorBuffer(buffer_deleter_, IsDataTypeString(), p_data_, shape_.Size());
   }
 }
 

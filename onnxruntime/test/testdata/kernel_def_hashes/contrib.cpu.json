@@ -44,8 +44,12 @@
         16349480652468900704
     ],
     [
-        "SimplifiedLayerNormalization ai.onnx CPUExecutionProvider",
-        418129161279605176
+      "SimplifiedLayerNormalization ai.onnx CPUExecutionProvider",
+      418129161279605176
+    ],
+    [
+        "SparseToDenseMatMul com.microsoft CPUExecutionProvider",
+        1738555621134130312
     ],
     [
         "ThresholdedRelu ai.onnx CPUExecutionProvider",

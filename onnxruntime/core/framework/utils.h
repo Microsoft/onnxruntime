@@ -41,6 +41,28 @@ namespace utils {
 void* DefaultAlloc(size_t size);
 void DefaultFree(void* p);
 
+/// <summary>
+// Do the placement new for strings on pre-allocated buffer
+// `elements` times.
+/// </summary>
+/// <param name="p_data"></param>
+/// <param name="elements"></param>
+void ConstructStrings(void* p_data, int64_t elements);
+
+/// <summary>
+/// The function uses an allocator (not null)
+/// and releases the supplied buffer. If is_string is true
+/// then the function assumes the buffer contains instances
+/// of std::string and calls ~string() on each instance `elements`
+/// times total.
+/// </summary>
+/// <param name="allocator"></param>
+/// <param name="is_string"></param>
+/// <param name="p_data"></param>
+/// <param name="elements"></param>
+void ReleaseTensorBuffer(const AllocatorPtr& allocator, bool is_string,
+                         void* p_data, int64_t elements);
+
 const std::string& GetNodeInputProviderType(const SessionState::NodeInfo& info);
 
 // EP used for internal testing. We define it here as it's used in ProviderIsCpuBased, but we don't want

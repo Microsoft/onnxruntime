@@ -8,6 +8,7 @@
 #include "gsl/gsl"
 
 #include "core/common/common.h"
+#include "core/framework/tensor.h"
 #include "core/framework/data_transfer_manager.h"
 
 namespace onnxruntime {

@@ -67,11 +67,22 @@ static bool UsingLatestOnnxOpset(const DomainToVersionMap& opset_versions) {
 }
 
 static Status MergeShapeInfo(const std::string& output_name,
-                             const TypeProto_Tensor& source, TypeProto_Tensor& target,
+                             const TypeProto& source, TypeProto& target,
                              bool strict, const logging::Logger& logger) {
+
+  if (!(utils::HasTensorType(source) && utils::HasTensorType(target)) &&
+      !(utils::HasSparseTensorType(source) && utils::HasSparseTensorType(target))) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Source and target must both be either tensors or sparse tensors");
+  }
+
   auto status = Status::OK();
+
   ORT_TRY {
-    ONNX_NAMESPACE::mergeInShapeInfo(source, target);
+    if (utils::HasTensorType(source)) {
+      ONNX_NAMESPACE::mergeInShapeInfo(source.tensor_type(), *target.mutable_tensor_type());
+    } else {
+      ONNX_NAMESPACE::mergeInShapeInfo(source.sparse_tensor_type(), *target.mutable_sparse_tensor_type());
+    }
   }
   ORT_CATCH(const ONNX_NAMESPACE::InferenceError& ex) {
     // if this model was not created with the latest onnx version, allow the shape inferencing failure (strict == false).
@@ -82,10 +93,13 @@ static Status MergeShapeInfo(const std::string& output_name,
       // target.shape() was empty. 'assert' just in case that ever changes.
       assert(utils::HasShape(source) && utils::HasShape(target));
       LOGS(logger, WARNING) << "Error merging shape info for output. '" << output_name
-                            << "' source:" << source.shape() << " target:" << target.shape()
+                            << "' source:" << utils::GetShape(source) << " target:" << utils::GetShape(target)
                             << ". Falling back to lenient merge.";
-
-      ONNX_NAMESPACE::UnionShapeInfo(source.shape(), target);
+      if (utils::HasTensorType(source)) {
+        ONNX_NAMESPACE::UnionShapeInfo(utils::GetShape(source), *target.mutable_tensor_type());
+      } else {
+        ONNX_NAMESPACE::UnionShapeInfo(utils::GetShape(source), *target.mutable_sparse_tensor_type());
+      }
     } else {
       ORT_UNUSED_PARAMETER(logger);
       ORT_UNUSED_PARAMETER(strict);
@@ -305,11 +319,10 @@ common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& inpu
       }
 
       if (utils::HasShape(input_tensor_type)) {
-        auto& current_tensor_type = *current_type.mutable_tensor_type();
-        if (utils::HasShape(current_tensor_type)) {
-          ORT_RETURN_IF_ERROR(MergeShapeInfo(Name(), input_tensor_type, current_tensor_type, strict, logger));
+        if (utils::HasShape(current_type)) {
+          ORT_RETURN_IF_ERROR(MergeShapeInfo(Name(), input_type, current_type, strict, logger));
         } else {
-          current_tensor_type = input_tensor_type;
+          *current_type.mutable_tensor_type() = input_tensor_type;
         }
       }
 
@@ -338,13 +351,10 @@ common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& inpu
       }
 
       if (utils::HasShape(input_tensor_type)) {
-        auto& current_tensor_type = *current_type.mutable_sparse_tensor_type();
-        if (utils::HasShape(current_tensor_type)) {
-          // TODO: Check if we need to merge shape here
-          // if so we'd need to provide merging routine ONNX
-          // mergeInShapeInfo(input_tensor_type, current_tensor_type);
+        if (utils::HasShape(current_type)) {
+          ORT_RETURN_IF_ERROR(MergeShapeInfo(Name(), input_type, current_type, strict, logger));
         } else {
-          current_tensor_type = input_tensor_type;
+          *current_type.mutable_sparse_tensor_type() = input_tensor_type;
         }
       }
     } break;
@@ -1914,7 +1924,7 @@ class InferenceContextImpl : public ONNX_NAMESPACE::InferenceContext {
   const SparseTensorProto* getInputSparseData(size_t) const override {
     return nullptr;
   }
-  
+
  private:
   Node& node_;
   // node_output_types_ will be populated by the operator-specific shape inference.
@@ -2195,27 +2205,29 @@ Status Graph::InferAndVerifyTypeMatch(Node& node, const OpSchema& op, const Reso
       output_def->SetType(inferred_type);
 
     // Update output-shape if it was inferred:
-    if (utils::HasTensorType(onnx_inferred_type)) {
-      auto& tensor_type = onnx_inferred_type.tensor_type();
-      if (utils::HasShape(tensor_type)) {
-        if (output_def->Shape() == nullptr) {
-          output_def->SetShape(tensor_type.shape());
-        } else {
-          // we need to merge the shapes as a subgraph may have placeholder dimensions to represent the rank
-          // that have no values.
-          TypeProto_Tensor merge_target;
-          (*merge_target.mutable_shape()) = *output_def->Shape();
-          auto status = MergeShapeInfo(output_def->Name(), tensor_type, merge_target, using_latest_onnx_opset_, logger_);
-          if (!status.IsOK()) {
-            return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node:", node_name, " ", status.ErrorMessage());
-          }
-
-          // we may have cleared the shape if there was a mismatch so handle that
-          if (utils::HasShape(merge_target))
-            output_def->SetShape(merge_target.shape());
-          else
-            output_def->ClearShape();
+    // HasShape()/GetShape() work for tensor types
+    // if the behavior changes the below may need adjustment
+    if (utils::HasShape(onnx_inferred_type)) {
+      if (output_def->Shape() == nullptr) {
+        output_def->SetShape(utils::GetShape(onnx_inferred_type));
+      } else {
+        // we need to merge the shapes as a subgraph may have placeholder dimensions to represent the rank
+        // that have no values.
+        TypeProto merge_target;
+        if (utils::HasTensorType(onnx_inferred_type)) {
+          *merge_target.mutable_tensor_type()->mutable_shape() = *output_def->Shape();
+        } else if (utils::HasSparseTensorType(onnx_inferred_type)) {
+          *merge_target.mutable_sparse_tensor_type()->mutable_shape() = *output_def->Shape();
         }
+        auto status = MergeShapeInfo(output_def->Name(), onnx_inferred_type, merge_target, using_latest_onnx_opset_, logger_);
+        if (!status.IsOK()) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node:", node_name, " ", status.ErrorMessage());
+        }
+        // we may have cleared the shape if there was a mismatch so handle that
+        if (utils::HasShape(merge_target))
+          output_def->SetShape(utils::GetShape(merge_target));
+        else
+          output_def->ClearShape();
       }
     }
   }
@@ -2646,6 +2658,10 @@ static void RemoveRepeatedFieldEntry(T& repeated_field, const TIter& entry_to_re
 
 bool Graph::IsInitializedTensor(const std::string& name) const {
   return name_to_initial_tensor_.count(name) > 0;
+}
+
+bool Graph::IsSparseInitializer(const std::string& name) const {
+  return sparse_tensor_names_.count(name) > 0;
 }
 
 void Graph::RemoveInitializedTensor(const std::string& tensor_name) {

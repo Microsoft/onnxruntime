@@ -385,6 +385,16 @@
       "component": {
         "type": "git",
         "git": {
+          "commitHash": "800e360ef3603c743392b96a9adca3e210e4d2b2",
+          "repositoryUrl": "https://github.com/microsoft/onnxruntime-extensions.git"
+        },
+        "comments": "git submodule at cmake/external/onnxruntime-extensions"
+      }
+    },
+    {
+      "component": {
+        "type": "git",
+        "git": {
           "commitHash": "4acf4553baa886e10e6613fe1452b706b0250e78",
           "repositoryUrl": "https://github.com/martinmoene/optional-lite.git"
         },

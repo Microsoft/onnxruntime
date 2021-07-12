@@ -62,6 +62,10 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
   GraphViewer graph_viewer(graph);
   auto& order = graph_viewer.GetNodesInTopologicalOrder();
 
+  std::function<bool(const std::string&)> is_constant_initializer_check = [&graph](const std::string& name) -> bool {
+    return graph.IsSparseInitializer(name);
+  };
+
   for (NodeIndex i : order) {
     auto* node = graph.GetNode(i);
     if (!node) {
@@ -111,7 +115,8 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       }
 
       // Create execution frame for executing constant nodes.
-      OptimizerExecutionFrame::Info info({node}, constant_inputs, graph.ModelPath(), execution_provider_);
+      OptimizerExecutionFrame::Info info({node}, constant_inputs, graph.ModelPath(), execution_provider_,
+                                         is_constant_initializer_check);
 
       std::vector<int> fetch_mlvalue_idxs;
       for (const auto* node_out : node->OutputDefs()) {
@@ -152,7 +157,7 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       converted_to_constant = true;
       for (size_t fetch_idx = 0; fetch_idx < fetches.size(); ++fetch_idx) {
         OrtValue& ort_value = fetches[fetch_idx];
-
+        // XXX: Add support for SparseTensors outputs when we have sparse outputs
         if (!ort_value.IsTensor()) {
           LOGS(logger, WARNING) << "Unsupported output type of " << ort_value.Type()
                                 << ". Can't constant fold " << node->OpType() << " node '" << node->Name() << "'";

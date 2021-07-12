@@ -4,8 +4,8 @@
 #pragma once
 
 #include "core/common/status.h"
+#include "core/common/common.h"
 #include "core/framework/data_transfer.h"
-#include "core/framework/tensor.h"
 
 namespace onnxruntime {
 
@@ -23,6 +23,9 @@ class DataTransferManager {
   common::Status CopyTensor(const Tensor& src, Tensor& dst) const;
   common::Status CopyTensor(const Tensor& src, Tensor& dst, int exec_queue_id) const;
   common::Status CopyTensors(const std::vector<IDataTransfer::SrcDstPair>& src_dst_pairs) const;
+  common::Status CopyTensor(const SparseTensor& src, SparseTensor& dst) const;
+  common::Status CopyTensor(const SparseTensor& src, SparseTensor& dst, int exec_queue_id) const;
+  common::Status CopyTensors(const std::vector<IDataTransfer::SparseSrcDstPair>& src_dst_pairs) const;
 
  private:
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(DataTransferManager);

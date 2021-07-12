@@ -30,7 +30,7 @@ python3 /onnxruntime_src/tools/ci_build/build.py \
 
 # set current size limit to 1165KB.
 python3 /onnxruntime_src/tools/ci_build/github/linux/ort_minimal/check_build_binary_size.py \
-    --threshold=1175000 \
+    --threshold=1185000 \
     /build/MinSizeRel/libonnxruntime.so
 
 # Post the binary size info to ort mysql DB

@@ -22,8 +22,8 @@ __author__ = "Microsoft"
 try:
     from onnxruntime.capi._pybind_state import get_all_providers, get_available_providers, get_device, set_seed, \
         RunOptions, SessionOptions, set_default_logger_severity, enable_telemetry_events, disable_telemetry_events, \
-        NodeArg, ModelMetadata, GraphOptimizationLevel, ExecutionMode, ExecutionOrder, OrtDevice, SessionIOBinding, \
-        OrtAllocatorType, OrtMemType, OrtArenaCfg, OrtMemoryInfo, create_and_register_allocator
+        NodeArg, ModelMetadata, GraphOptimizationLevel, ExecutionMode, ExecutionOrder, SessionIOBinding, \
+        OrtAllocatorType, OrtMemType, OrtArenaCfg, OrtMemoryInfo, create_and_register_allocator,  OrtSparseFormat
     import_capi_exception = None
 except Exception as e:
     import_capi_exception = e
@@ -33,7 +33,8 @@ from onnxruntime.capi import onnxruntime_validation
 if import_capi_exception:
     raise import_capi_exception
 
-from onnxruntime.capi.onnxruntime_inference_collection import InferenceSession, IOBinding, OrtValue
+from onnxruntime.capi.onnxruntime_inference_collection import InferenceSession, IOBinding, OrtValue, SparseTensor, \
+    OrtDevice, numpy_array_to_cuda, numpy_array_to_cpu
 
 from onnxruntime.capi.training import *  # noqa: F403
 

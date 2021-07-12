@@ -327,6 +327,13 @@ struct BuildKernelDefConstraintsImpl {
   }
 };
 
+template<typename... Types>
+struct BuildKernelDefSparseConstraintsImpl {
+  std::vector<MLDataType> operator()() const {
+    return {DataTypeImpl::GetSparseTensorType<Types>()...};
+  }
+};
+
 // Use within macro definitions to create a custom vector of constraints.
 // Example: #define REG_KERNEL(OP, VERSION, KERNEL_CLASS, Type, ...)
 //  .TypeConstraint("T", BuildKernelDefConstraints<Type, __VA_ARGS_>())
@@ -335,11 +342,22 @@ inline std::vector<MLDataType> BuildKernelDefConstraints() {
   return BuildKernelDefConstraintsImpl<Types...>{}();
 }
 
+template <typename... Types>
+inline std::vector<MLDataType> BuildKernelDefSparseConstraints() {
+  return BuildKernelDefSparseConstraintsImpl<Types...>{}();
+}
+
 // version of BuildKernelDefConstraints() which takes a type list
 template <typename L>
-std::vector<MLDataType> BuildKernelDefConstraintsFromTypeList() {
+inline std::vector<MLDataType> BuildKernelDefConstraintsFromTypeList() {
   return boost::mp11::mp_apply<BuildKernelDefConstraintsImpl, L>{}();
 }
+
+template<typename L>
+inline std::vector<MLDataType> BuildKernelDefSparseConstraintsFromTypeList() {
+  return boost::mp11::mp_apply<BuildKernelDefSparseConstraintsImpl, L>{}();
+}
+
 
 }  // namespace onnxruntime
 

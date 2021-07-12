@@ -5,6 +5,7 @@
 
 #include "rocm_pch.h"
 #include "core/framework/data_transfer.h"
+#include "core/common/common.h"
 
 namespace onnxruntime {
 

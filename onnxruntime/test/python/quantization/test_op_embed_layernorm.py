@@ -88,8 +88,8 @@ class TestOpEmbedLayerNormalization(unittest.TestCase):
         ]
 
         graph = helper.make_graph(nodes, graph_name, inputs, outputs, initializer=initializers)
-        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
-        model.ir_version = 7  # use stable onnx ir version
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 14)])
+        model.ir_version = 7 # use stable onnx ir version
         onnx.save(model, model_path)
 
     def test_quantize_batch_size_1(self):

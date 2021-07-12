@@ -54,16 +54,6 @@ void sort_expected_and_actual_buffers(std::vector<T>& expected,
   std::sort(actual.begin(), actual.end());
 }
 
-struct CheckParams {
-  bool sort_output_;
-  optional<float> absolute_error_;
-  optional<float> relative_error_;
-};
-
-inline CheckParams make_params(const OpTester::Data& d) {
-  return CheckParams{d.sort_output_, d.absolute_error_, d.relative_error_};
-}
-
 // The default implementation compares for equality, specialized versions for
 // other types are below
 template <typename T>
@@ -372,7 +362,7 @@ void Check(const OpTester::Data& expected_data, const Tensor& output_tensor,
                               BFloat16>
       t_disp(output_tensor.GetElementType());
 
-  t_disp.Invoke<TensorCheck>(expected_data.data_.Get<Tensor>(), output_tensor, provider_type, make_params(expected_data));
+  t_disp.Invoke<TensorCheck>(expected_data.data_.Get<Tensor>(), output_tensor, provider_type, MakeCheckParams(expected_data));
 }
 
 // Check for non tensor types
@@ -407,7 +397,7 @@ void Check<TensorSeq>(const OpTester::Data& expected_data,
       << " provider_type: " << provider_type;
 
   // now check the contents of the tensors
-  CheckParams check_params = make_params(expected_data);
+  CheckParams check_params = MakeCheckParams(expected_data);
 
   auto element_type = exp_seq.DataType()->AsPrimitiveDataType()->GetDataType();
   utils::MLTypeCallDispatcher<bool, float, double, uint8_t, uint16_t, uint32_t, uint64_t,
@@ -525,6 +515,165 @@ void OpTester::AddNodes(
   for (auto& add_attribute_fn : add_attribute_funcs)
     add_attribute_fn(node);
 }
+
+std::vector<int64_t> OpTester::GetDimsForProto(const std::vector<int64_t>& dims) {
+  std::vector<int64_t> dims_for_proto{dims};
+  if (add_symbolic_dim_to_tensor_data_ >= 0 &&
+      dims.size() > static_cast<size_t>(add_symbolic_dim_to_tensor_data_)) {
+    dims_for_proto[add_symbolic_dim_to_tensor_data_] = -1;
+  }
+  return dims_for_proto;
+}
+
+void OpTester::AddShapeToTensorData(NodeArg& node_arg, const std::vector<int64_t>& dims,
+                                    const std::vector<std::string>* dim_params) {
+  if (dim_params && !(dim_params->empty()) && add_shape_to_tensor_data_) {
+    // If dim_params presents, configure node_arg's dim value based on dim_params, which supports symbolic dim and dim broadcast.
+    const auto& dim_params_data = *dim_params;
+    onnx::TensorShapeProto new_shape;
+
+    // currently hard-code the reserved symbolic names.
+    // TODO: when the list grows longer, consider move it to a better place.
+    const static std::unordered_set<std::string> reserved_symbolic{"batch", "seq"};
+
+    for (size_t i = 0; i < dim_params_data.size(); ++i) {
+      if (reserved_symbolic.find(dim_params_data[i]) != reserved_symbolic.end()) {
+        new_shape.add_dim()->set_dim_param(dim_params_data[i]);
+      } else {
+        ASSERT_TRUE(std::stoi(dim_params_data[i]) == dims[i]);
+        new_shape.add_dim()->set_dim_value(dims[i]);
+      }
+    }
+    node_arg.SetShape(new_shape);
+  }
+}
+
+static std::unique_ptr<SparseTensor> MakeSparseTensor(MLDataType data_type, const std::vector<int64_t>& dims) {
+  TensorShape shape{dims};
+  auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
+  auto p_tensor = std::make_unique<SparseTensor>(data_type, shape, allocator);
+  return p_tensor;
+}
+
+void OpTester::CopyDataToTensor(gsl::span<const gsl::byte> data, Tensor& dst) {
+  ORT_ENFORCE(dst.SizeInBytes() >= data.size_bytes(), "Not enough space in the destination tensor");
+  memcpy(dst.MutableDataRaw(), data.data(), data.size_bytes());
+}
+
+NodeArg OpTester::MakeSparseNodeArg(int32_t dtype, const char* name,
+                                    const std::vector<int64_t>& dims, const std::vector<std::string>* dim_params) {
+  std::vector<int64_t> dims_for_proto = GetDimsForProto(dims);
+  TSparseTensorProto type_proto(dtype, add_shape_to_tensor_data_ ? &dims_for_proto : nullptr);
+  NodeArg node_arg(name, &type_proto.proto);
+  AddShapeToTensorData(node_arg, dims, dim_params);
+  return node_arg;
+}
+
+void OpTester::AddSparseTensorData(std::vector<Data>& data, NodeArg node_arg,
+                                   std::unique_ptr<SparseTensor> p_tensor,
+                                   const CheckParams& check_params) {
+  OrtValue value;
+  auto ml_type = DataTypeImpl::GetType<SparseTensor>();
+  value.Init(p_tensor.release(), ml_type, ml_type->GetDeleteFunc());
+  data.push_back(Data(std::move(node_arg), std::move(value),
+                      optional<float>(check_params.relative_error_), optional<float>(check_params.absolute_error_),
+                      check_params.sort_output_));
+}
+
+void OpTester::AddSparseCooTensorData(std::vector<Data>& data,
+                                      MLDataType data_type,
+                                      const char* name,
+                                      const std::vector<int64_t>& dims,
+                                      gsl::span<const gsl::byte> values,
+                                      gsl::span<const int64_t> indices,
+                                      const CheckParams& check_params,
+                                      const std::vector<std::string>* dim_params) {
+  const auto elem_size = data_type->Size();
+  const auto dtype = data_type->AsPrimitiveDataType()->GetDataType();
+  const auto nnz = values.size_bytes() / elem_size;
+  ORT_ENFORCE(dims.size() == 2U, "Expecting a 2-D dense shape");
+  ORT_ENFORCE((nnz == indices.size() || 2 * nnz == indices.size()), "Expecting indices to have either nnz or (2 * nnz) length");
+  auto p_tensor = MakeSparseTensor(data_type, dims);
+  auto mutator = p_tensor->MakeCooData(nnz, indices.size());
+  CopyDataToTensor(values, mutator.Values());
+  CopyDataToTensor(indices.as_bytes(), mutator.Index());
+
+  NodeArg node_arg = MakeSparseNodeArg(dtype, name, dims, dim_params);
+  AddSparseTensorData(data, std::move(node_arg), std::move(p_tensor), check_params);
+}
+
+void OpTester::AddSparseCooTensorStrings(std::vector<Data>& data,
+                                         const char* name,
+                                         const std::vector<int64_t>& dims,
+                                         gsl::span<const std::string> values,
+                                         gsl::span<const int64_t> indices,
+                                         const std::vector<std::string>* dim_params) {
+  auto data_type = DataTypeImpl::GetType<std::string>();
+  const auto nnz = values.size();
+  const auto dtype = data_type->AsPrimitiveDataType()->GetDataType();
+  ORT_ENFORCE(dims.size() == 2U, "Expecting a 2-D dense shape");
+  ORT_ENFORCE((nnz == indices.size() || 2 * nnz == indices.size()), "Expecting indices to have either nnz or (2 * nnz) length");
+  auto p_tensor = MakeSparseTensor(data_type, dims);
+  // linear index is 1-D index, otherwise 2-D index
+  auto mutator = p_tensor->MakeCooData(nnz, indices.size());
+  auto mutable_values = mutator.Values().MutableDataAsSpan<std::string>();
+  ORT_ENFORCE(values.size() == mutable_values.size(), "Must allocate space for values");
+  std::copy(values.cbegin(), values.cend(), mutable_values.begin());
+  CopyDataToTensor(indices.as_bytes(), mutator.Index());
+  NodeArg node_arg = MakeSparseNodeArg(dtype, name, dims, dim_params);
+  AddSparseTensorData(data, std::move(node_arg), std::move(p_tensor), CheckParams());
+}
+
+void OpTester::AddSparseCsrTensorData(std::vector<Data>& data,
+                                      MLDataType data_type,
+                                      const char* name,
+                                      const std::vector<int64_t>& dims,
+                                      gsl::span<const gsl::byte> values,
+                                      gsl::span<const int64_t> inner_indices,
+                                      gsl::span<const int64_t> outer_indices,
+                                      const CheckParams& check_params,
+                                      const std::vector<std::string>* dim_params) {
+  const auto elem_size = data_type->Size();
+  const auto dtype = data_type->AsPrimitiveDataType()->GetDataType();
+  const auto nnz = values.size_bytes() / elem_size;
+  ORT_ENFORCE(dims.size() == 2U, "Expecting a 2-D dense shape");
+  ORT_ENFORCE(nnz == inner_indices.size(), "Expecting the same number of inner_indices as nnz");
+  auto p_tensor = MakeSparseTensor(data_type, dims);
+
+  auto mutator = p_tensor->MakeCsrData(nnz, inner_indices.size(), outer_indices.size());
+  CopyDataToTensor(values, mutator.Values());
+  CopyDataToTensor(inner_indices.as_bytes(), mutator.Inner());
+  CopyDataToTensor(outer_indices.as_bytes(), mutator.Outer());
+
+  NodeArg node_arg = MakeSparseNodeArg(dtype, name, dims, dim_params);
+  AddSparseTensorData(data, std::move(node_arg), std::move(p_tensor), check_params);
+}
+
+void OpTester::AddSparseCsrTensorStrings(std::vector<Data>& data,
+                                         const char* name,
+                                         const std::vector<int64_t>& dims,
+                                         gsl::span<const std::string> values,
+                                         gsl::span<const int64_t> inner_indices,
+                                         gsl::span<const int64_t> outer_indices,
+                                         const std::vector<std::string>* dim_params) {
+  auto data_type = DataTypeImpl::GetType<std::string>();
+  const auto nnz = values.size();
+  const auto dtype = data_type->AsPrimitiveDataType()->GetDataType();
+
+  ORT_ENFORCE(dims.size() == 2U, "Expecting a 2-D dense shape");
+  ORT_ENFORCE(nnz == inner_indices.size(), "Expecting the same number of inner_indices as nnz");
+  auto p_tensor = MakeSparseTensor(data_type, dims);
+
+  auto mutator = p_tensor->MakeCsrData(nnz, inner_indices.size(), outer_indices.size());
+  auto mutable_values = mutator.Values().MutableDataAsSpan<std::string>();
+  ORT_ENFORCE(values.size() == mutable_values.size(), "Must allocate space for values");
+  std::copy(values.cbegin(), values.cend(), mutable_values.begin());
+  CopyDataToTensor(inner_indices.as_bytes(), mutator.Inner());
+  CopyDataToTensor(outer_indices.as_bytes(), mutator.Outer());
+  NodeArg node_arg = MakeSparseNodeArg(dtype, name, dims, dim_params);
+  AddSparseTensorData(data, std::move(node_arg), std::move(p_tensor), CheckParams());
+}
+
 
 void OpTester::AddInitializers(onnxruntime::Graph& graph) {
   for (auto index : initializer_index_) {

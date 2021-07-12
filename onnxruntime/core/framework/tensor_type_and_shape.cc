@@ -215,7 +215,7 @@ ORT_API_STATUS_IMPL(OrtApis::GetTensorTypeAndShape, _In_ const OrtValue* v, _Out
     } else {
       const SparseTensor& tensor = v->Get<onnxruntime::SparseTensor>();
       shape = &tensor.Shape();
-      data_type = tensor.Values().DataType();
+      data_type = tensor.DataType();
     }
     return GetTensorShapeAndType(*shape, *data_type, out);
   } else {

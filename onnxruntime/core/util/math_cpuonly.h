@@ -47,10 +47,10 @@
 #endif
 #include "Eigen/Core"
 #include "Eigen/Dense"
-
+#include "Eigen/Sparse"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
-#elif defined(_MSC_VER)
+#else
 #pragma warning(pop)
 #endif
 
@@ -74,6 +74,9 @@ using EigenVectorArrayMap = Eigen::Map<Eigen::Array<T, Eigen::Dynamic, 1>>;
 
 template <typename T>
 using ConstEigenMatrixMap = Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>;
+
+template <class T>
+using ConstSparseMatrixMap = Eigen::Map<const Eigen::SparseMatrix<T, Eigen::RowMajor, int64_t>>;
 
 template <typename T>
 using ConstEigenArrayMap = Eigen::Map<const Eigen::Array<T, Eigen::Dynamic, Eigen::Dynamic>>;

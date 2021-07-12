@@ -169,6 +169,7 @@ struct OpKernelContext;
 struct OpKernelInfo;
 struct PrimitiveDataTypeBase;
 struct Tensor;
+struct SparseTensor;
 struct TensorSeq;
 
 class UnsqueezeBase;

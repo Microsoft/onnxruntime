@@ -7,6 +7,9 @@
         "^test_batchnorm_epsilon_training_mode",
         "^test_batchnorm_example_old",
         "^test_batchnorm_example_training_mode",
+        "^convtranspose_autopad_same",
+        "^test_convtranspose_autopad_same",
+        "^test_convtranspose_autopad_same_cuda", // Due to changes in ONNX 1.9
         "^test_gathernd_example_int32_batch_dim1",
         "^test_convtranspose_autopad_same", // ONNX 1.9 changes
         "^test_convtranspose_autopad_same_cuda", // ONNX 1.9 changes

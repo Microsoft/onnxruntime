@@ -49,8 +49,8 @@ Tensor* OpKernelContext::Output(int index, const std::initializer_list<int64_t>&
   return Output(index, TensorShape(shape));
 }
 
-SparseTensor* OpKernelContext::Output(int index, size_t nnz, const TensorShape& shape) {
-  auto p_ml_value = OutputMLValue(index, shape, nnz);
+SparseTensor* OpKernelContext::OutputSparse(int index, const TensorShape& shape) {
+  auto p_ml_value = OutputMLValue(index, shape);
   return p_ml_value ? p_ml_value->GetMutable<SparseTensor>() : nullptr;
 }
 
@@ -62,7 +62,7 @@ bool OpKernelContext::TryGetInferredOutputShape(int index, TensorShape& shape) c
   return execution_frame_->TryGetInferredShape(GetOutputArgIndex(index), shape);
 }
 
-OrtValue* OpKernelContext::OutputMLValue(int index, const TensorShape& shape, size_t nnz) {
+OrtValue* OpKernelContext::OutputMLValue(int index, const TensorShape& shape) {
   if (index < 0 || index >= OutputCount())
     return nullptr;
 
@@ -72,7 +72,7 @@ OrtValue* OpKernelContext::OutputMLValue(int index, const TensorShape& shape, si
   //I believe it's a false alarm.
 
   OrtValue* p_ml_value = nullptr;
-  Status status = execution_frame_->GetOrCreateNodeOutputMLValue(index, GetOutputArgIndex(index), &shape, p_ml_value, kernel_->Node(), nnz);
+  Status status = execution_frame_->GetOrCreateNodeOutputMLValue(index, GetOutputArgIndex(index), &shape, p_ml_value, kernel_->Node());
   ORT_ENFORCE(status.IsOK(), status.ErrorMessage());
   return p_ml_value;
 }

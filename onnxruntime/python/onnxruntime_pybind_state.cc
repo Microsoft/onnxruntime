@@ -16,7 +16,6 @@
 #include "core/framework/data_transfer_utils.h"
 #include "core/framework/data_types_internal.h"
 #include "core/providers/get_execution_providers.h"
-#include "core/framework/kernel_registry.h"
 #include "core/framework/provider_bridge_ort.h"
 #include "core/framework/provider_options_utils.h"
 #include "core/framework/random_seed.h"
@@ -44,22 +43,6 @@
 const OrtDevice::DeviceType OrtDevice::GPU;
 
 namespace onnxruntime {
-
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Tensorrt(const OrtTensorRTProviderOptions* params);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Tensorrt(int device_id);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_MIGraphX(int device_id);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Cuda(const OrtCUDAProviderOptions* params);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Dnnl(int use_arena);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_OpenVINO(const OrtOpenVINOProviderOptions* params);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Nuphar(bool, const char*);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_VITISAI(const char* backend_type, int device_id,
-                                                                                  const char* export_runtime_module,
-                                                                                  const char* load_runtime_module);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_ACL(int use_arena);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_ArmNN(int use_arena);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_DML(int device_id);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Nnapi(uint32_t flags);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Rknpu();
 
 constexpr const char* kExecutionProviderSharedLibraryPath = "shared_lib_path";
 }  // namespace onnxruntime
@@ -134,10 +117,10 @@ void CustomOpLibrary::UnloadLibrary() {
 #endif  // !defined(ORT_MINIMAL_BUILD) || defined(ORT_MINIMAL_BUILD_CUSTOM_OPS)
 
 template <typename T>
-static void AddNonTensor(const OrtValue& val, std::vector<py::object>& pyobjs,
+static py::object AddNonTensor(const OrtValue& val,
                          const DataTransferManager* /*data_transfer_manager*/,
                          const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* /*mem_cpy_to_host_functions*/) {
-  pyobjs.push_back(py::cast(val.Get<T>()));
+  return py::cast(val.Get<T>());
 }
 
 // In all cases, we may not have access to a DataTransferManager, hence the user may specify functions that
@@ -215,8 +198,34 @@ const char* GetDeviceName(const OrtDevice& device) {
   }
 }
 
+py::object GetPyObjectFromSparseTensor(size_t pos, const OrtValue& ort_value, const DataTransferManager* data_transfer_manager) {
+  if (!ort_value.IsSparseTensor()) {
+    ORT_THROW("Must be a sparse tensor");
+  }
+  auto& logger = logging::LoggingManager::DefaultLogger();
+  const SparseTensor& src_sparse_tensor = ort_value.Get<SparseTensor>();
+  std::unique_ptr<PySparseTensor> py_sparse_tensor;
+  auto device_type = src_sparse_tensor.Location().device.Type();
+  if (device_type != OrtDevice::CPU) {
+    if (!data_transfer_manager) {
+      LOGS(logger, WARNING) << "Returned OrtValue with sparse tensor at position: " << pos << " is on GPU but no data_transfer_manager provided."
+                            << " Returned it will have its data on GPU, you can copy it using numpy_array_to_cpu()";
+      py_sparse_tensor.reset(new PySparseTensor(ort_value));
+    } else {
+      auto dst_sparse_tensor = std::make_unique<SparseTensor>(src_sparse_tensor.DataType(), src_sparse_tensor.Shape(), GetAllocator());
+      auto status = src_sparse_tensor.Copy(*data_transfer_manager, 0, *dst_sparse_tensor);
+      OrtPybindThrowIfError(status);
+      py_sparse_tensor.reset(new PySparseTensor(std::move(dst_sparse_tensor)));
+    }
+  }
+
+  py::object result = py::cast(py_sparse_tensor.get(), py::return_value_policy::take_ownership);
+  py_sparse_tensor.release();
+  return result;
+}
+
 template <>
-void AddNonTensor<TensorSeq>(const OrtValue& val, std::vector<py::object>& pyobjs,
+py::object AddNonTensor<TensorSeq>(const OrtValue& val,
                              const DataTransferManager* data_transfer_manager,
                              const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions) {
   const auto& seq_tensors = val.Get<TensorSeq>();
@@ -226,60 +235,60 @@ void AddNonTensor<TensorSeq>(const OrtValue& val, std::vector<py::object>& pyobj
     GetPyObjFromTensor(rtensor, obj, data_transfer_manager, mem_cpy_to_host_functions);
     py_list.append(obj);
   }
-  pyobjs.push_back(py_list);
+  // XToolChain kills the build
+  // local variable 'py_list' will be copied despite being returned by name [-Werror,-Wreturn-std-move]
+  // call 'std::move' explicitly to avoid copying
+  // We choose to cast it to object explicitly
+  return py::cast<py::object>(py_list);
 }
 
-void AddNonTensorAsPyObj(const OrtValue& val, std::vector<py::object>& pyobjs,
+py::object AddNonTensorAsPyObj(const OrtValue& val,
                          const DataTransferManager* data_transfer_manager,
                          const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions) {
   // Should be in sync with core/framework/datatypes.h
   auto val_type = val.Type();
   if (val_type->IsTensorSequenceType()) {
-    AddNonTensor<TensorSeq>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+   return AddNonTensor<TensorSeq>(val, data_transfer_manager, mem_cpy_to_host_functions);
   } else {
 #if !defined(DISABLE_ML_OPS)
     utils::ContainerChecker c_checker(val_type);
     if (c_checker.IsMap()) {
       if (c_checker.IsMapOf<std::string, std::string>()) {
-        AddNonTensor<MapStringToString>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapStringToString>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<std::string, int64_t>()) {
-        AddNonTensor<MapStringToInt64>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapStringToInt64>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<std::string, float>()) {
-        AddNonTensor<MapStringToFloat>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapStringToFloat>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<std::string, double>()) {
-        AddNonTensor<MapStringToDouble>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapStringToDouble>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<int64_t, std::string>()) {
-        AddNonTensor<MapInt64ToString>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapInt64ToString>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<int64_t, int64_t>()) {
-        AddNonTensor<MapInt64ToInt64>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapInt64ToInt64>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<int64_t, float>()) {
-        AddNonTensor<MapInt64ToFloat>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapInt64ToFloat>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsMapOf<int64_t, double>()) {
-        AddNonTensor<MapInt64ToDouble>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<MapInt64ToDouble>(val, data_transfer_manager, mem_cpy_to_host_functions);
       }
 
     } else {
       if (c_checker.IsSequenceOf<std::map<std::string, float>>()) {
-        AddNonTensor<VectorMapStringToFloat>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
+        return AddNonTensor<VectorMapStringToFloat>(val, data_transfer_manager, mem_cpy_to_host_functions);
       } else if (c_checker.IsSequenceOf<std::map<int64_t, float>>()) {
-        AddNonTensor<VectorMapInt64ToFloat>(val, pyobjs, data_transfer_manager, mem_cpy_to_host_functions);
-      } else {
-        throw std::runtime_error("Output is a non-tensor type which is not supported.");
+        return AddNonTensor<VectorMapInt64ToFloat>(val, data_transfer_manager, mem_cpy_to_host_functions);
       }
     }
-#else
-    throw std::runtime_error("Map type is not supported in this build.");
 #endif
   }
+  ORT_THROW("Non-tensor type is not supported in this build: ", val_type);
 }
 
-void AddTensorAsPyObj(const OrtValue& val, std::vector<py::object>& pyobjs,
-                      const DataTransferManager* data_transfer_manager,
+py::object AddTensorAsPyObj(const OrtValue& val, const DataTransferManager* data_transfer_manager,
                       const std::unordered_map<OrtDevice::DeviceType, MemCpyFunc>* mem_cpy_to_host_functions) {
   const Tensor& rtensor = val.Get<Tensor>();
   py::object obj;
   GetPyObjFromTensor(rtensor, obj, data_transfer_manager, mem_cpy_to_host_functions);
-  pyobjs.push_back(obj);
+  return obj;
 }
 
 static inline void RegisterExecutionProvider(InferenceSession* sess, onnxruntime::IExecutionProviderFactory& f) {
@@ -818,6 +827,58 @@ void addGlobalMethods(py::module& m, Environment& env) {
           throw std::runtime_error("Error when creating and registering allocator: " + st.ErrorMessage());
         }
       });
+#ifdef USE_CUDA
+  m.def("numpy_array_to_cuda", [](const py::array& cpu_src, const OrtDevice& ort_device) -> py::array {
+        const auto dtype = cpu_src.dtype();
+        if (!IsNumericDType(dtype)) {
+          ORT_THROW("Supports only numeric datatypes");
+        }
+        if (!IsCudaDeviceIdValid(logging::LoggingManager::DefaultLogger(), ort_device.Id())) {
+          ORT_THROW("The provided device id doesn't match any available GPUs on the machine: ", ort_device.Id());
+        }
+        auto allocator = GetCudaAllocator(ort_device.Id());
+        const auto alloc_size = cpu_src.nbytes();
+        struct ptr_cont {
+          IAllocatorUniquePtr<void> ptr;
+          explicit ptr_cont(IAllocatorUniquePtr<void>&& p_p) : ptr(std::move(p_p)) {}
+        };
+        auto alloc_ptr = IAllocator::MakeUniquePtr<void>(allocator, alloc_size);
+        void* array_ptr = alloc_ptr.get();
+        CpuToCudaMemCpy(array_ptr, cpu_src.data(), alloc_size);
+        auto cc = std::make_unique<ptr_cont>(std::move(alloc_ptr));
+        py::capsule cap(cc.get(), [](void* ptr) {
+          delete reinterpret_cast<ptr_cont*>(ptr);
+        });
+        auto shape_span = gsl::make_span(cpu_src.shape(), cpu_src.ndim());
+        py::array result(dtype, shape_span, array_ptr, cap);
+        cc.release();
+        return result;
+#else
+    m.def("numpy_array_to_cuda", [](const py::array&, const OrtDevice&){
+         ORT_THROW("CUDA is not available in this build.");
+#endif
+      },
+      "Copies numpy array to the specified CUDA device. Shape and type are preserved." \
+      "Only numeric types are supported. No attempt is made to verify source is on CPU.");
+#ifdef USE_CUDA
+    m.def("numpy_array_to_cpu", [](const py::array& cuda_src) -> py::array {
+        const auto dtype = cuda_src.dtype();
+        if (!IsNumericDType(dtype)) {
+          ORT_THROW("Supports only numeric datatypes");
+        }
+        auto shape_span = gsl::make_span(cuda_src.shape(), cuda_src.ndim());
+        py::array result(dtype, shape_span);
+        assert(result.nbytes() == cuda_src.nbytes());
+        CudaToCpuMemCpy(result.mutable_data(), cuda_src.data(), cuda_src.nbytes());
+        return result;
+#else
+  m.def("numpy_array_to_cpu", [](const py::array&) {
+        ORT_THROW("CUDA is not available in this build.");
+#endif
+    },
+    "Copies numpy array CPU/Host memory from the specified CUDA device. Shape and type are preserved." \
+    "Only numeric types are supported. No attempt is made to verify source is on GPU.");
+
 #ifdef ENABLE_TRAINING
   m.def(
       "register_aten_op_executor", [](const std::string& aten_op_executor_address_str) -> void {
@@ -894,84 +955,6 @@ void addGlobalMethods(py::module& m, Environment& env) {
       "Gets the dynamically selected OpenVINO device type for inference.");
 #endif
 
-#ifdef onnxruntime_PYBIND_EXPORT_OPSCHEMA
-  m.def(
-      "get_all_operator_schema", []() -> const std::vector<ONNX_NAMESPACE::OpSchema> {
-        return ONNX_NAMESPACE::OpSchemaRegistry::get_all_schemas_with_history();
-      },
-      "Return a vector of OpSchema all registed operators");
-  m.def(
-      "get_all_opkernel_def", []() -> const std::vector<onnxruntime::KernelDef> {
-        std::vector<onnxruntime::KernelDef> result;
-
-        std::vector<std::shared_ptr<onnxruntime::IExecutionProviderFactory>> factories = {
-            onnxruntime::CreateExecutionProviderFactory_CPU(0),
-#ifdef USE_CUDA
-            []() {
-              OrtCUDAProviderOptions provider_options{};
-              return CreateExecutionProviderFactory_Cuda(&provider_options);
-            }(),
-#endif
-#ifdef USE_ROCM
-            onnxruntime::CreateExecutionProviderFactory_ROCM(
-                [&]() {
-                  ROCMExecutionProviderInfo info{};
-                  info.device_id = cuda_device_id;
-                  info.gpu_mem_limit = gpu_mem_limit;
-                  info.arena_extend_strategy = arena_extend_strategy;
-                  info.external_allocator_info = external_allocator_info;
-                  return info;
-                }()),
-#endif
-#ifdef USE_DNNL
-            onnxruntime::CreateExecutionProviderFactory_Dnnl(1),
-#endif
-#ifdef USE_OPENVINO
-            onnxruntime::CreateExecutionProviderFactory_OpenVINO(openvino_device_type, false, "", 8, false, ""),
-#endif
-#ifdef USE_TENSORRT
-            onnxruntime::CreateExecutionProviderFactory_Tensorrt(
-                [&]() {
-                  TensorrtExecutionProviderInfo info{};
-                  return info;
-                }()),
-#endif
-#ifdef USE_MIGRAPHX
-            onnxruntime::CreateExecutionProviderFactory_MIGraphX(0),
-#endif
-#ifdef USE_VITISAI
-            onnxruntime::CreateExecutionProviderFactory_VITISAI("DPUCADX8G", 0, "", ""),
-#endif
-#ifdef USE_ACL
-            onnxruntime::CreateExecutionProviderFactory_ACL(0),
-#endif
-#ifdef USE_ARMNN
-            onnxruntime::CreateExecutionProviderFactory_ArmNN(0),
-#endif
-#ifdef USE_DML
-            onnxruntime::CreateExecutionProviderFactory_DML(0),
-#endif
-#ifdef USE_NNAPI
-            onnxruntime::CreateExecutionProviderFactory_NNAPI(0),
-#endif
-#ifdef USE_RKNPU
-            onnxruntime::CreateExecutionProviderFactory_Rknpu(),
-#endif
-        };
-
-        for (const auto& f : factories) {
-          for (const auto& m : f->CreateProvider()
-                                   ->GetKernelRegistry()
-                                   ->GetKernelCreateMap()) {
-            result.emplace_back(*(m.second.kernel_def));
-          }
-        }
-
-        return result;
-      },
-      "Return a vector of KernelDef for all registered OpKernels");
-#endif  //onnxruntime_PYBIND_EXPORT_OPSCHEMA
-
 #if defined(USE_CUDA) || defined(USE_ROCM)
   /*
    * The following set_* methods are deprecated.
@@ -1020,127 +1003,6 @@ void addGlobalMethods(py::module& m, Environment& env) {
   });
 #endif
 }
-
-#ifdef onnxruntime_PYBIND_EXPORT_OPSCHEMA
-
-void addOpKernelSubmodule(py::module& m) {
-  auto opkernel = m.def_submodule("opkernel");
-  opkernel.doc() = "OpKernel submodule";
-  py::class_<onnxruntime::KernelDef> kernel_def(opkernel, "KernelDef");
-  kernel_def.def_property_readonly("op_name", &onnxruntime::KernelDef::OpName)
-      .def_property_readonly("domain", &onnxruntime::KernelDef::Domain)
-      .def_property_readonly("provider", &onnxruntime::KernelDef::Provider)
-      .def_property_readonly("version_range",
-                             [](const onnxruntime::KernelDef& kernelDef) -> std::pair<int, int> {
-                               return kernelDef.onnxruntime::KernelDef::SinceVersion();
-                             })
-      .def_property_readonly("type_constraints",
-                             [](const onnxruntime::KernelDef& kernelDef) -> std::unordered_map<std::string, std::vector<std::string>> {
-                               std::unordered_map<std::string, std::vector<std::string>> result;
-                               const auto& tempResult = kernelDef.TypeConstraints();
-                               for (const auto& tc : tempResult) {
-                                 result[tc.first] = std::vector<std::string>();
-                                 for (const auto& dt : tc.second) {
-                                   result[tc.first].emplace_back(onnxruntime::DataTypeImpl::ToString(dt));
-                                 }
-                               }
-                               return result;
-                             });
-}
-
-void addOpSchemaSubmodule(py::module& m) {
-  auto schemadef = m.def_submodule("schemadef");
-  schemadef.doc() = "Schema submodule";
-
-  // Keep this binding local to this module
-  py::class_<ONNX_NAMESPACE::OpSchema> op_schema(schemadef, "OpSchema", py::module_local());
-  op_schema.def_property_readonly("file", &ONNX_NAMESPACE::OpSchema::file)
-      .def_property_readonly("line", &ONNX_NAMESPACE::OpSchema::line)
-      .def_property_readonly("support_level", &ONNX_NAMESPACE::OpSchema::support_level)
-      .def_property_readonly(
-          "doc", &ONNX_NAMESPACE::OpSchema::doc, py::return_value_policy::reference)
-      .def_property_readonly("since_version", &ONNX_NAMESPACE::OpSchema::since_version)
-      .def_property_readonly("deprecated", &ONNX_NAMESPACE::OpSchema::deprecated)
-      .def_property_readonly("domain", &ONNX_NAMESPACE::OpSchema::domain)
-      .def_property_readonly("name", &ONNX_NAMESPACE::OpSchema::Name)
-      .def_property_readonly("min_input", &ONNX_NAMESPACE::OpSchema::min_input)
-      .def_property_readonly("max_input", &ONNX_NAMESPACE::OpSchema::max_input)
-      .def_property_readonly("min_output", &ONNX_NAMESPACE::OpSchema::min_output)
-      .def_property_readonly("max_output", &ONNX_NAMESPACE::OpSchema::max_output)
-      .def_property_readonly("attributes", &ONNX_NAMESPACE::OpSchema::attributes)
-      .def_property_readonly("inputs", &ONNX_NAMESPACE::OpSchema::inputs)
-      .def_property_readonly("outputs", &ONNX_NAMESPACE::OpSchema::outputs)
-      .def_property_readonly(
-          "has_type_and_shape_inference_function",
-          &ONNX_NAMESPACE::OpSchema::has_type_and_shape_inference_function)
-      .def_property_readonly(
-          "type_constraints", &ONNX_NAMESPACE::OpSchema::typeConstraintParams)
-      .def_static("is_infinite", [](int v) {
-        return v == std::numeric_limits<int>::max();
-      });
-
-  // Keep this binding local to this module
-  py::class_<ONNX_NAMESPACE::OpSchema::Attribute>(op_schema, "Attribute", py::module_local())
-      .def_readonly("name", &ONNX_NAMESPACE::OpSchema::Attribute::name)
-      .def_readonly("description", &ONNX_NAMESPACE::OpSchema::Attribute::description)
-      .def_readonly("type", &ONNX_NAMESPACE::OpSchema::Attribute::type)
-      .def_property_readonly(
-          "_default_value",
-          [](ONNX_NAMESPACE::OpSchema::Attribute* attr) -> py::bytes {
-            std::string out;
-            attr->default_value.SerializeToString(&out);
-            return out;
-          })
-      .def_readonly("required", &ONNX_NAMESPACE::OpSchema::Attribute::required);
-
-  // Keep this binding local to this module
-  py::class_<ONNX_NAMESPACE::OpSchema::TypeConstraintParam>(op_schema, "TypeConstraintParam", py::module_local())
-      .def_readonly(
-          "type_param_str", &ONNX_NAMESPACE::OpSchema::TypeConstraintParam::type_param_str)
-      .def_readonly("description", &ONNX_NAMESPACE::OpSchema::TypeConstraintParam::description)
-      .def_readonly(
-          "allowed_type_strs",
-          &ONNX_NAMESPACE::OpSchema::TypeConstraintParam::allowed_type_strs);
-
-  // Keep this binding local to this module
-  py::enum_<ONNX_NAMESPACE::OpSchema::FormalParameterOption>(op_schema, "FormalParameterOption", py::module_local())
-      .value("Single", ONNX_NAMESPACE::OpSchema::Single)
-      .value("Optional", ONNX_NAMESPACE::OpSchema::Optional)
-      .value("Variadic", ONNX_NAMESPACE::OpSchema::Variadic);
-
-  // Keep this binding local to this module
-  py::class_<ONNX_NAMESPACE::OpSchema::FormalParameter>(op_schema, "FormalParameter", py::module_local())
-      .def_property_readonly("name", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetName)
-      .def_property_readonly("types", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetTypes)
-      .def_property_readonly("typeStr", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetTypeStr)
-      .def_property_readonly(
-          "description", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetDescription)
-      .def_property_readonly("option", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetOption)
-      .def_property_readonly(
-          "isHomogeneous", &ONNX_NAMESPACE::OpSchema::FormalParameter::GetIsHomogeneous);
-
-  // Keep this binding local to this module
-  py::enum_<ONNX_NAMESPACE::AttributeProto::AttributeType>(op_schema, "AttrType", py::module_local())
-      .value("FLOAT", ONNX_NAMESPACE::AttributeProto::FLOAT)
-      .value("INT", ONNX_NAMESPACE::AttributeProto::INT)
-      .value("STRING", ONNX_NAMESPACE::AttributeProto::STRING)
-      .value("TENSOR", ONNX_NAMESPACE::AttributeProto::TENSOR)
-      .value("SPARSE_TENSOR", ONNX_NAMESPACE::AttributeProto::SPARSE_TENSOR)
-      .value("GRAPH", ONNX_NAMESPACE::AttributeProto::GRAPH)
-      .value("FLOATS", ONNX_NAMESPACE::AttributeProto::FLOATS)
-      .value("INTS", ONNX_NAMESPACE::AttributeProto::INTS)
-      .value("STRINGS", ONNX_NAMESPACE::AttributeProto::STRINGS)
-      .value("TENSORS", ONNX_NAMESPACE::AttributeProto::TENSORS)
-      .value("SPARSE_TENSORS", ONNX_NAMESPACE::AttributeProto::SPARSE_TENSORS)
-      .value("GRAPHS", ONNX_NAMESPACE::AttributeProto::GRAPHS);
-
-  // Keep this binding local to this module
-  py::enum_<ONNX_NAMESPACE::OpSchema::SupportType>(op_schema, "SupportType", py::module_local())
-      .value("COMMON", ONNX_NAMESPACE::OpSchema::SupportType::COMMON)
-      .value("EXPERIMENTAL", ONNX_NAMESPACE::OpSchema::SupportType::EXPERIMENTAL);
-}
-
-#endif  //onnxruntime_PYBIND_EXPORT_OPSCHEMA
 
 void addObjectMethods(py::module& m, Environment& env) {
   py::enum_<GraphOptimizationLevel>(m, "GraphOptimizationLevel")
@@ -1506,15 +1368,15 @@ including arg name, arg type (contains both type and shape).)pbdoc")
               std::map<std::string, py::object> pyfeeds, RunOptions* run_options = nullptr)
                -> std::vector<py::object> {
              NameMLValMap feeds;
-             for (auto _ : pyfeeds) {
+             for (auto feed : pyfeeds) {
                OrtValue ml_value;
                auto px = sess->GetSessionHandle()->GetModelInputs();
                if (!px.first.IsOK() || !px.second) {
                  throw std::runtime_error("Either failed to get model inputs from the session object or the input def list was null");
                }
-               CreateGenericMLValue(px.second, GetAllocator(), _.first, _.second, &ml_value);
+               CreateGenericMLValue(px.second, GetAllocator(), feed.first, feed.second, &ml_value);
                ThrowIfPyErrOccured();
-               feeds.insert(std::make_pair(_.first, ml_value));
+               feeds.insert(std::make_pair(feed.first, ml_value));
              }
 
              std::vector<OrtValue> fetches;
@@ -1532,15 +1394,47 @@ including arg name, arg type (contains both type and shape).)pbdoc")
 
              std::vector<py::object> rfetch;
              rfetch.reserve(fetches.size());
-             for (auto _ : fetches) {
-               if (_.IsTensor()) {
-                 AddTensorAsPyObj(_, rfetch, nullptr, nullptr);
-               } else {
-                 AddNonTensorAsPyObj(_, rfetch, nullptr, nullptr);
+             size_t pos = 0;
+             for (auto fet : fetches) {
+               if (fet.IsTensor()) {
+                 rfetch.push_back(AddTensorAsPyObj(fet,nullptr, nullptr));
+               } else if (fet.IsSparseTensor()) {
+                 rfetch.push_back(GetPyObjectFromSparseTensor(pos, fet, nullptr));
+               }  else {
+                 rfetch.push_back(AddNonTensorAsPyObj(fet, nullptr, nullptr));
                }
+               ++pos;
              }
              return rfetch;
            })
+       /// This method accepts a dictionary of feeds (name -> OrtValue) and the list of output_names
+       /// and returns a list of python objects representing OrtValues. Each name may represent either
+       /// a Tensor, SparseTensor or a TensorSequence.
+      .def("run_with_ort_values", [](PyInferenceSession* sess, 
+                                     const py::dict& feeds,
+                                     const std::vector<std::string>& output_names,
+                                     RunOptions* run_options = nullptr) ->  std::vector<OrtValue>{
+        NameMLValMap ort_feeds;
+        // item is always a copy since dict returns a value and not a ref
+        // and Apple XToolChain barks
+        for (const auto item : feeds) {
+          auto name = item.first.cast<std::string>();
+          const OrtValue* ort_value = item.second.cast<const OrtValue*>();
+          ort_feeds.emplace(name, *ort_value);
+        }
+
+        std::vector<OrtValue> fetches;
+        {
+          // release GIL to allow multiple python threads to invoke Run() in parallel.
+          py::gil_scoped_release release;
+          if (run_options != nullptr) {
+            OrtPybindThrowIfError(sess->GetSessionHandle()->Run(*run_options, ort_feeds, output_names, &fetches));
+          } else {
+            OrtPybindThrowIfError(sess->GetSessionHandle()->Run(ort_feeds, output_names, &fetches));
+          }
+        }
+        return fetches;
+      })
       .def("end_profiling", [](const PyInferenceSession* sess) -> std::string {
         return sess->GetSessionHandle()->EndProfiling();
       })
@@ -1678,6 +1572,7 @@ void CreatePybindStateModule(py::module& m) {
   addGlobalMethods(m, env);
   addObjectMethods(m, env);
   addOrtValueMethods(m);
+  addSparseTensorMethods(m);
   addIoBindingMethods(m);
 
 #if !defined(__APPLE__) && \
@@ -1694,6 +1589,7 @@ void CreatePybindStateModule(py::module& m) {
 #endif  // ENABLE_TRAINING
 
 #ifdef onnxruntime_PYBIND_EXPORT_OPSCHEMA
+  addGlobalSchemaFunctions(m);
   addOpSchemaSubmodule(m);
   addOpKernelSubmodule(m);
 #endif
