@@ -123,7 +123,7 @@ void StridedCopy(concurrency::ThreadPool* thread_pool,
             src_idx += current_nd_idx[dim] * src_strides[dim];
           }
 
-          std::ptrdiff_t inner_end = std::min(last, outer_i + last_dim_size - current_nd_idx[dims - 1]);
+          std::ptrdiff_t inner_end = std::min<std::ptrdiff_t>(last, outer_i + last_dim_size - current_nd_idx[dims - 1]);
           auto iter_size = inner_end - outer_i;
           if (!is_string && last_dst_stride == 1 && last_src_stride == 1) {
             memcpy(dst_raw + dst_idx * sizeof(T), src_raw + src_idx * sizeof(T), iter_size * sizeof(T));
