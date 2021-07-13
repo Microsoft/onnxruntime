@@ -223,8 +223,8 @@ Status ConcatBase::ComputeImpl(Prepare& p, OpKernelContext* ctx) const {
   // Note that output_strides_full is only used later when is_stack_ is true, so it's safe to move
   auto output_strides_for_copy = is_stack_ ? std::vector<int64_t>(num_dims - 1) : std::move(output_strides_full);
   if (is_stack_) {
-    for (int64_t i = 0; i < static_cast<int64_t>(num_dims - 1); i++) {
-      auto read_i = (i >= axis_) ? i + 1 : i;
+    for (size_t i = 0; i < num_dims - 1; i++) {
+      auto read_i = (i >= p.axis) ? i + 1 : i;
       output_strides_for_copy[i] = output_strides_full[read_i];
     }
   }
