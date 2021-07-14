@@ -59,6 +59,22 @@ static void BuildFusedKernelDef(KernelDefBuilder& builder, const onnxruntime::No
       .SetDomain(schema->domain())
       .SinceVersion(schema->SinceVersion())
       .Provider(node.GetExecutionProviderType());
+
+  // process input/output MemType for fused node
+  ProtoHelperNodeContext proto_ctx(node);
+  OpNodeProtoHelper<ProtoHelperNodeContext> info(&proto_ctx);
+  std::vector<int64_t> input_mem_types;
+  if (info.GetAttrs<int64_t>(KernelDefBuilder::NodeAttr_InputMemType, input_mem_types).IsOK()) {
+    for (int i = 0; i < gsl::narrow<int>(input_mem_types.size()); ++i) {
+      builder.InputMemoryType((OrtMemType)input_mem_types[i], i);
+    }
+  }
+  std::vector<int64_t> output_mem_types;
+  if (info.GetAttrs<int64_t>(KernelDefBuilder::NodeAttr_OutputMemType, output_mem_types).IsOK()) {
+    for (int i = 0; i < gsl::narrow<int>(output_mem_types.size()); ++i) {
+      builder.OutputMemoryType((OrtMemType)output_mem_types[i], i);
+    }
+  }
 }
 
 /**

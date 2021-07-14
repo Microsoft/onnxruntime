@@ -31,6 +31,11 @@ inline bool AreVectorsOverlap(const std::vector<T>& v1, const std::vector<T>& v2
 
 }  // namespace
 
+// special node attribute name for fused node to specify input/output MemType
+// the attribute would be an array of ints
+const std::string KernelDefBuilder::NodeAttr_InputMemType = "InputMemType";
+const std::string KernelDefBuilder::NodeAttr_OutputMemType = "OutputMemType";
+
 void KernelDef::CalculateHash() {
   uint32_t hash[4] = {0, 0, 0, 0};
 

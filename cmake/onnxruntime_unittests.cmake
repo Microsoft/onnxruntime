@@ -204,6 +204,8 @@ if(NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
   set(onnxruntime_test_framework_src_patterns
     "${TEST_SRC_DIR}/framework/*.cc"
     "${TEST_SRC_DIR}/framework/*.h"
+    "${TEST_SRC_DIR}/framework/async/*.cc"
+    "${TEST_SRC_DIR}/framework/async/*.h"
     "${TEST_SRC_DIR}/platform/*.cc"
     )
 

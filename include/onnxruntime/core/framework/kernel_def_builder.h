@@ -370,6 +370,11 @@ class KernelDefBuilder {
     return std::move(kernel_def_);
   }
 
+  // special node attribute name for fused node to specify input/output MemType
+  // the attribute would be an array of ints
+  static const std::string NodeAttr_InputMemType;
+  static const std::string NodeAttr_OutputMemType;
+
  private:
   KernelDefBuilder& TypeConstraintImpl(const std::string& arg_name,
                                        const std::vector<MLDataType>& default_types,
