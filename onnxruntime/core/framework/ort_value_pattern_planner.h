@@ -22,7 +22,7 @@ class OrtValuePatternPlanner {
   // variant of the TraceAllocation calls may be used.
   explicit OrtValuePatternPlanner(const ExecutionPlanBase& execution_plan, bool trace_using_counters = false);
 #ifdef ENABLE_TRAINING
-  common::Status TraceAllocation(int ort_value_idx, const AllocPlanPerValue::ProgramCounter& counter, size_t size);
+  common::Status TraceAllocation(int ort_value_idx, const AllocPlanPerValue::ProgramCounter& counter, size_t size, bool insert_end = false);
 #endif
   common::Status TraceAllocation(int ort_value_idx, size_t size);
   common::Status TraceFree(int ort_value_index);

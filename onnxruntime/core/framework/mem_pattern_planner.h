@@ -65,13 +65,21 @@ class MemPatternPlanner {
     return false;
   }
 
-  void TraceAllocation(int ml_value_idx, const AllocPlanPerValue::ProgramCounter& counter, size_t size) {
+  void TraceAllocation(int ml_value_idx, const AllocPlanPerValue::ProgramCounter& counter, size_t size, bool insert_end = false) {
     ORT_ENFORCE(using_counters_);
 
     std::lock_guard<OrtMutex> lock(lock_);
 
     if (size == 0) {
       allocs_.emplace_back(ml_value_idx, MemoryBlock(0, 0));
+      return;
+    }
+
+    // Insert the memory block in the end when laying out tensors that need to be contiguous in memory.
+    if (insert_end) {
+      allocs_.emplace_back(ml_value_idx, counter, MemoryBlock(buffer_size_, size));
+      blocks_.emplace_back(static_cast<int>(allocs_.size()) - 1);
+      buffer_size_ += size;
       return;
     }
 

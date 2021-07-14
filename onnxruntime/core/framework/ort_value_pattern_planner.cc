@@ -16,7 +16,8 @@ OrtValuePatternPlanner::OrtValuePatternPlanner(const ExecutionPlanBase& executio
 #ifdef ENABLE_TRAINING
 common::Status OrtValuePatternPlanner::TraceAllocation(int ort_value_idx,
                                                        const AllocPlanPerValue::ProgramCounter& counter,
-                                                       size_t size) {
+                                                       size_t size,
+                                                       bool insert_end) {
   // TODO(codemzs): refactor code.
   const auto& location = execution_planner_.GetLocation(ort_value_idx);
   auto it = planner_map_.find(location);
@@ -24,7 +25,7 @@ common::Status OrtValuePatternPlanner::TraceAllocation(int ort_value_idx,
     return common::Status(common::ONNXRUNTIME, common::INVALID_ARGUMENT);
   }
 
-  it->second->TraceAllocation(ort_value_idx, counter, size);
+  it->second->TraceAllocation(ort_value_idx, counter, size, insert_end);
   return common::Status::OK();
 }
 #endif
