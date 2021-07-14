@@ -874,11 +874,15 @@ class PlannerImpl {
           return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "AllocateInputsContiguously() requires all inputs to be initializers, or all inputs to be non-initializers.");
 
         if (actual_plan.alloc_kind == AllocKind::kAllocateStatically) {
-          if (std::find(initializer_allocation_order.begin(), initializer_allocation_order.end(), actual_idx) == initializer_allocation_order.end())
-            initializer_allocation_order.push_back(actual_idx);
-        } else {
-          if (std::find(activation_allocation_order.begin(), activation_allocation_order.end(), actual_idx) == activation_allocation_order.end())
-            activation_allocation_order.push_back(actual_idx);
+
+          ORT_ENFORCE(std::find(initializer_allocation_order.begin(), initializer_allocation_order.end(), actual_idx) == initializer_allocation_order.end());
+
+          initializer_allocation_order.push_back(actual_idx);
+          } else {
+
+          ORT_ENFORCE(std::find(activation_allocation_order.begin(), activation_allocation_order.end(), actual_idx) == activation_allocation_order.end());
+
+          activation_allocation_order.push_back(actual_idx);
         }
       }
     }
