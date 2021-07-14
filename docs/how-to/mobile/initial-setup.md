@@ -58,8 +58,7 @@ In your CocoaPods `Podfile`, add the `onnxruntime-mobile-c` or `onnxruntime-mobi
   ```
   use_frameworks!
 
-  # currently, there is only a pre-release version for onnxruntime-mobile-objc
-  pod 'onnxruntime-mobile-objc', '1.8.0-preview'
+  pod 'onnxruntime-mobile-objc'
   ```
 
 Run `pod install`.

@@ -30,10 +30,8 @@ The pre-built package includes support for selected operators and ONNX opset ver
 
 | Platform | Package location | Included Execution Providers |
 |----------|------------------|----------|
-| Android | onnxruntime-mobile package in Maven  | CPU Execution Provider <br/>NNAPI Execution Provider |
-| iOS (preview) | onnxruntime-mobile CocoaPod (C/C++ APIs) <br>onnxruntime-mobile-objc CocoaPod (Objective-C API) | CPU Execution Provider |
-
-\**iOS package will include CoreML Execution Provider in next release*
+| Android | onnxruntime-mobile package in Maven  | CPU Execution Provider <br>NNAPI Execution Provider |
+| iOS (preview) | onnxruntime-mobile CocoaPod (C/C++ APIs) <br>onnxruntime-mobile-objc CocoaPod (Objective-C API) | CPU Execution Provider <br>CoreML Execution Provider |
 
 ### Operators and Types supported
 

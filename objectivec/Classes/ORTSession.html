@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>ORTSession Class Reference</title>
+    <link rel="stylesheet" type="text/css" href="../css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="../css/highlight.css" />
+    <meta charset='utf-8'>
+    <script src="../js/jquery.min.js" defer></script>
+    <script src="../js/jazzy.js" defer></script>
+    
+    <script src="../js/lunr.min.js" defer></script>
+    <script src="../js/typeahead.jquery.js" defer></script>
+    <script src="../js/jazzy.search.js" defer></script>
+  </head>
+  <body>
+    <a name="//apple_ref/objc/Class/ORTSession" class="dashAnchor"></a>
+    <a title="ORTSession Class Reference"></a>
+    <header>
+      <div class="content-wrapper">
+        <p><a href="../index.html">ONNX Runtime Objective-C API 1.8.1 Docs</a></p>
+        <p class="header-right"><a href="https://github.com/microsoft/onnxruntime"><img src="../img/gh.png"/>View on GitHub</a></p>
+        <p class="header-right">
+          <form role="search" action="../search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
+      </div>
+    </header>
+    <div class="content-wrapper">
+      <p id="breadcrumbs">
+        <a href="../index.html">ONNX Runtime Objective-C API Reference</a>
+        <img id="carat" src="../img/carat.png" />
+        ORTSession Class Reference
+      </p>
+    </div>
+    <div class="content-wrapper">
+      <nav class="sidebar">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a href="../Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Classes/ORTCoreMLExecutionProviderOptions.html">ORTCoreMLExecutionProviderOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTEnv.html">ORTEnv</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTRunOptions.html">ORTRunOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTSession.html">ORTSession</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTSessionOptions.html">ORTSessionOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTTensorTypeAndShapeInfo.html">ORTTensorTypeAndShapeInfo</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTValue.html">ORTValue</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ORTValueTypeInfo.html">ORTValueTypeInfo</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Enums.html">Enumerations</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Enums/ORTGraphOptimizationLevel.html">ORTGraphOptimizationLevel</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Enums/ORTLoggingLevel.html">ORTLoggingLevel</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Enums/ORTTensorElementDataType.html">ORTTensorElementDataType</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Enums/ORTValueType.html">ORTValueType</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Functions.html">Functions</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Functions.html#/c:@F@ORTIsCoreMLExecutionProviderAvailable">ORTIsCoreMLExecutionProviderAvailable</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+        <section>
+          <section class="section">
+            <h1>ORTSession</h1>
+              <div class="declaration">
+                <div class="language">
+                  <p class="aside-title">Objective-C</p>
+                  <pre class="highlight objective_c"><code><span class="k">@interface</span> <span class="nc">ORTSession</span> <span class="p">:</span> <span class="nc">NSObject</span></code></pre>
+
+                </div>
+                <div class="language">
+                  <p class="aside-title">Swift</p>
+                  <pre class="highlight swift"><code><span class="kd">class</span> <span class="kt">ORTSession</span> <span class="p">:</span> <span class="kt">NSObject</span></code></pre>
+
+                </div>
+              </div>
+            <p>An ORT session loads and runs a model.</p>
+
+          </section>
+          <section class="section task-group-section">
+            <div class="task-group">
+              <ul>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)init"></a>
+                    <a name="//apple_ref/objc/Method/-init" class="dashAnchor"></a>
+                    <a class="token discouraged" href="#/c:objc(cs)ORTSession(im)init">-init</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="aside aside-unavailable">
+                        <p class="aside-title">Unavailable</p>
+                        
+                      </div>
+                      <div class="abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">instancetype</span><span class="p">)</span><span class="n">init</span> <span class="n">NS_UNAVAILABLE</span><span class="p">;</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)initWithEnv:modelPath:sessionOptions:error:"></a>
+                    <a name="//apple_ref/objc/Method/-initWithEnv:modelPath:sessionOptions:error:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)initWithEnv:modelPath:sessionOptions:error:">-initWithEnv:<wbr>modelPath:<wbr>sessionOptions:<wbr>error:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Creates a session.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">nullable</span> <span class="n">instancetype</span><span class="p">)</span><span class="nf">initWithEnv</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n"><a href="../Classes/ORTEnv.html">ORTEnv</a></span> <span class="o">*</span><span class="p">)</span><span class="nv">env</span>
+                           <span class="nf">modelPath</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n">NSString</span> <span class="o">*</span><span class="p">)</span><span class="nv">path</span>
+                      <span class="nf">sessionOptions</span><span class="p">:</span>
+                          <span class="p">(</span><span class="n">nullable</span> <span class="n"><a href="../Classes/ORTSessionOptions.html">ORTSessionOptions</a></span> <span class="o">*</span><span class="p">)</span><span class="nv">sessionOptions</span>
+                               <span class="nf">error</span><span class="p">:(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="nf">init</span><span class="p">(</span><span class="nv">env</span><span class="p">:</span> <span class="kt"><a href="../Classes/ORTEnv.html">ORTEnv</a></span><span class="p">,</span> <span class="n">modelPath</span> <span class="nv">path</span><span class="p">:</span> <span class="kt">String</span><span class="p">,</span> <span class="nv">sessionOptions</span><span class="p">:</span> <span class="kt"><a href="../Classes/ORTSessionOptions.html">ORTSessionOptions</a></span><span class="p">?)</span> <span class="k">throws</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>env</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>The ORT Environment instance.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>path</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>The path to the ONNX model.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>sessionOptions</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional session configuration options.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>The instance, or nil if an error occurs.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)runWithInputs:outputs:runOptions:error:"></a>
+                    <a name="//apple_ref/objc/Method/-runWithInputs:outputs:runOptions:error:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)runWithInputs:outputs:runOptions:error:">-runWithInputs:<wbr>outputs:<wbr>runOptions:<wbr>error:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Runs the model.
+ The inputs and outputs are pre-allocated.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">BOOL</span><span class="p">)</span><span class="nf">runWithInputs</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n">NSDictionary</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*</span><span class="p">,</span> <span class="n"><a href="../Classes/ORTValue.html">ORTValue</a></span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nv">inputs</span>
+              <span class="nf">outputs</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n">NSDictionary</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*</span><span class="p">,</span> <span class="n"><a href="../Classes/ORTValue.html">ORTValue</a></span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nv">outputs</span>
+           <span class="nf">runOptions</span><span class="p">:(</span><span class="n">nullable</span> <span class="n"><a href="../Classes/ORTRunOptions.html">ORTRunOptions</a></span> <span class="o">*</span><span class="p">)</span><span class="nv">runOptions</span>
+                <span class="nf">error</span><span class="p">:(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">run</span><span class="p">(</span><span class="n">withInputs</span> <span class="nv">inputs</span><span class="p">:</span> <span class="p">[</span><span class="kt">String</span> <span class="p">:</span> <span class="kt"><a href="../Classes/ORTValue.html">ORTValue</a></span><span class="p">],</span> <span class="nv">outputs</span><span class="p">:</span> <span class="p">[</span><span class="kt">String</span> <span class="p">:</span> <span class="kt"><a href="../Classes/ORTValue.html">ORTValue</a></span><span class="p">],</span> <span class="nv">runOptions</span><span class="p">:</span> <span class="kt"><a href="../Classes/ORTRunOptions.html">ORTRunOptions</a></span><span class="p">?)</span> <span class="k">throws</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>inputs</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Dictionary of input names to input ORT values.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>outputs</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Dictionary of output names to output ORT values.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>runOptions</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional run configuration options.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>Whether the model was run successfully.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)runWithInputs:outputNames:runOptions:error:"></a>
+                    <a name="//apple_ref/objc/Method/-runWithInputs:outputNames:runOptions:error:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)runWithInputs:outputNames:runOptions:error:">-runWithInputs:<wbr>outputNames:<wbr>runOptions:<wbr>error:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Runs the model.
+ The inputs are pre-allocated and the outputs are allocated by ORT.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">nullable</span> <span class="n">NSDictionary</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*</span><span class="p">,</span> <span class="n"><a href="../Classes/ORTValue.html">ORTValue</a></span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span>
+    <span class="nf">runWithInputs</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n">NSDictionary</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*</span><span class="p">,</span> <span class="n"><a href="../Classes/ORTValue.html">ORTValue</a></span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nv">inputs</span>
+      <span class="nf">outputNames</span><span class="p">:(</span><span class="n">nonnull</span> <span class="n">NSSet</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nv">outputNames</span>
+       <span class="nf">runOptions</span><span class="p">:(</span><span class="n">nullable</span> <span class="n"><a href="../Classes/ORTRunOptions.html">ORTRunOptions</a></span> <span class="o">*</span><span class="p">)</span><span class="nv">runOptions</span>
+            <span class="nf">error</span><span class="p">:(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">run</span><span class="p">(</span><span class="n">withInputs</span> <span class="nv">inputs</span><span class="p">:</span> <span class="p">[</span><span class="kt">String</span> <span class="p">:</span> <span class="kt"><a href="../Classes/ORTValue.html">ORTValue</a></span><span class="p">],</span> <span class="nv">outputNames</span><span class="p">:</span> <span class="kt">Set</span><span class="o">&lt;</span><span class="kt">String</span><span class="o">&gt;</span><span class="p">,</span> <span class="nv">runOptions</span><span class="p">:</span> <span class="kt"><a href="../Classes/ORTRunOptions.html">ORTRunOptions</a></span><span class="p">?)</span> <span class="k">throws</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span> <span class="p">:</span> <span class="kt"><a href="../Classes/ORTValue.html">ORTValue</a></span><span class="p">]</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>inputs</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Dictionary of input names to input ORT values.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>outputNames</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Set of output names.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>runOptions</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional run configuration options.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>A dictionary of output names to output ORT values with the outputs
+     requested in <code>outputNames</code>, or nil if an error occurs.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)inputNamesWithError:"></a>
+                    <a name="//apple_ref/objc/Method/-inputNamesWithError:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)inputNamesWithError:">-inputNamesWithError:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Gets the model&rsquo;s input names.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">nullable</span> <span class="n">NSArray</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nf">inputNamesWithError</span><span class="p">:</span>
+    <span class="p">(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">inputNames</span><span class="p">()</span> <span class="k">throws</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>An array of input names, or nil if an error occurs.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)overridableInitializerNamesWithError:"></a>
+                    <a name="//apple_ref/objc/Method/-overridableInitializerNamesWithError:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)overridableInitializerNamesWithError:">-overridableInitializerNamesWithError:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Gets the model&rsquo;s overridable initializer names.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">nullable</span> <span class="n">NSArray</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nf">overridableInitializerNamesWithError</span><span class="p">:</span>
+    <span class="p">(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">overridableInitializerNames</span><span class="p">()</span> <span class="k">throws</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>An array of overridable initializer names, or nil if an error occurs.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:objc(cs)ORTSession(im)outputNamesWithError:"></a>
+                    <a name="//apple_ref/objc/Method/-outputNamesWithError:" class="dashAnchor"></a>
+                    <a class="token" href="#/c:objc(cs)ORTSession(im)outputNamesWithError:">-outputNamesWithError:<wbr></a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Gets the model&rsquo;s output names.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Objective-C</p>
+                          <pre class="highlight objective_c"><code><span class="k">-</span> <span class="p">(</span><span class="n">nullable</span> <span class="n">NSArray</span><span class="o">&lt;</span><span class="n">NSString</span> <span class="o">*&gt;</span> <span class="o">*</span><span class="p">)</span><span class="nf">outputNamesWithError</span><span class="p">:</span>
+    <span class="p">(</span><span class="n">NSError</span> <span class="o">*</span><span class="n">_Nullable</span> <span class="o">*</span><span class="n">_Nullable</span><span class="p">)</span><span class="nv">error</span><span class="p">;</span></code></pre>
+
+                        </div>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">outputNames</span><span class="p">()</span> <span class="k">throws</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>error</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Optional error information set if an error occurs.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>An array of output names, or nil if an error occurs.</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </section>
+        <section id="footer">
+          <p>&copy; 2021 <a class="link" href="https://www.onnxruntime.ai" target="_blank" rel="external">ONNX Runtime Authors</a>. All rights reserved. (Last updated: 2021-07-07)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.7</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+        </section>
+      </article>
+    </div>
+  </body>
+</div>
+</html>
