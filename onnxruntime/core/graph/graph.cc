@@ -2116,6 +2116,18 @@ Status Graph::InferAndVerifyTypeMatch(Node& node, const OpSchema& op, const Reso
     ORT_TRY {
       context.RunInferencing();
     }
+    ORT_CATCH(const onnx::InferenceError& ex) {
+      ORT_HANDLE_EXCEPTION([&]() {
+        // Relax shape inference check for If node and subgraph.
+        // ONNX shape inference may fail for a branch that won't get executed at runtime.
+        if (std::string(ex.what()).find("[ShapeInferenceError]") != std::string::npos) {
+          if (node.OpType() == "If" || this->IsSubgraph()) {
+            return;
+          }
+        }
+        status = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node (", node.Name(), ") Op (", node.OpType(), ") ", ex.what());
+      });
+    }
     ORT_CATCH(const std::exception& ex) {
       ORT_HANDLE_EXCEPTION([&]() {
         status = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node (", node.Name(), ") Op (", node.OpType(), ") ", ex.what());
