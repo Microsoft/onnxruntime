@@ -28,6 +28,9 @@ struct OrtThreadPoolParams {
 
   // Set or unset denormal as zero
   bool set_denormal_as_zero = false;
+
+  // Use lite version for intra ops
+  bool use_tplite = false;
 };
 
 struct OrtThreadingOptions {

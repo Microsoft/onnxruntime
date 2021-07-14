@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "core/platform/threadpool.h"
+#include "core/platform/threadpoollite.h"
 #include "core/platform/EigenNonBlockingThreadPool.h"
 #include "core/platform/ort_mutex.h"
 
@@ -46,10 +47,12 @@ void ValidateTestData(TestData& test_data, int expected=1) {
 // test the function with a null pointer, reflecting scenarios where we
 // run with just the main thread.  Note that the thread pool API uses
 // static methods and should operate across all of these cases.
-void CreateThreadPoolAndTest(const std::string&, int num_threads, const std::function<void(ThreadPool*)>& test_body) {
+void CreateThreadPoolAndTest(const std::string&, int num_threads, const std::function<void(ThreadPool*)>& test_body, bool test_tplite = false) {
   if (num_threads > 0) {
-    auto tp = std::make_unique<ThreadPool>(&onnxruntime::Env::Default(), onnxruntime::ThreadOptions(), nullptr,
-                                                   num_threads, true);
+    auto tp = test_tplite ? std::make_unique<ThreadPoolLite>(&onnxruntime::Env::Default(), onnxruntime::ThreadOptions(), nullptr,
+                                                             num_threads, true)
+                          : std::make_unique<ThreadPool>(&onnxruntime::Env::Default(), onnxruntime::ThreadOptions(), nullptr,
+                                                         num_threads, true);
     test_body(tp.get());
   } else {
     test_body(nullptr);
@@ -78,7 +81,7 @@ void TestConcurrentParallelFor(const std::string& name, int num_threads, int num
   // Test running multiple concurrent loops over the same thread pool.  This aims to provoke a
   // more diverse mix of interleavings than with a single loop running at a time.
   for (int rep = 0; rep < 5; rep++) {
-    CreateThreadPoolAndTest(name, num_threads, [&](ThreadPool* tp) {
+    auto task = [&](ThreadPool* tp) {
       std::vector<std::unique_ptr<TestData>> td;
       onnxruntime::Barrier b(num_concurrent - 1);
 
@@ -90,11 +93,11 @@ void TestConcurrentParallelFor(const std::string& name, int num_threads, int num
       // For a range of scenarios, run some tests via the thread pool, and one directly
       for (int c = 0; c < num_concurrent - 1; c++) {
         ThreadPool::Schedule(tp, [&, c]() {
-            ThreadPool::TrySimpleParallelFor(tp, num_tasks, [&](std::ptrdiff_t i) {
-                IncrementElement(*td[c], i);
-              });
-            b.Notify();
+          ThreadPool::TrySimpleParallelFor(tp, num_tasks, [&](std::ptrdiff_t i) {
+            IncrementElement(*td[c], i);
           });
+          b.Notify();
+        });
       }
 
       ThreadPool::TrySimpleParallelFor(tp, num_tasks, [&](std::ptrdiff_t i) {
@@ -107,7 +110,9 @@ void TestConcurrentParallelFor(const std::string& name, int num_threads, int num
         ValidateTestData(*td[c]);
       }
       td.clear();
-    });
+    };
+    CreateThreadPoolAndTest(name, num_threads, task);
+    CreateThreadPoolAndTest(name, num_threads, task, true);
   }
 }
 

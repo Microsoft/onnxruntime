@@ -9,6 +9,7 @@
 
 #include "core/platform/env.h"
 #include "core/platform/threadpool.h"
+#include "core/platform/threadpoollite.h"
 
 using onnxruntime::Status;
 

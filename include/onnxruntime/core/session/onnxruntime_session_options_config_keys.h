@@ -60,3 +60,8 @@ static const char* const kOrtSessionOptionsUseDeviceAllocatorForInitializers = "
 // "1": default, thread will spin a number of times before blocking
 static const char* const kOrtSessionOptionsConfigAllowInterOpSpinning = "session.inter_op.allow_spinning";
 static const char* const kOrtSessionOptionsConfigAllowIntraOpSpinning = "session.intra_op.allow_spinning";
+
+// Configure whether use threadpoollite for intra-op
+// "0": default, not using tplite for intro-op
+// "1": use tplite for intra-op
+static const char* const kOrtSessionOptionsConfigUseTpLite = "session.intra_op.use_tplite";

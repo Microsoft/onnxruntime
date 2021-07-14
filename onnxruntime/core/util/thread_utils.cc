@@ -6,11 +6,12 @@
 #endif
 #include <thread>
 #include "core/session/ort_apis.h"
+#include "core/platform/threadpoollite.h"
 
 namespace onnxruntime {
 namespace concurrency {
 static std::unique_ptr<ThreadPool>
-CreateThreadPoolHelper(Env* env, OrtThreadPoolParams options) {
+CreateThreadPoolHelper(Env* env, OrtThreadPoolParams options, ThreadPoolType tpool_type) {
   if (options.thread_pool_size == 1)
     return nullptr;
   std::vector<size_t> cpu_list;
@@ -28,8 +29,18 @@ CreateThreadPoolHelper(Env* env, OrtThreadPoolParams options) {
   }
   to.set_denormal_as_zero = options.set_denormal_as_zero;
 
-  return std::make_unique<ThreadPool>(env, to, options.name, options.thread_pool_size,
-                                              options.allow_spinning);
+  if (tpool_type == ThreadPoolType::INTER_OP) {
+    return std::make_unique<ThreadPool>(env, to, options.name,
+                                        options.thread_pool_size,
+                                        options.allow_spinning);
+  } else {
+    return options.use_tplite ? std::make_unique<ThreadPoolLite>(env, to, options.name,
+                                                                 options.thread_pool_size,
+                                                                 options.allow_spinning)
+                              : std::make_unique<ThreadPool>(env, to, options.name,
+                                                             options.thread_pool_size,
+                                                             options.allow_spinning);
+  }
 }
 
 std::unique_ptr<ThreadPool>
@@ -46,8 +57,8 @@ CreateThreadPool(Env* env, OrtThreadPoolParams options, ThreadPoolType tpool_typ
     return CreateThreadPoolHelper(env, options);
   }
 #else
-  ORT_UNUSED_PARAMETER(tpool_type);
-  return CreateThreadPoolHelper(env, options);
+  //ORT_UNUSED_PARAMETER(tpool_type);
+  return CreateThreadPoolHelper(env, options, tpool_type);
 #endif
 }
 

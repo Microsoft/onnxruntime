@@ -388,6 +388,8 @@ ThreadPool::ThreadPool(Env* env,
   }
 }
 
+ThreadPool::ThreadPool() {}
+
 ThreadPool::~ThreadPool() = default;
 
 // Base case for parallel loops, running iterations 0..total, divided into blocks
@@ -524,7 +526,7 @@ bool ThreadPool::ShouldParallelizeLoop(const std::ptrdiff_t num_iterations,
 
 using CostModel = Eigen::TensorCostModel<Eigen::ThreadPoolDevice>;
 
-// Calculates block size based on (1) the iteration cost and (2) parallel
+  // Calculates block size based on (1) the iteration cost and (2) parallel
 // efficiency. We want blocks to be not too small to mitigate parallelization
 // overheads; not too large to mitigate tail effect and potential load
 // imbalance and we also want number of blocks to be evenly dividable across
@@ -581,6 +583,11 @@ static ptrdiff_t CalculateParallelForBlock(const ptrdiff_t n, const Eigen::Tenso
   }
 
   return block_size;
+}
+
+ptrdiff_t GetBlockSize(ptrdiff_t n, const TensorOpCost& c, int num_threads) {
+  Eigen::TensorOpCost cost{c.bytes_loaded, c.bytes_stored, c.compute_cycles};
+  return CalculateParallelForBlock(n, cost, nullptr, num_threads);
 }
 
 void ThreadPool::ParallelFor(std::ptrdiff_t n, const TensorOpCost& c,
