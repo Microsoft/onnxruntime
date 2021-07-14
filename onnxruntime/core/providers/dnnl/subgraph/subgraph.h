@@ -31,13 +31,17 @@ struct DnnlNode {
 #ifdef ENABLE_TRAINING
   int num_outputs = 0;  // how many outputs
   std::vector<std::string> output_names;
+  // num_outputs will equal the number of required outputs while is_ort_output_required
+  // will have a true or false entry for each ORT output. The number of true entries
+  // must equal the num_outputs.
+  std::vector<bool> is_ort_output_required;
 #endif  // ENABLE_TRAINING
   std::vector<size_t> parent_nodes;  // index to parents in vector mklnodes
 
 #ifdef ENABLE_TRAINING
-  onnxruntime::NodeIndex onnx_index; // the index of the onnx runtime node
+  onnxruntime::NodeIndex onnx_index;   // the index of the onnx runtime node
   std::vector<InputNode> input_nodes;  // index and node name of the onnx runtime input nodes to this node
-#endif  //ENABLE_TRAINING
+#endif  // ENABLE_TRAINING
 
   std::string ToString() const {
     std::string key;

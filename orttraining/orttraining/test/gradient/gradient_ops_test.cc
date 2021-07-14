@@ -1057,15 +1057,16 @@ void ConvGradientCheckerTest(std::vector<std::unique_ptr<IExecutionProvider>>* e
 
 TEST(GradientCheckerTest, ConvGrad) {
   std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+#ifdef USE_DNNL
+  // DNNL execution provider will not run unless it is listed before the cpu execution provider
+  execution_providers.push_back(DefaultDnnlExecutionProvider());
+#endif
+
   execution_providers.push_back(DefaultCpuExecutionProvider());
 
   if (HasCudaEnvironment(700)) {
     execution_providers.push_back(DefaultCudaExecutionProvider());
   }
-
-#ifdef USE_DNNL
-  execution_providers.push_back(DefaultDnnlExecutionProvider());
-#endif
 
   ConvGradientCheckerTest(&execution_providers);
 }

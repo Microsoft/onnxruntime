@@ -152,8 +152,14 @@ void DNNLExecutionProvider::CreateOrUpdateDnnlNode(const Node* node,
 #ifdef ENABLE_TRAINING
     dnnl_node.num_outputs = static_cast<int>(node->OutputDefs().size());
     if (dnnl_node.num_outputs > 1) {
-      for (auto n : node_outputs) {
-        dnnl_node.output_names.push_back(n->Name());
+      for (size_t i = 0; i < node->OutputDefs().size(); ++i) {
+        if (node->OutputDefs()[i] != nullptr && node->OutputDefs()[i]->Exists()) {
+          dnnl_node.output_names.push_back(node->OutputDefs()[i]->Name());
+          dnnl_node.is_ort_output_required.push_back(true);
+        } else {
+          dnnl_node.is_ort_output_required.push_back(false);
+          --dnnl_node.num_outputs;
+        }
       }
     }
 #endif  //ENABLE_TRAINING
@@ -261,7 +267,6 @@ std::vector<std::unique_ptr<ComputeCapability>> DNNLExecutionProvider::GetCapabi
 
     if (opManager_.IsOpTypeAvalible(node->OpType())) {
       sub_var.subgraph_node_indexes.push_back(node->Index());
-
       // can we fuse (at Dnnl level) nodes?
       bool fused = false;
 // Operation fusion currently not supported for TRAINING
