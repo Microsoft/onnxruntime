@@ -334,18 +334,49 @@ __global__ void cuComputeGradInput(
       }
 #else
       // Optimization for ROCm MI100
-      for( int l = 0; l < n2 ; l += numx) {
-        int idx = l + thrx;
-        T gamma_idx = (idx<n2)?gamma[ idx ]:T(0); 
-        const U c_loss = static_cast<U>( (idx<n2)?k_dout[ idx ]:T(0) );
-        sum_loss1 += c_loss * U( gamma_idx );
-        if (use_mean) {
-          const U c_h = static_cast<U>( (idx<n2)?k_input[ idx ]:T(0) );
-          sum_loss2 += c_loss * U(gamma_idx) * (c_h - c_mean) * c_invvar;
-        } else {
-          const U c_output = static_cast<U>( (idx<n2)?k_output[idx]:T(0) );
-          sum_loss2 += c_loss * (c_output - U( (idx<n2)?beta[idx]:T(0) ));
-        }
+      using IT = typename std::conditional<sizeof(T)==2, _Float16, T>::type;
+      using T2 = IT __attribute__((ext_vector_type(2)));
+
+      for( int l = 0; l < n2 ; l += 2*numx) {
+        int idx = l + 2*thrx;
+        if( idx+1 < n2) { 
+                T2 gamma_idx = *(const T2*)(gamma + idx ); 
+                const T2 c_loss = *(const T2*)(k_dout + idx);
+
+                if (use_mean) {
+                  const T2 c_h = *(const T2*)( k_input + idx );
+
+                  for(int k = 0; k < 2; k++) {
+                      sum_loss1 += U(c_loss[k]) * U( gamma_idx[k] );
+                      sum_loss2 += U(c_loss[k]) * U(gamma_idx[k]) * ( U(c_h[k]) - c_mean) * c_invvar;
+                  }
+                } else {
+                  const T2 c_output = *(const T2*)( k_output + idx );
+                  const T2 beta_idx = *(const T2*)( beta + idx );
+  
+                  for(int k = 0; k < 2; k++) {
+                      sum_loss1 += U(c_loss[k]) * U( gamma_idx[k] );
+                      sum_loss2 += U(c_loss[k]) * ( U(c_output[k]) - U( beta_idx[k] ));
+                    }
+                }
+        } 
+        else if( idx < n2) { 
+                T gamma_idx = gamma[ idx ]; 
+                const U c_loss = static_cast<U>( k_dout[ idx ] );
+
+                if (use_mean) {
+                  const U c_h = static_cast<U>( k_input[ idx ] );
+
+                  sum_loss1 += c_loss * U( gamma_idx );
+                  sum_loss2 += c_loss * U(gamma_idx) * (c_h - c_mean) * c_invvar;
+                } else {
+                  const U c_output = static_cast<U>( k_output[idx] );
+
+                  sum_loss1 += c_loss * U( gamma_idx );
+                  sum_loss2 += c_loss * (c_output - U( beta[idx] ));
+                }
+        } 
+
       }
 #endif
     } else {
@@ -377,18 +408,48 @@ __global__ void cuComputeGradInput(
       }
 #else
       // Optimization for ROCm MI100
-      for( int l = 0; l < n2 ; l += numx) {
-          int idx = l + thrx;
-          const U c_loss = static_cast<U>((idx<n2)?k_dout[idx]:T(0));
-          sum_loss1 += c_loss;
-          if (use_mean) {
-            const U c_h = static_cast<U>((idx<n2)?k_input[idx]:T(0));
-            sum_loss2 += c_loss * (c_h - c_mean) * c_invvar;
-          } else {
-            const U c_output = static_cast<U>((idx<n2)?k_output[idx]:T(0));
-            sum_loss2 += c_loss * c_output;
-          }
-      }
+      using IT = typename std::conditional<sizeof(T)==2, _Float16, T>::type;
+      using T2 = IT __attribute__((ext_vector_type(2)));
+
+      for( int l = 0; l < n2 ; l += 2*numx) {
+        int idx = l + 2*thrx;
+        if( idx+1 < n2) { 
+                const T2 c_loss = *(const T2*)(k_dout + idx);
+
+                if (use_mean) {
+                  const T2 c_h = *(const T2*)( k_input + idx );
+
+                  for(int k = 0; k < 2; k++) {
+                      sum_loss1 += U(c_loss[k]);
+                      sum_loss2 += U(c_loss[k]) * ( U(c_h[k]) - c_mean) * c_invvar;
+                  }
+                } else {
+                  const T2 c_output = *(const T2*)( k_output + idx );
+                  const T2 beta_idx = *(const T2*)( beta + idx );
+  
+                  for(int k = 0; k < 2; k++) {
+                      sum_loss1 += U(c_loss[k]);
+                      sum_loss2 += U(c_loss[k]) * U(c_output[k]);
+                    }
+                }
+        } 
+        else if( idx < n2) { 
+                const U c_loss = static_cast<U>( k_dout[ idx ] );
+
+                if (use_mean) {
+                  const U c_h = static_cast<U>( k_input[ idx ] );
+
+                  sum_loss1 += c_loss;
+                  sum_loss2 += c_loss * (c_h - c_mean) * c_invvar;
+                } else {
+                  const U c_output = static_cast<U>( k_output[idx] );
+
+                  sum_loss1 += c_loss;
+                  sum_loss2 += c_loss * c_output;
+                }
+        }
+      } 
+
 #endif
     }
     // intra-warp reductions
