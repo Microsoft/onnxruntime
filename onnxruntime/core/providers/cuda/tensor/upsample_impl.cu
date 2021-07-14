@@ -7,20 +7,19 @@
 namespace onnxruntime {
 namespace cuda {
 
-template <typename T>
-__global__ void _UpampleNearestKernel(const size_t rank,
-                                      const TArray<int64_t> input_pitches,
+template <typename T, int RANK>
+__global__ void _UpampleNearestKernel(const TArray<int64_t> input_pitches,
                                       const TArray<fast_divmod> output_div_pitches,
                                       const TArray<fast_divmod> scales_div,
-                                      const T* input_data,
-                                      T* output_data,
+                                      const T* __restrict__ input_data,
+                                      T* __restrict__ output_data,
                                       const size_t N) {
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
   CUDA_LONG input_index = 0;
   CUDA_LONG output_index = id;
 
   int div, mod;
-  for (int dim = 0; dim < rank; ++dim) {
+  for (int dim = 0; dim < RANK; ++dim) {
     output_div_pitches[dim].divmod(output_index, div, mod);
     output_index = mod;
     if (scales_div[dim].d_ != 1 && div > 0) {
@@ -41,8 +40,8 @@ __global__ void _UpampleBilinear4DInputKernel(const int64_t input_dim2,
                                        const TArray<int64_t> input_pitches,
                                        const TArray<fast_divmod> output_div_pitches,
                                        const TArray<fast_divmod> scales_div,
-                                       const T* input_data,
-                                       T* output_data,
+                                       const T* __restrict__ input_data,
+                                       T* __restrict__ output_data,
                                        const size_t N) {
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
   CUDA_LONG input_index = 0;
@@ -101,8 +100,8 @@ __global__ void _UpampleBilinear2DInputKernel(const int64_t input_dim0,
                                               const TArray<int64_t> input_pitches,
                                               const TArray<fast_divmod> output_div_pitches,
                                               const TArray<fast_divmod> scales_div,
-                                              const T* input_data,
-                                              T* output_data,
+                                              const T* __restrict__ input_data,
+                                              T* __restrict__ output_data,
                                               const size_t N) {
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
   CUDA_LONG input_index = 0;
@@ -161,17 +160,37 @@ void UpampleImpl(cudaStream_t stream,
                  const size_t N) {
   int blocksPerGrid = (int)(ceil(static_cast<float>(N) / GridDim::maxThreadsPerBlock));
   if (onnxruntime::UpsampleMode::NN == upsample_mode) {
-    _UpampleNearestKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
-        rank, input_pitches, output_div_pitches, scales_div,
-        input_data, output_data, N);
-  } else if (onnxruntime::UpsampleMode::LINEAR == upsample_mode && rank == 4) {
-    _UpampleBilinear4DInputKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
-        input_dim2, input_pitches, output_div_pitches, scales_div,
-        input_data, output_data, N);
-  } else if (onnxruntime::UpsampleMode::LINEAR == upsample_mode && rank == 2) {
-    _UpampleBilinear2DInputKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
-        input_dim2, input_pitches, output_div_pitches, scales_div,
-        input_data, output_data, N);
+    if (rank == 4) {
+      _UpampleNearestKernel<T,4><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else if (rank == 3) {
+      _UpampleNearestKernel<T,3><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else if (rank == 2) {
+      _UpampleNearestKernel<T,2><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else if (rank == 1) {
+      _UpampleNearestKernel<T,1><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else {
+      ORT_THROW("Unsupported rank by the Upsample CUDA kernel");
+    }
+  } else if (onnxruntime::UpsampleMode::LINEAR) {
+    if (rank == 4) {
+      _UpampleBilinear4DInputKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_dim2, input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else if (rank == 2) {
+      _UpampleBilinear2DInputKernel<T><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
+          input_dim2, input_pitches, output_div_pitches, scales_div,
+          input_data, output_data, N);
+    } else {
+      ORT_THROW("Unsupported rank by the Upsample CUDA kernel");
+    }
   }
 }
 
