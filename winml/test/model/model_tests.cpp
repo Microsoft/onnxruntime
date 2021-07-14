@@ -224,6 +224,7 @@ static std::vector<ITestCase*> GetAllTestCases() {
   };
   allDisabledTests.insert(std::begin(x86DisabledTests), std::end(x86DisabledTests));
 #endif
+allDisabledTests.insert(ORT_TSTR("cntk_simple_seg"));
 
   
   WINML_EXPECT_NO_THROW(LoadTests(dataDirs, whitelistedTestCases, perSampleTolerance, relativePerSampleTolerance,

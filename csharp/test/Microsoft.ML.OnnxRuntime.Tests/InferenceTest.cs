@@ -828,6 +828,7 @@ namespace Microsoft.ML.OnnxRuntime.Tests
                 { "tf_resnet_v1_152", "result mismatch when Conv BN Fusion is applied" },
                 { "coreml_Imputer-LogisticRegression_sklearn_load_breast_cancer", "Can't determine model file name" },
                 { "mask_rcnn_keras", "Model should be edited to remove the extra outputs" },
+                { "cntk_simple_seg", "Bad onnx test output caused by wrong SAME_UPPER/SAME_LOWER for ConvTranspose" },
                 { "test_strnormalizer_export_monday_casesensintive_lower", "ElementType not currently supported"},
                 { "test_max_float64", "node test error"},
                 { "test_min_uint8", "node test error"},

@@ -117,6 +117,7 @@ TEST_P(ModelTest, Run) {
       {"bitshift_left_uint16", "BitShift(11) uint16 support not enabled currently"},
       {"maxunpool_export_with_output_shape",
        "Invalid output in ONNX test. See https://github.com/onnx/onnx/issues/2398"},
+      {"cntk_simple_seg", "Bad onnx test output caused by wrong SAME_UPPER/SAME_LOWER for ConvTranspose"},
       {"training_dropout", "result differs", {}},               // Temporary, subsequent PR will remove this.
       {"training_dropout_default", "result differs", {}},       // Temporary, subsequent PR will remove this.
       {"training_dropout_default_mask", "result differs", {}},  // Temporary, subsequent PR will remove this.
