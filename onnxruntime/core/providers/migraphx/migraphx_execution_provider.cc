@@ -12,7 +12,7 @@
 #include "core/graph/graph_utils.h"
 #include "core/platform/env.h"
 #include "core/session/onnxruntime_cxx_api.h"
-#include "migraphx_inc.h"
+#include "migraphx_call.h"
 #include "migraphx_execution_provider.h"
 #include "hip_allocator.h"
 #include "gpu_data_transfer.h"
@@ -86,7 +86,7 @@ std::shared_ptr<KernelRegistry> MIGraphXExecutionProvider::GetKernelRegistry() c
 MIGraphXExecutionProvider::MIGraphXExecutionProvider(const MIGraphXExecutionProviderInfo& info)
     : IExecutionProvider{onnxruntime::kMIGraphXExecutionProvider} {
   // Set GPU device to be used
-  hipSetDevice(info.device_id);
+  HIP_CALL_THROW(hipSetDevice(info.device_id));
   AllocatorCreationInfo default_memory_info(
       [](int id) { return std::make_unique<HIPAllocator>(id, MIGRAPHX); }, device_id_);
   allocator_ = CreateAllocator(default_memory_info);
@@ -98,8 +98,6 @@ MIGraphXExecutionProvider::MIGraphXExecutionProvider(const MIGraphXExecutionProv
   InsertAllocator(CreateAllocator(pinned_memory_info));
 
   // create the target based on the device_id
-  hipDeviceProp_t prop;
-  hipGetDeviceProperties(&prop, device_id_);
   std::set<std::string> valid_targets = {"gpu", "cpu"};
   if (valid_targets.count(info.target_device) == 0) {
     LOGS_DEFAULT(FATAL) << "Device " << info.target_device << " are not supported";
@@ -330,24 +328,8 @@ static bool IsUnsupportedOpMode(const onnxruntime::GraphViewer& graph_viewer, co
     {
       return true;
     }
-  } else if (optype == "Pow") {
-    // we do not have a implementation to support different types of
-    // the input data
-    const auto args = node->InputDefs();
-    const auto& input1_type = args[0]->TypeAsProto();
-    if (input1_type == nullptr) {
-      return true;
-    }
-    auto data_type1 = input1_type->tensor_type().elem_type();
-    const auto& input2_type = args[1]->TypeAsProto();
-    if (input2_type == nullptr) {
-      return true;
-    }
-    auto data_type2 = input2_type->tensor_type().elem_type();
-    if (data_type1 != data_type2) {
-      return true;
-    }
-  } else if (optype == "MaxPool") {
+  }
+  else if (optype == "MaxPool") {
     //MaxPool "indices" output is not currently supported.
     if (node->OutputDefs().size() > 1) {
       return true;
@@ -448,6 +430,37 @@ static bool IsUnsupportedOpMode(const onnxruntime::GraphViewer& graph_viewer, co
     const auto& args = node->InputDefs();
     if (args.size() == 2) {
       if (can_eval_node_argument(graph_viewer.GetGraph(), node, {1}, logger, input_nodes))
+      {
+        return false;
+      }
+      return true;
+    }
+  } else if (optype == "Resize") {
+    const auto& attributes = node->GetAttributes();
+    const auto ct_attr = attributes.find("coordinate_transformation_mode");
+    if (ct_attr != attributes.end()) {
+      auto ct = ct_attr->second.s();
+      if (ct == "tf_crop_and_resize")
+      {
+        return true;
+      }
+    }
+
+    const auto mode_attr = attributes.find("mode");
+    if (mode_attr != attributes.end()) {
+      auto mode = mode_attr->second.s();
+      if (mode == "cubic")
+      {
+        return true;
+      }
+    }
+
+    const auto& args = node->InputDefs();
+    if (args.size() > 1)
+    {
+      std::vector<std::size_t> indices(args.size() - 1);
+      std::iota(indices.begin(), indices.end(), 1);
+      if (can_eval_node_argument(graph_viewer.GetGraph(), node, indices, logger, input_nodes))
       {
         return false;
       }
@@ -701,10 +714,10 @@ GetUnsupportedNodeIndices(const GraphViewer& graph_viewer,
       "Div", "Dropout", "Elu", "Equal", "Erf", "Exp", "Expand", "Flatten", "Floor", "GRU", "Gather",
       "GatherElements", "Gemm", "GlobalAveragePool", "GlobalMaxPool", "Greater", "Identity", "ImageScaler",
       "InstanceNormalization", "LRN", "LSTM", "LeakyRelu", "Less", "LessOrEqual", "Log", "LogSoftmax", 
-      "MatMul", "Max", "MaxPool", "Min", "Mul", "Neg", "NonZero", "OneHot", "Or", "Pad", "Pow", "PRelu", 
+      "MatMul", "Max", "MaxPool", "Min", "Mul", "Neg", "NonZero", "Not", "OneHot", "Or", "Pad", "Pow", "PRelu", 
       "QuantizeLinear", "RNN", "Range", "Reciprocal", "ReduceL1", "ReduceL2", "ReduceLogSum", "ReduceLogSumExp", 
-      "ReduceMax", "ReduceMean", "ReduceMin", "ReduceProd", "ReduceSum", "ReduceSumSquare", "Relu", "Reshape",
-      "Round", "Selu", "Shape", "Sigmoid", "Sign", "Sin", "Sinh", "Slice", "Softmax", "Split", "Sqrt", "Squeeze",
+      "ReduceMax", "ReduceMean", "ReduceMin", "ReduceProd", "ReduceSum", "ReduceSumSquare", "Relu", "Reshape", "Resize",
+      "Round", "Scatter", "Selu", "Shape", "Sigmoid", "Sign", "Sin", "Sinh", "Slice", "Softmax", "Split", "Sqrt", "Squeeze",
       "Sub", "Sum", "Tan", "Tanh", "Tile", "Transpose", "Unsqueeze", "Where", "Xor"};
   std::vector<NodeIndex> unsupported_nodes_idx;
   for (const auto& node_idx : graph_viewer.GetNodesInTopologicalOrder()) {
@@ -925,6 +938,20 @@ MIGraphXExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_v
     AppendNodesToSubGraph(graph_viewer.GetNodesInTopologicalOrder(), inputs, outputs, result);
 
   } else {  // unsupported_nodes_idx.empty()
+    if (unsupported_nodes.size() > 10)
+    {
+      return result;
+    }
+
+    // migraphx cannot handle Loop, If, and SoftmaxCrossEntropyLoss for now,
+    // so if a model contain any of these operators, fall back to CPU
+    std::unordered_set<std::string> vec_ops = {"If", "Loop", "SoftmaxCrossEntropyLoss"};
+    if (std::any_of(unsupported_nodes.begin(), unsupported_nodes.end(), [&](auto i) {
+      return (vec_ops.count(graph_viewer.GetNode(i)->OpType()) > 0);
+    })) {
+      return result;
+    }
+
     auto mgx_clusters = GetPartitionedSubgraphs(graph_viewer.GetNodesInTopologicalOrder(), unsupported_nodes);
 
     // check whether a subgrap should fallback to CPU
@@ -955,8 +982,6 @@ static ONNX_NAMESPACE::ModelProto GetModelProtoFromFusedNode(const onnxruntime::
                            std::vector<ONNX_NAMESPACE::FunctionProto>(), logger};
 
   ONNX_NAMESPACE::ModelProto model_proto = model.ToProto();
-  //model_proto.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-
   *(model_proto.mutable_graph()) = node_subgraph.ToGraphProto();
 
   auto opset = model_proto.add_opset_import();
@@ -1200,7 +1225,7 @@ Status MIGraphXExecutionProvider::Compile(const std::vector<onnxruntime::Node*>&
         // lock to avoid race condition
         std::lock_guard<OrtMutex> lock(*(mgx_state->mgx_mu_ptr));
         auto prog_outputs = prog.eval(m);
-        hipDeviceSynchronize();
+        HIP_CALL_THROW(hipDeviceSynchronize());
 
         // In case of input parameters are reused as output parameter call hipMemcpy
         auto output_num = prog_outputs.size();
@@ -1214,7 +1239,7 @@ Status MIGraphXExecutionProvider::Compile(const std::vector<onnxruntime::Node*>&
             std::vector<int64_t> ort_shape{res_lens.begin(), res_lens.end()};
             OrtValue* output_tensor = ort.KernelContext_GetOutput(context, i, ort_shape.data(), ort_shape.size());
             void* output_data = ort.GetTensorMutableData<void>(output_tensor);
-            hipMemcpy(output_data, gpu_res.data(), res_shape.bytes(), hipMemcpyDeviceToDevice);
+            HIP_CALL_THROW(hipMemcpy(output_data, gpu_res.data(), res_shape.bytes(), hipMemcpyDeviceToDevice));
           }
         }
       }

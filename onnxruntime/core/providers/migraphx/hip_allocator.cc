@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "migraphx_inc.h"
+#include "migraphx_call.h"
 #include "hip_allocator.h"
 #include "core/framework/allocatormgr.h"
 #include "core/framework/session_state.h"
@@ -32,14 +32,14 @@ void* HIPAllocator::Alloc(size_t size) {
   CheckDevice();
   void* p = nullptr;
   if (size > 0) {
-    hipMalloc((void**)&p, size);
+    HIP_CALL_THROW(hipMalloc((void**)&p, size));
   }
   return p;
 }
 
 void HIPAllocator::Free(void* p) {
   CheckDevice();
-  hipFree(p);  // do not throw error since it's OK for hipFree to fail during shutdown
+  (void)hipFree(p);  // do not throw error since it's OK for hipFree to fail during shutdown
 }
 
 FencePtr HIPAllocator::CreateFence(const SessionState* session_state) {
@@ -49,13 +49,13 @@ FencePtr HIPAllocator::CreateFence(const SessionState* session_state) {
 void* HIPPinnedAllocator::Alloc(size_t size) {
   void* p = nullptr;
   if (size > 0) {
-    hipHostMalloc((void**)&p, size);
+    HIP_CALL_THROW(hipHostMalloc((void**)&p, size));
   }
   return p;
 }
 
 void HIPPinnedAllocator::Free(void* p) {
-  hipHostFree(p);
+  HIP_CALL_THROW(hipHostFree(p));
 }
 
 FencePtr HIPPinnedAllocator::CreateFence(const SessionState* session_state) {
