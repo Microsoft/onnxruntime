@@ -1,185 +1,325 @@
 ---
-title: Export PyTorch model
-nav_exclude: true 
+nav_exclude: true
 ---
+# Create and run PyTorch models with custom operators
 
-## Export PyTorch model with custom ONNX operators
-{: .no_toc }
+ONNX Runtime custom operators can be used to export and run a PyTorch model, when those operators
+are not already present in the set of standard ONNX operators.
 
-This document explains the process of exporting PyTorch models with custom ONNX Runtime ops. The aim is to export a PyTorch model with operators that are not supported in ONNX, and extend ONNX Runtime to support these custom ops.
+ONNX Runtime supplies a library of commonly used custom operators via the [onnxruntime_extensions](https://github.com/microsoft/onnxruntime-extensions) package.
 
-Currently, a torch op can be exported as a custom operator using our custom op (symbolic) registration API. We can  use this API to register custom ONNX Runtime ops under "com.microsoft" domain.
+You can also write your own custom operators.
 
-## Contents
-{: .no_toc }
+This tutorial demonstrates how to utilize custom operators to create and run a PyTorch model.
 
-* TOC placeholder
-{:toc}
+## Create a PyTorch model with an operator from the extensions library
 
-### Export a Custom Op
+This example uses the Inverse operator, which is not present in ONNX, but is available
+in the custom ops library.
 
-In this example, we take Inverse operator as an example. To enable export of ```torch.inverse```, a symbolic function can be created and registered as part of custom ops:
+There are three steps to creating an ONNX model that uses an operator from the
+ONNX Runtime Extension library.
 
-```python
-from torch.onnx import register_custom_op_symbolic
-
-def my_inverse(g, self):
-    return g.op("com.microsoft::Inverse", self)
-
-# register_custom_op_symbolic('<namespace>::inverse', my_inverse, <opset_version>)
-register_custom_op_symbolic('::inverse', my_inverse, 1)
-```
-
-`<namespace>` is a part of the torch operator name. For standard torch operators, namespace can be omitted.
-
-`com.microsoft` should be used as the custom opset domain for ONNX Runtime ops. You can choose the custom opset version during op registration.
-
-All symbolics for ONNX Runtime custom ops are defined in `tools/python/register_custom_ops_pytorch_exporter.py`.
-
-If you are adding a symbolic function for a new custom op, add the function to this file.
-
-### Extend ONNX Runtime with Custom Ops
-
-The next step is to add op schema and kernel implementation in ONNX Runtime.
-Consider the Inverse custom op as an example added in:
-https://github.com/microsoft/onnxruntime/pull/3485
-
-Custom op schema and shape inference function should be added in https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/core/graph/contrib_ops/contrib_defs.cc using `ONNX_CONTRIB_OPERATOR_SCHEMA`.
-
-```c++
-ONNX_CONTRIB_OPERATOR_SCHEMA(Inverse)
-    .SetDomain(kMSDomain) // kMSDomain = "com.microsoft"
-    .SinceVersion(1) // Same version used at op (symbolic) registration
-    ...
-```
-
-To comply with ONNX guideline for new operators, a new operator should have complete reference implementation tests and shape inference tests.
-
-Reference implementation python tests should be added in:
-https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/test/python/contrib_ops
-E.g.: https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/test/python/contrib_ops/onnx_test_trilu.py
-
-Shape inference C++ tests should be added in:
-https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/test/contrib_ops
-E.g.: https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/test/contrib_ops/trilu_shape_inference_test.cc
-
-The operator kernel should be implemented using ```Compute``` function
-under contrib namespace in `https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/contrib_ops/cpu/<operator>.cc` 
-for CPU and `https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/contrib_ops/cuda/<operator>.cc` for CUDA.
-
-```c++
-namespace onnxruntime {
-namespace contrib {
-
-class Inverse final : public OpKernel {
- public:
-  explicit Inverse(const OpKernelInfo& info) : OpKernel(info) {}
-  Status Compute(OpKernelContext* ctx) const override;
-
- private:
- ...
-};
-
-ONNX_OPERATOR_KERNEL_EX(
-    Inverse,
-    kMSDomain,
-    1,
-    kCpuExecutionProvider,
-    KernelDefBuilder()
-        .TypeConstraint("T", BuildKernelDefConstraints<float, double, MLFloat16>()),
-    Inverse);
-
-Status Inverse::Compute(OpKernelContext* ctx) const {
-... // kernel implementation
-}
-
-}  // namespace contrib
-}  // namespace onnxruntime
-```
-
-Operator kernel should be registered in https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/contrib_ops/cpu_contrib_kernels.cc for CPU and https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/contrib_ops/cuda_contrib_kernels.cc for CUDA.
-
-Now you should be able to build and install ONNX Runtime to start using your custom op.
-
-### ONNX Runtime Tests
-
-ONNX Runtime custom op kernel tests should be added in: https://github.com/microsoft/onnxruntime/tree/master/onnxruntime/test/contrib_ops/<operator>_test.cc
-
-```c++
-namespace onnxruntime {
-namespace test {
-
-// Add a comprehensive set of unit tests for custom op kernel implementation
-
-TEST(InverseContribOpTest, two_by_two_float) {
-  OpTester test("Inverse", 1, kMSDomain); // custom opset version and domain
-  test.AddInput<float>("X", {2, 2}, {4, 7, 2, 6});
-  test.AddOutput<float>("Y", {2, 2}, {0.6f, -0.7f, -0.2f, 0.4f});
-  test.Run();
-}
-
-...
-
-}  // namespace test
-}  // namespace onnxruntime
-```
-
-### Test model Export End to End
-
-Once the custom op is registered in the exporter and implemented in ONNX Runtime, you should be able to export it as part of you ONNX model and run it with ONNX Runtime.
-
-Below you can find a sample script for exporting and running the inverse operator as part of a model.
-
-The exported model includes a combination of ONNX standard ops and the custom ops.
-
-This test also compares the output of PyTorch model with ONNX Runtime outputs to test both the operator export and implementation.
+1. Create or reference a model that uses an operator from the extension library
+2. Register this operator (and any others that you use) with the PyTorch ONNX exporter
+   Note: The domain name should always be fixed to `ai.onnx.contrib`
+3. Export the model using the PyTorch exporter, supplying the model, sample input so that the model
+   can be traced into an ONNX computation graph, and a file to write it to. Specifying `verbose=True`
+   will print out the graph once it is exported. This is optional, but may be useful as
+   a visual verification that your model has been exported as you expected.
 
 ```python
 import torch
+import onnx
 import onnxruntime
-import io
-import numpy
 
+# Define model that uses an operator that is present in the extensions library
+class MyModel(torch.nn.Module):
+    def __init__(self):
+        super(MyModel, self).__init__()
 
-class CustomInverse(torch.nn.Module):
     def forward(self, x):
         return torch.inverse(x) + x
 
-x = torch.randn(3, 3)
+model = MyModel()
 
-# Export model to ONNX
-f = io.BytesIO()
-torch.onnx.export(CustomInverse(), (x,), f)
+# Train the model
+# In a real use case, you would train your model here
 
-model = CustomInverse()
-pt_outputs = model(x)
+# Register the signature of the operator with the PyTorch exporter
+def my_inverse(g, self):
+    return g.op("ai.onnx.contrib::Inverse", self)
 
-# Run the exported model with ONNX Runtime
-ort_sess = onnxruntime.InferenceSession(f.getvalue())
-ort_inputs = dict((ort_sess.get_inputs()[i].name, input.cpu().numpy()) for i, input in enumerate((x,)))
-ort_outputs = ort_sess.run(None, ort_inputs)
+torch.onnx.register_custom_op_symbolic('::inverse', my_inverse, 1)
 
-# Validate PyTorch and ONNX Runtime results
-numpy.testing.assert_allclose(pt_outputs.cpu().numpy(), ort_outputs[0], rtol=1e-03, atol=1e-05)
+# Export the model
+input = torch.randn(3, 3)
+torch.onnx.export(model, (input, ), "mymodel.onnx", verbose=True)
 ```
 
-By default, the opset version will be set to ``1`` for custom opsets. If you'd like to export your
-custom op to a higher opset version, you can specify the custom opset domain and version using 
-the ``custom_opsets argument`` when calling the export API. Note that this is different than the opset 
-version associated with default ```ONNX``` domain.
+## Run a model with extension operators using the Python inference API
+
+Once the model has been created and exported, you can use the ONNX Runtime inference
+APIs to run the model. In order to use the operators defined in the extensions library,
+you need to import the extensions library and register it using the InferenceSession
+session options.
 
 ```python
-torch.onnx.export(CustomInverse(), (x,), f, custom_opsets={"com.microsoft": 5})
+import onnxruntime
+import onnxruntime_extensions
+import torch
+
+so = onnxruntime.SessionOptions()
+so.register_custom_ops_library(onnxruntime_extensions.get_library_path())
+
+sess = onnxruntime.InferenceSession("mymodel.onnx", so)
+input_name = sess.get_inputs()[0].name
+
+# Run with the identity matrix
+output = sess.run(None, {input_name: torch.eye(3).numpy()})[0]
+print(output)
 ```
 
-Note that you can export a custom op to any version >= the opset version used at registration.
-
-We have a set of tests for export and output validation of ONNX models with ONNX Runtime custom ops in 
-``tools/test/test_test_custom_ops_pytorch_exporter.py``. If you're adding a new custom operator, please
-make sure to include tests in this file.
-
-You can run these tests using the command:
+You should see output similar to the following, as the inverse of the identity matrix
+is the identity itself and you add it to itself.
 
 ```bash
-PYTHONPATH=<path_to_onnxruntime/tools> pytest -v test_custom_ops_pytorch_exporter.py
+tensor([[2., 0., 0.],
+        [0., 2., 0.],
+        [0., 0., 2.]])
 ```
+
+Operators in the ONNX Runtime Extensions library are listed [here](https://github.com/microsoft/onnxruntime-extensions/blob/main/docs/custom_text_ops.md).
+
+## Create a PyTorch model with a custom operator that you define
+
+If the operator is not in the ONNX Runtime Extensions library, you can write your own
+custom operator, as part of your PyTorch model, and export it to ONNX format.
+
+In the model below, the operator is `trace`, which calculates the sum of the
+diagonal elements of a matrix.
+
+```python
+import torch
+import onnx
+import onnxruntime
+
+# Define model that uses an operator that is not present in the extensions library
+class MyModel(torch.nn.Module):
+    def __init__(self):
+        super(MyModel, self).__init__()
+
+    def forward(self, x):
+        return torch.trace(x)
+
+model = MyModel()
+
+# Train the model
+# ...
+
+# Register the signature with the PyTorch exporter
+def my_trace(g, self):
+    return g.op("ai.onnx.contrib::Trace", self)
+
+torch.onnx.register_custom_op_symbolic('::trace', my_trace, 1)
+
+# Export the model
+input = torch.randn(3, 3)
+torch.onnx.export(model, (input, ), "model_with_trace.onnx", verbose=True)
+```
+
+## Run a model with custom operators using the Python inference API
+
+Again, once the model has been created and exported, you can use the ONNX Runtime inference
+APIs to run the model. Two steps are required before using the ONNX Runtime inference APIs.
+Note that these two steps must be executed in this order.
+
+1. Provide a definition for the operator.
+   This is achieved by the `@onnx_op` annotation, which adds your operator to the
+   library of custom operators already in the extensions library.
+2. Register the operator definition with ONNX Runtime
+   The previous step added the operator to the extensions library. This step
+   makes all operators in the extensions library, as well as your new
+   operator available to ONNX Runtime.
+
+```python
+import numpy
+import torch
+import onnxruntime
+import onnxruntime_extensions
+from onnxruntime_extensions import PyOp, onnx_op
+
+# Define the operator
+@onnx_op(op_type="Trace", inputs=[PyOp.dt_float])
+def trace(x):
+    return numpy.trace(x)
+
+# Register the extensions library (of which your operator is now effectively a member)
+so = onnxruntime.SessionOptions()
+so.register_custom_ops_library(onnxruntime_extensions.get_library_path())
+
+sess = onnxruntime.InferenceSession("model_with_trace.onnx", so)
+input_name = sess.get_inputs()[0].name
+output = sess.run(None, {input_name: torch.randn(3, 3).numpy()})[0]
+print(output)
+```
+
+## Run a model with extension operators using the C++ API
+
+1. Install the ONNX Runtime C++ libraries
+
+    ```bash
+    wget https://github.com/microsoft/onnxruntime/releases/download/v1.8.0/onnxruntime-linux-x64-1.8.0.tgz
+    tar xvzf onnxruntime-linux-x64-1.8.0.tgz
+    sudo cp onnxruntime-linux-x64-1.8.0/include/* /usr/local/include
+    sudo cp cp onnxruntime-linux-x64-1.8.0/lib/* /usr/local/lib
+    sudo ldconfig
+    ```
+
+2. Build and install the extensions library C++ library
+
+    To run the model using the C++ API you need to build the extensions library from source.
+    Note that the build requires 8GB of RAM to execute.
+
+    ```bash
+    git clone https://github.com/microsoft/onnxruntime-extensions
+    cd onnxruntime-extensions
+    ./build.sh
+    cp out/Linux/libortcustomops.so /usr/local/lib/   
+    sudo ldconfig
+    ```
+
+3. Write your application
+
+    This C++ code is identical to the basic C++ sample, with the addition of code to
+    load the extensions library at the top.
+
+    ```cpp
+    #include <assert.h>
+    #include <vector>
+    #include <onnxruntime_cxx_api.h>
+
+    // main() is where program execution  begins.
+    int main()
+    {
+
+        Ort::SessionOptions session_options;
+        const char *custom_op_library_filename = "/usr/local/lib/libortcustomops.so";
+        void *handle = nullptr;
+
+        // The line loads the customop library into ONNXRuntime engine to load the ONNX model with the custom op
+        Ort::ThrowOnError(Ort::GetApi().RegisterCustomOpsLibrary((OrtSessionOptions *)session_options, custom_op_library_filename, &handle));
+
+        //*************************************************************************
+        // initialize  enviroment...one enviroment per process
+        // enviroment maintains thread pools and other state info
+        Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "test");
+
+        // initialize session options if needed
+        session_options.SetIntraOpNumThreads(1);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+
+        const char *model_path = "mymodel.onnx";
+
+        printf("Using ONNX Runtime C++ API\n");
+        Ort::Session session(env, model_path, session_options);
+
+        //*************************************************************************
+        // print model input layer (node names, types, shape etc.)
+        Ort::AllocatorWithDefaultOptions allocator;
+
+        // print number of model input nodes
+        size_t num_input_nodes = session.GetInputCount();
+        std::vector<const char *> input_node_names(num_input_nodes);
+        std::vector<int64_t> input_node_dims;
+
+        printf("Number of inputs = %zu\n", num_input_nodes);
+
+        // iterate over all input nodes
+        for (int i = 0; i < num_input_nodes; i++)
+        {
+            // print input node names
+            char *input_name = session.GetInputName(i, allocator);
+            printf("Input %d : name=%s\n", i, input_name);
+            input_node_names[i] = input_name;
+
+            // print input node types
+            Ort::TypeInfo type_info = session.GetInputTypeInfo(i);
+            auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+
+            ONNXTensorElementDataType type = tensor_info.GetElementType();
+            printf("Input %d : type=%d\n", i, type);
+
+            // print input shapes/dims
+            input_node_dims = tensor_info.GetShape();
+            printf("Input %d : num_dims=%zu\n", i, input_node_dims.size());
+            for (int j = 0; j < input_node_dims.size(); j++)
+                printf("Input %d : dim %d=%jd\n", i, j, input_node_dims[j]);
+        }
+
+        // Results should be...
+        // Number of inputs = 1
+        // Input 0 : name = data_0
+        // Input 0 : type = 1
+        // Input 0 : num_dims = 2
+        // Input 0 : dim 0 = 3
+        // Input 0 : dim 1 = 3
+
+        //*************************************************************************
+        // Similar operations to get output node information.
+        // Use OrtSessionGetOutputCount(), OrtSessionGetOutputName()
+        // OrtSessionGetOutputTypeInfo() as shown above.
+
+        //*************************************************************************
+        // Run the model using sample data, and inspect values
+
+        size_t input_tensor_size = 3 * 3;
+
+        std::vector<float> input_tensor_values(input_tensor_size);
+        std::vector<const char *> output_node_names = {"2"};
+
+        // Run with the identity matrix 
+        input_tensor_values[0] = 1;
+        input_tensor_values[1] = 0;
+        input_tensor_values[2] = 0;
+        input_tensor_values[3] = 0;
+        input_tensor_values[4] = 1;
+        input_tensor_values[5] = 0;
+        input_tensor_values[6] = 0;
+        input_tensor_values[7] = 0;
+        input_tensor_values[8] = 1;
+
+        // Create input tensor object from data values
+        auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value input_tensor = Ort::Value::CreateTensor<float>(memory_info, input_tensor_values.data(), input_tensor_size, input_node_dims.data(), 2);
+        assert(input_tensor.IsTensor());
+
+        // Run model & input tensor, get back output tensor
+        auto output_tensors = session.Run(Ort::RunOptions{nullptr}, input_node_names.data(), &input_tensor, 1, output_node_names.data(), 1);
+        assert(output_tensors.size() == 1 && output_tensors.front().IsTensor());
+
+        // Get pointer to output tensor float values
+        float *floatarr = output_tensors.front().GetTensorMutableData<float>();
+
+        // Run the model, and print the output
+        for (int i = 0; i < 9; i++)
+            printf("Value [%d] =  %f\n", i, floatarr[i]);
+
+        printf("Done!\n");
+        return 0;
+    ```
+
+4. Build and run your application
+
+    ```bash
+    g++ Sample.cpp -lonnxruntime -o sample
+    ./sample
+    ```
+
+    You should see the following output from the model
+
+    ```bash
+    tensor([[2., 0., 0.],
+            [0., 2., 0.],
+            [0., 0., 2.]])
+    ```
