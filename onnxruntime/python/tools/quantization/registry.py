@@ -11,6 +11,7 @@ from .operators.binary_op import QLinearBinaryOp
 from .operators.maxpool import QDQMaxPool, QMaxPool
 from .operators.gavgpool import QGlobalAveragePool
 from .operators.lstm import LSTMQuant
+from .operators.skip_layer_norm import SkipLayerNormalizationQuant
 from .operators.split import QSplit
 from .operators.pad import QPad
 from .operators.direct_q8 import Direct8BitOp, QDQDirect8BitOp
@@ -21,6 +22,7 @@ from .operators.concat import QLinearConcat, QDQConcat
 CommonOpsRegistry = {
     "Gather": GatherQuant,
     "EmbedLayerNormalization": EmbedLayerNormalizationQuant,
+    "SkipLayerNormalization": SkipLayerNormalizationQuant,
 }
 
 IntegerOpsRegistry = {

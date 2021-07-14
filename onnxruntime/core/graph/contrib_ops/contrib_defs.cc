@@ -641,6 +641,32 @@ If mask is provided, mask index (that is position of first 0 in mask, or number 
       .TypeConstraint("T", {"tensor(float)"}, "Constrain input and output types to float32 tensors.")
       .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::embedLayerNormalizationShapeInference);
 
+  static const char* EmbedLayerNormBiasGelu_ver1_doc = R"DOC(
+TODO(kreeger): Write me!)DOC";
+
+  ONNX_CONTRIB_OPERATOR_SCHEMA(EmbedLayerNormBiasGelu)
+      .SetDomain(kMSDomain)
+      .SinceVersion(1)
+      .SetDoc(EmbedLayerNormBiasGelu_ver1_doc)
+      .Attr("epsilon", "The epsilon value to use to avoid division by zero.", AttributeProto::FLOAT, kDefaultEmbedLayerNormEpsilon)
+      .Input(0, "SLN input 0 (input)", "TODO(kreeger)", "T")
+      .Input(1, "SLN input 1 (skip)", "TODO(kreeger)", "T")
+      .Input(2, "SLN input 2 (gamma)", "TODO(kreeger)", "T")
+      .Input(3, "SLN input 3 (beta)", "TODO(kreeger)", "T")
+      .Input(4, "SLN input 4 (bias)", "TODO(kreeger)", "T")
+      .Input(5, "MatMul #1 Input 1", "TODO(kreeger)", "T")
+      .Input(6, "BiasGelu Input 1", "TODO(kreeger)", "T")
+      .Input(7, "MatMul #2 Input 1", "TODO(kreeger)", "T")
+      .Output(0, "output", "TODO(kreeger)", "T")
+      .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output float tensors types.")
+      .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
+        if (ctx.getNumInputs() > 0) {
+        }
+        //
+        // TODO(kreeger): write me!
+        //
+      });
+
   static const char* FastGelu_ver1_doc = R"DOC(
 GELU (Gaussian Error Linear Unit) approximation: Y=0.5*X*(1+tanh(0.797885*X+0.035677*X*X*X)) with an optional input of bias that will be added to X before GELU.)DOC";
 

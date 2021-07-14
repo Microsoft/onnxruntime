@@ -9,6 +9,7 @@
 namespace onnxruntime {
 namespace contrib {
 
+// TODO(kreeger): Bump this out into a helper header in this directory.
 class EmbedLayerNormBase : public OpKernel {
  public:
   explicit EmbedLayerNormBase(const OpKernelInfo& op_kernel_info);

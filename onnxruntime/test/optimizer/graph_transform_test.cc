@@ -30,6 +30,7 @@
 #include "core/optimizer/div_mul_fusion.h"
 #include "core/optimizer/dropout_elimination.h"
 #include "core/optimizer/dynamic_quantize_matmul_fusion.h"
+#include "core/optimizer/embed_layer_norm_bias_gelu_fusion.h"
 #include "core/optimizer/embed_layer_norm_fusion.h"
 #include "core/optimizer/expand_elimination.h"
 #include "core/optimizer/fast_gelu_fusion.h"
@@ -3298,6 +3299,26 @@ TEST_F(GraphTransformationTests, SkipLayerNormFusion_NoBeta) {
   ASSERT_TRUE(op_to_count["Add"] == 0);
   ASSERT_TRUE(op_to_count["LayerNormalization"] == 0);
   ASSERT_TRUE(op_to_count["com.microsoft.SkipLayerNormalization"] == 1);
+}
+
+TEST_F(GraphTransformationTests, EmbedLayerNormBiasGeluFusion1) {
+  auto model_uri = MODEL_FOLDER "fusion/skip_layer_norm_matmul_biasgelu_matmul_subgraph.onnx";
+  std::shared_ptr<Model> p_model;
+  ASSERT_STATUS_OK(Model::Load(model_uri, p_model, nullptr, *logger_));
+  Graph& graph = p_model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  graph_transformation_mgr.Register(std::make_unique<EmbedLayerNormBiasGeluFusion>(), TransformerLevel::Level2);
+  auto ret = graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level2, *logger_);
+  ASSERT_TRUE(ret.IsOK());
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_TRUE(op_to_count["MatMul"] == 0);
+  ASSERT_TRUE(op_to_count["BiasGelu"] == 0);
+  // Preserve the SkipLayerNorm layer without a matching subgraph:
+  ASSERT_TRUE(op_to_count["com.microsoft.SkipLayerNormalization"] == 1);
+
+  //Model::Save(*p_model.get(), "sln_embed_all.onnx");
 }
 
 TEST_F(GraphTransformationTests, EmbedLayerNormFusionFormat1) {
