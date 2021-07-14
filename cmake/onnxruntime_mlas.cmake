@@ -229,6 +229,18 @@ else()
         COMPILES_P10
       )
       if(COMPILES_P10)
+        check_cxx_source_compiles("
+          #include <sys/auxv.h>
+          int main() {
+            unsigned long hwcap2 = getauxval(AT_HWCAP2);
+            bool HasP10 = ((hwcap2 & PPC_FEATURE2_MMA) && (hwcap2 & PPC_FEATURE2_ARCH_3_1));
+            return 0;
+          }"
+          HAS_P10_RUNTIME
+        )
+        if (HAS_P10_RUNTIME)
+          set_source_files_properties(${mlas_common_srcs} PROPERTIES COMPILE_FLAGS "-DPOWER10")
+        endif()
         set(mlas_platform_srcs_power10
           ${ONNXRUNTIME_ROOT}/core/mlas/lib/power/SgemmKernelPOWER10.cpp
         )
