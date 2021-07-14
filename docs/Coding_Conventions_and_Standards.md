@@ -33,6 +33,19 @@ Other
 * Use [SafeInt](https://github.com/dcleblanc/SafeInt) when calculating the size of memory to allocate to protect against overflow errors
   * `#include "core/common/safeint.h"`
   * search for `SafeInt<size_t>` in the code for examples
+* The following C++ warnings should never be disabled in onnxruntime VC++ projects(Required by [Binskim](https://github.com/microsoft/binskim/blob/d9afb65c89a621411efded74c27999281d87867e/src/BinSkim.Rules/PERules/BA2007.EnableCriticalCompilerWarnings.cs)).
+  1. [4018](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4018) 'token' : signed/unsigned mismatch
+  2. [4146](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-2-c4146?view=msvc-160) unary minus operator applied to unsigned type, result still unsigned
+  3. [4244](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-2-c4244?view=msvc-160) 'argument' : conversion from 'type1' to 'type2', possible loss of data. For example, casting a int64_t to size_t. 
+  4. [4267](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4267?view=msvc-160) 'var' : conversion from 'size_t' to 'type', possible loss of data.
+  5. [4302](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-2-c4302?view=msvc-160) 'conversion' : truncation from 'type 1' to 'type 2'
+  6. [4308](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-2-c4308?view=msvc-160) negative integral constant converted to unsigned type 
+  7. [4532](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4532?view=msvc-160) 'continue' : jump out of \_\_finally/finally block has undefined behavior during termination handling
+  8. [4533](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4533?view=msvc-160) initialization of 'variable' is skipped by 'instruction'
+  9. [4700](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-and-level-4-c4700?view=msvc-160) uninitialized local variable 'name' used
+  10. [4789](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4789?view=msvc-160) buffer 'identifier' of size N bytes will be overrun; M bytes will be written starting at offset L
+  11. [4995](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4995?view=msvc-160) 'function': name was marked as #pragma deprecated 
+  12. [4996](https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4996?view=msvc-160) Your code uses a function, class member, variable, or typedef that's marked deprecated
 
 #### Clang-format
 
@@ -45,6 +58,8 @@ There is a .clang-format file in the root directory that has the max line length
 Visual Studio Code Analysis with [C++ Core guidelines](https://github.com/isocpp/CppCoreGuidelines/blob/master/CppCoreGuidelines.md) rules enabled is configured to run on build for the onnxruntime_common, onnxruntime_graph and onnxruntime_util libraries. Updating the onnxruntime_framework and onnxruntime_provider libraries to enable Code Analysis and build warning free is pending. 
 
 Code changes should build with no Code Analysis warnings, however this is somewhat difficult to achieve consistently as the Code Analysis implementation is in fairly constant flux. Different minor releases may have less false positives (a build with the latest version may be warning free, and a build with an earlier version may not), or detect additional problems (an earlier version builds warning free and a later version doesn't). 
+
+We use [BinSkim Binary Analyzer](https://github.com/microsoft/binskim) scanning our binraries.
 
 ## Unit Testing and Code Coverage
 
