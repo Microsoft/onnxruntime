@@ -149,7 +149,7 @@ def layer_norm_transform(model_proto):
         id = id + 1
         layer_norm_output.append('saved_mean_' + str(id))
         id = id + 1
-        layer_norm_output.append('saved_inv_std_var_' + str(id))
+        layer_norm_output.append('saved_inv_std_' + str(id))
         layer_norm = onnx.helper.make_node("LayerNormalization",
                                         layer_norm_input,
                                         layer_norm_output,

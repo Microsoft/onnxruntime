@@ -72,32 +72,32 @@ Status LayerNorm<T, U, simplified>::ComputeInternal(OpKernelContext* ctx) const 
   Tensor* Y = ctx->Output(0, x_shape);
   auto Y_data = reinterpret_cast<CudaT*>(Y->template MutableData<T>());
 
-  //Mean and variance
-  std::vector<int64_t> mean_inv_std_var_dim;
+  // Mean and standard deviation
+  std::vector<int64_t> mean_inv_std_dim;
   for (int i = 0; i < static_cast<int>(x_shape.NumDimensions()); ++i) {
     if (i < axis) {
-      mean_inv_std_var_dim.emplace_back(x_shape.GetDims()[i]);
+      mean_inv_std_dim.emplace_back(x_shape.GetDims()[i]);
     } else {
-      mean_inv_std_var_dim.emplace_back(1);
+      mean_inv_std_dim.emplace_back(1);
     }
   }
   int output_index = 1;
 
   CudaU* mean_data = nullptr;
   if (!simplified) {
-    Tensor* mean = ctx->Output(output_index++, TensorShape(mean_inv_std_var_dim));
+    Tensor* mean = ctx->Output(output_index++, TensorShape(mean_inv_std_dim));
     if (mean != nullptr) {
       mean_data = reinterpret_cast<CudaU*>(mean->template MutableData<U>());
     }
   }
 
-  Tensor* var = ctx->Output(output_index, TensorShape(mean_inv_std_var_dim));
-  CudaU* inv_var_data = nullptr;
-  if (var != nullptr) {
-    inv_var_data = reinterpret_cast<CudaU*>(var->template MutableData<U>());
+  Tensor* std = ctx->Output(output_index, TensorShape(mean_inv_std_dim));
+  CudaU* inv_std_data = nullptr;
+  if (std != nullptr) {
+    inv_std_data = reinterpret_cast<CudaU*>(std->template MutableData<U>());
   }
 
-  HostApplyLayerNorm<CudaT, CudaU, simplified>(GetDeviceProp(), Stream(), Y_data, mean_data, inv_var_data, X_data, n1, n2, epsilon_, scale_data, bias_data);
+  HostApplyLayerNorm<CudaT, CudaU, simplified>(GetDeviceProp(), Stream(), Y_data, mean_data, inv_std_data, X_data, n1, n2, epsilon_, scale_data, bias_data);
   return Status::OK();
 }
 

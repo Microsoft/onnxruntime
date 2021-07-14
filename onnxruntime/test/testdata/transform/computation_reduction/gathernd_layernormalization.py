@@ -18,7 +18,7 @@ layer_norm1_bias_initializer = numpy_helper.from_array(layer_norm1_bias_np_vals,
 nodes=[]
 layer_norm1 = helper.make_node('LayerNormalization', 
                                ['input', layer_norm1_weight_initializer.name, layer_norm1_bias_initializer.name],
-                               ['layer_norm1', 'saved_mean1', 'saved_inv_std_var1'],
+                               ['layer_norm1', 'saved_mean1', 'saved_inv_std1'],
                                name='layer_norm_1', epsilon=9.999999960041972e-13, axis=-1)
 nodes.append(layer_norm1)
 

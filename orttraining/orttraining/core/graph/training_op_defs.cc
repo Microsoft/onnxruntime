@@ -2099,18 +2099,18 @@ Example 4:
       .Input(1, "X", "Input data tensor from the forward path", "T")
       .Input(2, "scale", "Scale tensor.", "T")
       .Input(3, "mean", "mean of X.", "U")
-      .Input(4, "inv_std_var", "inverse std variance of X.", "U")
+      .Input(4, "inv_std", "inverse standard deviation of X.", "U")
       .Output(0, "X_grad", "Gradient of the input.", "T")
       .Output(1, "scale_grad", "Gradient of the scale.", "T")
       .Output(2, "bias_grad", "Gradient of the bias.", "T")
       .TypeConstraint(
           "T",
           {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(bfloat16)"},
-          "Constrain input and output types (except mean and inv_std_var) to float tensors.")
+          "Constrain input and output types (except mean and inv_std) to float tensors.")
       .TypeConstraint(
           "U",
           {"tensor(float)", "tensor(bfloat16)"},
-          "Constrain mean and inv_std_var to float tensors.")
+          "Constrain mean and inv_std to float tensors.")
       .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
         propagateElemTypeFromInputToOutput(ctx, 1, 0);
         propagateShapeFromInputToOutput(ctx, 1, 0);
@@ -2133,23 +2133,23 @@ Example 4:
       .Input(0, "Y_grad", "The gradient tensor from output.", "T")
       .Input(1, "X", "Input data tensor from the forward path", "T")
       .Input(2, "scale", "Scale tensor.", "T")
-      .Input(3, "inv_std_var", "inverse std variance of X.", "U")
+      .Input(3, "inv_std", "inverse standard deviation of X.", "U")
       .Output(0, "X_grad", "Gradient of the input.", "T")
       .Output(1, "scale_grad", "Gradient of the scale.", "T")
       .TypeConstraint(
           "T",
           {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(bfloat16)"},
-          "Constrain input and output types (except mean and inv_std_var) to float tensors.")
+          "Constrain input and output types (except inv_std) to float tensors.")
       .TypeConstraint(
           "U",
           {"tensor(float)"},
-          "Constrain mean and inv_std_var to float tensors.");
+          "Constrain inv_std to float tensors.");
 
   ONNX_CONTRIB_OPERATOR_SCHEMA(InvertibleLayerNormalizationGrad)
       .SetDomain(kMSDomain)
       .SinceVersion(1)
       .SetSupportLevel(OpSchema::SupportType::EXPERIMENTAL)
-      .SetDoc("LayerNormalizationGrad")
+      .SetDoc("InvertibleLayerNormalizationGrad")
       .Attr("axis",
             "The first normalization dimension: normalization will be performed along dimensions axis : rank(inputs).",
             AttributeProto::INT, static_cast<int64_t>(-1))
@@ -2158,18 +2158,18 @@ Example 4:
       .Input(1, "Y", "Output data tensor from the forward path", "T")
       .Input(2, "scale", "Scale tensor.", "T")
       .Input(3, "bias", "Bias tensor.", "T")
-      .Input(4, "inv_std_var", "inverse std variance of X.", "U")
+      .Input(4, "inv_std", "inverse standard deviation of X.", "U")
       .Output(0, "X_grad", "Gradient of the input.", "T")
       .Output(1, "scale_grad", "Gradient of the scale.", "T")
       .Output(2, "bias_grad", "Gradient of the bias.", "T")
       .TypeConstraint(
           "T",
           {"tensor(float16)", "tensor(float)", "tensor(double)"},
-          "Constrain input and output types (except mean and inv_std_var) to float tensors.")
+          "Constrain input and output types (except mean and inv_std) to float tensors.")
       .TypeConstraint(
           "U",
           {"tensor(float)"},
-          "Constrain mean and inv_std_var to float tensors.");
+          "Constrain mean and inv_std to float tensors.");
 
   ONNX_CONTRIB_OPERATOR_SCHEMA(BatchNormalizationGrad)
       .SetDomain(kMSDomain)

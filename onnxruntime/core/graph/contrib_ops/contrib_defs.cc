@@ -705,9 +705,9 @@ GELU (Gaussian Error Linear Unit) approximation: Y=0.5*X*(1+tanh(0.797885*X+0.03
       .Input(4, "bias", "1D bias tensor with shape (hidden_size", "T", OpSchema::Optional)
       .Output(0, "output", "3D output tensor with shape (batch_size, sequence_length, hidden_size)", "T")
       .Output(1, "mean", "Saved mean used during training to speed up gradient computation", "U", OpSchema::Optional)
-      .Output(2, "inv_std_var", "Saved inverse standard variance used during training to speed up gradient computation.", "U", OpSchema::Optional)
+      .Output(2, "inv_std", "Saved inverse standard deviation used during training to speed up gradient computation.", "U", OpSchema::Optional)
       .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output types to float or half tensors.")
-      .TypeConstraint("U", {"tensor(float)"}, "Constrain mean and inv_std_var to float tensors.")
+      .TypeConstraint("U", {"tensor(float)"}, "Constrain mean and inv_std to float tensors.")
       .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
 
 
@@ -2257,7 +2257,7 @@ Example 4:
             "The epsilon value to use to avoid division by zero.",
             AttributeProto::FLOAT, 1e-5f)
       .Attr("stash_type",
-            "type used for stash mean/inv_std_var",
+            "type used for stash mean/inv_std",
             AttributeProto::INT, static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT))
       .AllowUncheckedAttributes()
       .Input(0, "X", "Input data tensor from the previous layer.", "T")
@@ -2400,15 +2400,15 @@ Example 4:
       .Input(0, "X", "Input data tensor from the previous layer.", "T")
       .Input(1, "scale", "Scale tensor.", "T")
       .Output(0, "Y", "Output data tensor.", "T")
-      .Output(1, "inv_std_var", "Saved inverse standard variance used during training to speed up gradient computation.", "U", OpSchema::Optional)
+      .Output(1, "inv_std", "Saved inverse standard deviation used during training to speed up gradient computation.", "U", OpSchema::Optional)
       .TypeConstraint(
           "T",
           {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(bfloat16)"},
-          "Constrain input and output types (except mean and inv_std_var) to float tensors.")
+          "Constrain input and output types (except inv_std) to float tensors.")
       .TypeConstraint(
           "U",
           {"tensor(float)"},
-          "Constrain mean and inv_std_var to be float tensors.")
+          "Constrain inv_std to be float tensors.")
       .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
         propagateShapeAndTypeFromFirstInput(ctx);
         propagateElemTypeFromInputToOutput(ctx, 0, 0);
@@ -2427,9 +2427,9 @@ Example 4:
         }
 
         if (ctx.getNumOutputs() > 1) {
-          auto saved_inv_std_var_shape = ctx.getOutputType(1)->mutable_tensor_type()->mutable_shape();
-          saved_inv_std_var_shape->CopyFrom(input_shape);
-          saved_inv_std_var_shape->mutable_dim(static_cast<int>(axis))->set_dim_value(1);
+          auto saved_inv_std_shape = ctx.getOutputType(1)->mutable_tensor_type()->mutable_shape();
+          saved_inv_std_shape->CopyFrom(input_shape);
+          saved_inv_std_shape->mutable_dim(static_cast<int>(axis))->set_dim_value(1);
         }
       });
 
