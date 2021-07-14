@@ -1,0 +1,828 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{101958e0-690b-47a6-bb34-61f76a6801da}</ProjectGuid>
+    <RootNamespace>orttrainingwin</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 11.1.props" />
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
+    <TargetName>onnxruntime</TargetName>
+    <OutDir>$(SolutionDir)$(Platform)\bin\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)$(Platform)\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
+    <TargetName>onnxruntime</TargetName>
+    <IntDir>$(SolutionDir)$(Platform)\obj\$(Configuration)\</IntDir>
+    <OutDir>$(SolutionDir)$(Platform)\bin\$(Configuration)\</OutDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;ORTTRAININGWIN_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;ORTTRAININGWIN_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;WIN32;_WINDOWS;_USRDLL;ORTTRAININGWIN_EXPORTS;EIGEN_HAS_C99_MATH;GSL_THROW_ON_CONTRACT_VIOLATION;EIGEN_USE_THREADS;ONNX_NAMESPACE=onnx;ONNX_ML=1;ONNX_USE_LITE_PROTO=1;__ONNX_NO_DOC_STRINGS;ENABLE_ORT_FORMAT_LOAD;EIGEN_MPL2_ONLY;EIGEN_HAS_CONSTEXPR;EIGEN_HAS_VARIADIC_TEMPLATES;EIGEN_HAS_CXX11_MATH;EIGEN_HAS_CXX11_ATOMIC;EIGEN_STRONG_INLINE=inline;USE_EIGEN_FOR_BLAS;PLATFORM_WINDOWS;NOGDI;NOMINMAX;_USE_MATH_DEFINES;USE_CUDA=1;WINVER=0x0601;CMAKE_INTDIR="Debug";ENABLE_TRAINING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>false</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>$(ProjectDir)dll\pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(CUDA_PATH)\include;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\include;..\..\onnxruntime;..\..\onnxruntime\core\session;..\..\include\onnxruntime;..\..\include\onnxruntime\core\session;..\..\cmake;..\..\cmake\external\onnx\;..\..\cmake\external\protobuf\src;..\..\cmake\external\SafeInt;..\..\cmake\external\re2;..\..\cmake\external\horovod\horovod\common;..\..\cmake\external\eigen;..\..\cmake\external\horovod\third_party\gloo\gloo\nccl;..\..\cmake\external\horovod\third_party\gloo;..\..\cmake\external\optional-lite\include;..\..\cmake\external\json\;..\..\cmake\external\flatbuffers\include;..\..\cmake\external\cxxopts\include;..\..\build\Windows\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx;..\..\build\Windows\$(Configuration)\tensorboard\;..\;..\orttraining;..\..\orttraining\dll;..\..\orttraining\orttraining\include;..\..\orttraining\orttraining\models\;..\..\orttraining\orttraining\core\framework\tensorboard;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <SupportJustMyCode>false</SupportJustMyCode>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <DisableSpecificWarnings>26812;4127;4251;4201</DisableSpecificWarnings>
+      <UseFullPaths>false</UseFullPaths>
+      <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalDependencies>onnxruntime_session.lib;onnxruntime_providers_cuda.lib;onnxruntime_optimizer.lib;onnxruntime_providers.lib;onnxruntime_util.lib;onnxruntime_framework.lib;onnxruntime_graph.lib;onnxruntime_common.lib;onnxruntime_mlas.lib;onnxruntime_flatbuffers.lib;onnx.lib;onnx_proto.lib;libprotobuf-lited.lib;re2.lib;flatbuffers.lib;cudnn.lib;cublas.lib;cudart.lib;cuda.lib;curand.lib;cufft.lib;tensorboard.lib;Shlwapi.lib;Dbghelp.lib;onnxruntime_training.lib;cudadevrt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ModuleDefinitionFile>..\orttraining\core\dll\orttraining_dll.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\lib\x64;..\..\build\Windows\$(Configuration)\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx\$(Configuration);..\..\build\Windows\$(Configuration)\external\protobuf\cmake\$(Configuration);..\..\build\Windows\$(Configuration)\external\re2\$(Configuration);..\..\build\Windows\$(Configuration)\external\flatbuffers\$(Configuration);..\..\build\Windows\$(Configuration)\tensorboard\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <CudaCompile>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <AdditionalOptions>--expt-relaxed-constexpr %(AdditionalOptions)</AdditionalOptions>
+      <Include>$(CUDA_PATH)\include;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\include;..\..\include\onnxruntime;..\..\include\onnxruntime\core\session;..\..\onnxruntime\core\session;..\..\cmake;..\..\cmake\external\onnx\;..\..\cmake\external\protobuf\src;..\..\cmake\external\SafeInt;..\..\cmake\external\re2;..\..\cmake\external\horovod\horovod\common;..\..\cmake\external\eigen;..\..\cmake\external\horovod\third_party\gloo\gloo\nccl;..\..\cmake\external\horovod\third_party\gloo;..\..\cmake\external\json\;..\..\cmake\external\flatbuffers\include;..\..\build\Windows\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx;..\..\build\Windows\$(Configuration)\tensorboard\;..\..\orttraining;..\..\orttraining\orttraining;..\..\onnxruntime;..\..\orttraining\dll;..\..\orttraining\orttraining\include;..\..\orttraining\orttraining\models\;%(Include)</Include>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>
+      </FunctionLevelLinking>
+      <IntrinsicFunctions>false</IntrinsicFunctions>
+      <SDLCheck>
+      </SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;WIN32;_WINDOWS;_USRDLL;ORTTRAININGWIN_EXPORTS;EIGEN_HAS_C99_MATH;GSL_THROW_ON_CONTRACT_VIOLATION;EIGEN_USE_THREADS;ONNX_NAMESPACE=onnx;ONNX_ML=1;ONNX_USE_LITE_PROTO=1;__ONNX_NO_DOC_STRINGS;ENABLE_ORT_FORMAT_LOAD;EIGEN_MPL2_ONLY;EIGEN_HAS_CONSTEXPR;EIGEN_HAS_VARIADIC_TEMPLATES;EIGEN_HAS_CXX11_MATH;EIGEN_HAS_CXX11_ATOMIC;EIGEN_STRONG_INLINE=inline;USE_EIGEN_FOR_BLAS;PLATFORM_WINDOWS;NOGDI;NOMINMAX;_USE_MATH_DEFINES;USE_CUDA=1;WINVER=0x0601;CMAKE_INTDIR="Release";ENABLE_TRAINING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>false</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <ControlFlowGuard>Guard</ControlFlowGuard>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <DisableSpecificWarnings>26812;4127;4251;4201</DisableSpecificWarnings>
+      <UseFullPaths>false</UseFullPaths>
+      <AdditionalIncludeDirectories>$(CUDA_PATH)\include;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\include;..\..\onnxruntime;..\..\onnxruntime\core\session;..\..\include\onnxruntime;..\..\include\onnxruntime\core\session;..\..\cmake;..\..\cmake\external\onnx\;..\..\cmake\external\protobuf\src;..\..\cmake\external\SafeInt;..\..\cmake\external\re2;..\..\cmake\external\horovod\horovod\common;..\..\cmake\external\eigen;..\..\cmake\external\horovod\third_party\gloo\gloo\nccl;..\..\cmake\external\optional-lite\include;..\..\cmake\external\horovod\third_party\gloo;..\..\cmake\external\json\;..\..\cmake\external\flatbuffers\include;..\..\cmake\external\cxxopts\include;..\..\build\Windows\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx;..\..\build\Windows\$(Configuration)\tensorboard\;..\;..\orttraining;..\..\orttraining\dll;..\..\orttraining\orttraining\include;..\..\orttraining\orttraining\models\;..\..\orttraining\orttraining\core\framework\tensorboard;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalDependencies>onnxruntime_session.lib;onnxruntime_providers_cuda.lib;onnxruntime_optimizer.lib;onnxruntime_providers.lib;onnxruntime_util.lib;onnxruntime_framework.lib;onnxruntime_graph.lib;onnxruntime_common.lib;onnxruntime_mlas.lib;onnxruntime_flatbuffers.lib;onnx.lib;onnx_proto.lib;libprotobuf-lite.lib;re2.lib;flatbuffers.lib;cudnn.lib;cublas.lib;cudart.lib;cuda.lib;curand.lib;cufft.lib;tensorboard.lib;advapi32.lib;Shlwapi.lib;Dbghelp.lib;onnxruntime_training.lib;cudadevrt.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ModuleDefinitionFile>..\orttraining\core\dll\orttraining_dll.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\lib\x64;..\..\build\Windows\$(Configuration)\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx\$(Configuration);..\..\build\Windows\$(Configuration)\external\protobuf\cmake\$(Configuration);..\..\build\Windows\$(Configuration)\external\re2\$(Configuration);..\..\build\Windows\$(Configuration)\external\flatbuffers\$(Configuration);..\..\build\Windows\$(Configuration)\tensorboard\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <CudaCompile>
+      <AdditionalOptions>--expt-relaxed-constexpr %(AdditionalOptions)</AdditionalOptions>
+      <Include>$(CUDA_PATH)\include;$(CUDA_PATH)\cudann_11.1-win-v8.0.5.39\include;..\..\include\onnxruntime;..\..\include\onnxruntime\core\session;..\..\onnxruntime\core\session;..\..\cmake;..\..\cmake\external\onnx\;..\..\cmake\external\protobuf\src;..\..\cmake\external\SafeInt;..\..\cmake\external\re2;..\..\cmake\external\horovod\horovod\common;..\..\cmake\external\eigen;..\..\cmake\external\horovod\third_party\gloo\gloo\nccl;..\..\cmake\external\horovod\third_party\gloo;..\..\cmake\external\json\;..\..\cmake\external\flatbuffers\include;..\..\build\Windows\$(Configuration);..\..\build\Windows\$(Configuration)\external\onnx;..\..\build\Windows\$(Configuration)\tensorboard\;..\..\orttraining;..\..\orttraining\orttraining;..\..\onnxruntime;..\..\orttraining\dll;..\..\orttraining\orttraining\include;..\..\orttraining\orttraining\models\;%(Include)</Include>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\orttraining\core\dll\resource.h" />
+    <ClInclude Include="..\orttraining\core\framework\checkpointing.h" />
+    <ClInclude Include="..\orttraining\core\framework\checkpoint_registry.h" />
+    <ClInclude Include="..\orttraining\core\framework\distributed_run_context.h" />
+    <ClInclude Include="..\orttraining\core\framework\gradient_graph_builder.h" />
+    <ClInclude Include="..\orttraining\core\framework\mpi_context.h" />
+    <ClInclude Include="..\orttraining\core\framework\protobuf_message_sequence.h" />
+    <ClInclude Include="..\orttraining\core\framework\tensorboard\crc32c.h" />
+    <ClInclude Include="..\orttraining\core\framework\tensorboard\event_writer.h" />
+    <ClInclude Include="..\orttraining\core\graph\adasum_optimizer_graph_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\allreduce_optimizer_graph_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\generic_registry.h" />
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder_base.h" />
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder_registry.h" />
+    <ClInclude Include="..\orttraining\core\graph\gradient_config.h" />
+    <ClInclude Include="..\orttraining\core\graph\graph_augmenter.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_function_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_function_registry.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_func\bert_loss.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_func\bert_loss_legacy.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_func\loss_func_common.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_func\mean_squared_error.h" />
+    <ClInclude Include="..\orttraining\core\graph\loss_func\softmax_cross_entropy.h" />
+    <ClInclude Include="..\orttraining\core\graph\mixed_precision_transformer.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer\adam_optimizer_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer\lamb_optimizer_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer\sgd_optimizer_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer_config.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_builder.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_builder_registry.h" />
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_output_key.h" />
+    <ClInclude Include="..\orttraining\core\graph\pipeline_transformer.h" />
+    <ClInclude Include="..\orttraining\core\graph\recompute_graph_utils.h" />
+    <ClInclude Include="..\orttraining\core\graph\tensorboard_transformer.h" />
+    <ClInclude Include="..\orttraining\core\graph\training_op_defs.h" />
+    <ClInclude Include="..\orttraining\core\graph\zero_optimizer_graph_builder.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\bias_dropout_fusion.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\concat_replacement.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\dropout_recompute.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\gist_encode_decode.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\graph_transformer_utils.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\insert_output_rewriter.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\localized_recompute.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\megatron_transformer.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\nonzero_shape_setter.h" />
+    <ClInclude Include="..\orttraining\core\optimizer\transformer_layer_recompute.h" />
+    <ClInclude Include="..\orttraining\core\session\training_session.h" />
+    <ClInclude Include="..\orttraining\include\runner\orttraining_c_api.h" />
+    <ClInclude Include="..\orttraining\models\runner\constant.h" />
+    <ClInclude Include="..\orttraining\models\runner\data_loader.h" />
+    <ClInclude Include="..\orttraining\models\runner\pipeline.h" />
+    <ClInclude Include="..\orttraining\models\runner\training_runner.h" />
+    <ClInclude Include="..\orttraining\models\runner\training_util.h" />
+    <ClInclude Include="..\orttraining\runner\orttraining_apis.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\activation\activations_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\activation\gelu_computation_mode.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\common.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\event_pool.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\group.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\record.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\wait.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\cpu_training_kernels.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\gist\gistdecode_op.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\gist\gistencode_op.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\cross_entropy.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\reduction_type.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\softmax_cross_entropy_loss.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\math\scale.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\broadcast_grad_args.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\conv_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\dropout_7.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\dropout_op.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\layer_norm.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\pool_gradient_op.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\common.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\gradient_control.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\optimizers.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\op_gradients.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\reduction\reduction_ops.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensorboard\summary_op.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\concat.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\gather_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\gather_nd_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\slice_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\split.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\activations_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\activations_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\gelu_grad_impl_common.cuh" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\common.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\nccl_service.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\recv.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\send.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\controlflow\record.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\controlflow\wait.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\cuda_training_kernels.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\div_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\div_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\isfinite.cuh" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\isfinite.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\scale.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\softmax_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\batch_norm_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\dropout.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\dropout_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\layer_norm.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\layer_norm_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\adam.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\common.cuh" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\common.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\lamb.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\sg.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\all.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\reduction_all.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\reduction_ops.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\concat.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad_impl.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\slice_grad.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\split.h" />
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\view.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\onnxruntime\test\perftest\windows\utils.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\dll\dllmain.cpp" />
+    <ClCompile Include="..\orttraining\core\framework\checkpointing.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\checkpoint_registry.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\distributed_run_context.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\gradient_graph_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\mpi_context.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\tensorboard\crc32c.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\tensorboard\event_writer.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\adasum_optimizer_graph_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\allreduce_optimizer_graph_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder_base.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder_registry.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\graph_augmenter.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_function_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_function_registry.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\bert_loss.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\bert_loss_legacy.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\loss_func_common.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\mean_squared_error.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\softmax_cross_entropy.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\mixed_precision_transformer.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\adam_optimizer_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\lamb_optimizer_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\sgd_optimizer_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_graph_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_graph_builder_registry.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\pipeline_transformer.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\tensorboard_transformer.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\training_op_defs.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\zero_optimizer_graph_builder.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\bias_dropout_fusion.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\concat_replacement.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\dropout_recompute.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\gist_encode_decode.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\graph_transformer_utils.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\insert_output_rewriter.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\localized_recompute.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\megatron_transformer.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\nonzero_shape_setter.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\transformer_layer_recompute.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\session\training_session.cc">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\data_loader.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\pipeline.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\training_runner.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\training_util.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\runner\orttraining_c_api.cc" />
+    <ClCompile Include="..\orttraining\training_ops\cpu\activation\activations_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\event_pool.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\group.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\record.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\wait.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\cpu_training_kernels.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\gist\gistdecode_op.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\gist\gistencode_op.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\loss\cross_entropy.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\loss\softmax_cross_entropy_loss.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\math\scale.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\broadcast_grad_args.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\conv_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\dropout_7.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\dropout_op.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\layer_norm.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\pool_gradient_op.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\optimizer\gradient_control.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\optimizer\optimizers.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\op_gradients.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\reduction\reduction_ops.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensorboard\summary_op.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\concat.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\gather_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\gather_nd_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\slice_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\split.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\activation\activations_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\nccl_service.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\recv.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\send.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\group.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\record.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\wait.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\cuda_training_kernels.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\div_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\isfinite.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\scale.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\softmax_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\batch_norm_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\dropout.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\layer_norm.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\adam.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\lamb.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\sg.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\all.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_all.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_ops.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\concat.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\slice_grad.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\split.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <ObjectFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).cuda.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\view.cc">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\activation\activations_grad_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\div_grad_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\isfinite.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\scale.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\softmax_grad_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\nn\dropout_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\nn\layer_norm_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\adam.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\lamb.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\sg.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\reduction\all.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_all.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\tensor\gather_grad_impl.cu" />
+    <CudaCompile Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad_impl.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\orttraining\core\dll\orttraining_dll.def" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\orttraining\core\dll\Resource.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 11.1.targets" />
+  </ImportGroup>
+</Project>

@@ -171,8 +171,11 @@ namespace Microsoft.ML.OnnxRuntime
                         }
                     }
                 }
-                // Transfer ownership
-                _ortValue = new OrtValue(ortValue.Disown());
+                // Transfer ownership, but only do so if the original OrtValue is already owned.
+                if (ortValue.IsOwned)
+                    _ortValue = new OrtValue(ortValue.Disown());
+                else
+                    _ortValue = new OrtValue(ortValue.Handle, false);
             }
             finally
             {

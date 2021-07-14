@@ -1,0 +1,6 @@
+LIBRARY "onnxruntime.dll"
+EXPORTS
+ OrtGetApiBase @1
+ OrtSessionOptionsAppendExecutionProvider_CPU @2
+ OrtSessionOptionsAppendExecutionProvider_CUDA @3
+ OrtGetTrainingApiBase @4

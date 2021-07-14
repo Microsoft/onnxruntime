@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.28010.2003
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30804.86
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.OnnxRuntime", "src\Microsoft.ML.OnnxRuntime\Microsoft.ML.OnnxRuntime.csproj", "{584B53B3-359D-4DC2-BCD8-530B5D4685AD}"
 EndProject
@@ -9,6 +9,10 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.OnnxRuntime.Tests", "test\Microsoft.ML.OnnxRuntime.Tests\Microsoft.ML.OnnxRuntime.Tests.csproj", "{50173D13-DF29-42E7-A30B-8B12D36C77B1}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.OnnxRuntime.PerfTool", "tools\Microsoft.ML.OnnxRuntime.PerfTool\Microsoft.ML.OnnxRuntime.PerfTool.csproj", "{310506FD-6E78-4D62-989B-25D69A85E8CF}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.OnnxTraining", "src\Microsoft.ML.OnnxTraining\Microsoft.ML.OnnxTraining.csproj", "{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Microsoft.ML.OnnxTraining.MNISTSample", "sample\Microsoft.ML.OnnxTraining.MNISTSample\Microsoft.ML.OnnxTraining.MNISTSample.csproj", "{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -41,6 +45,18 @@ Global
 		{310506FD-6E78-4D62-989B-25D69A85E8CF}.Release|Any CPU.Build.0 = Release|Any CPU
 		{310506FD-6E78-4D62-989B-25D69A85E8CF}.RelWithDebInfo|Any CPU.ActiveCfg = RelWithDebInfo|Any CPU
 		{310506FD-6E78-4D62-989B-25D69A85E8CF}.RelWithDebInfo|Any CPU.Build.0 = RelWithDebInfo|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.RelWithDebInfo|Any CPU.ActiveCfg = Release|Any CPU
+		{6FFC1865-F1CD-4AB6-A17B-0A92907B0BC6}.RelWithDebInfo|Any CPU.Build.0 = Release|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.RelWithDebInfo|Any CPU.ActiveCfg = Release|Any CPU
+		{36CCCFF5-4B30-40DC-8089-CBBDB4BF58EB}.RelWithDebInfo|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

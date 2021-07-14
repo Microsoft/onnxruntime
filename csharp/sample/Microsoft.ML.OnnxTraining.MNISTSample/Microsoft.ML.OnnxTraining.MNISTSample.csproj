@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.ML.OnnxRuntime\Microsoft.ML.OnnxRuntime.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.ML.OnnxTraining\Microsoft.ML.OnnxTraining.csproj" />
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="cd $(SolutionDir)&#xD;&#xA;copy ..\orttraining\build.win\x64\bin\$(ConfigurationName)\onnxruntime.dll $(TargetDir)&#xD;&#xA;copy ..\orttraining\build.win\x64\bin\$(ConfigurationName)\onnxruntime.pdb $(TargetDir)&#xD;&#xA;copy $(ProjectDir)model\mnist.onnx $(TargetDir)&#xD;&#xA;" />
+  </Target>
+
+</Project>

@@ -1,0 +1,906 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="training_ops">
+      <UniqueIdentifier>{e49912e5-c347-46d5-82eb-0b258474b25c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core">
+      <UniqueIdentifier>{777c2243-e418-4c0b-871a-cf34dfb1cc73}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\session">
+      <UniqueIdentifier>{c94bb1d8-8e4d-46d2-ac96-4b40eb532dcf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\framework">
+      <UniqueIdentifier>{a6f2af9a-f720-4be9-8180-d29a6611bf2f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\framework\tensorboard">
+      <UniqueIdentifier>{39a5197e-dbb8-4cb5-8cf6-e4648adce81c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\graph">
+      <UniqueIdentifier>{b39807e4-7131-437a-8b13-750b94cd2689}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\optimizer">
+      <UniqueIdentifier>{100ee1e9-6f0e-4ded-8cea-62f4090d43a9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu">
+      <UniqueIdentifier>{543ace4e-b346-4b18-83d7-6fdebd4a0deb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda">
+      <UniqueIdentifier>{daf89f63-c7d5-41ee-941f-06e20282f4fc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\activation">
+      <UniqueIdentifier>{08c095ac-358e-4dd0-8609-32d6d8036b8f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\collective">
+      <UniqueIdentifier>{92dde848-6c3d-438d-bd98-7fe88af653e5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\controlflow">
+      <UniqueIdentifier>{63090334-bcf8-48e1-83b9-e2ee898ba33f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\gist">
+      <UniqueIdentifier>{133db31e-286d-403f-b84d-20517bff4a96}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\loss">
+      <UniqueIdentifier>{3b3345ad-ae29-4db4-9264-807c3a4ff798}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\math">
+      <UniqueIdentifier>{efb656dd-19e5-4d99-9ed7-e4f2991dfd14}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\nn">
+      <UniqueIdentifier>{05b1e4df-b196-4a55-878d-6d90f8243f16}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\optimizer">
+      <UniqueIdentifier>{07674ca3-de69-4dbc-ac18-f2406eaa4a25}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\reduction">
+      <UniqueIdentifier>{7cf46615-d812-44b2-b3f2-34a4a86fb6d2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\tensor">
+      <UniqueIdentifier>{8eefd225-3c1c-44c5-8ddf-cf14379bcd22}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\activation">
+      <UniqueIdentifier>{62af2a72-8616-4a50-8010-6d3c34d18431}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\collective">
+      <UniqueIdentifier>{42503c03-65c0-4067-bc8e-08f04e2bad38}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\communication">
+      <UniqueIdentifier>{0622a787-07be-47e7-99c3-f618589c6d0f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\controlflow">
+      <UniqueIdentifier>{ae102027-79ff-4f65-bcd3-57edecff3478}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\loss">
+      <UniqueIdentifier>{5348b34b-bad0-4354-82a9-a97cbeb73dd7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\math">
+      <UniqueIdentifier>{3b8a76fb-4f74-4a18-99cf-3172a8f2e57d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\nn">
+      <UniqueIdentifier>{e12ca364-654f-47a0-8e4a-c2af83e3e4d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\optimizer">
+      <UniqueIdentifier>{7dc29593-e4cb-46f9-8c0e-922b75734fe0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\reduction">
+      <UniqueIdentifier>{8c2a62f1-c63b-400c-a740-89aa17b0822f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cuda\tensor">
+      <UniqueIdentifier>{23cf2ad0-bd66-44b6-85e5-d7bab8b21fcc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\graph\loss_func">
+      <UniqueIdentifier>{bfcb9952-7dfb-431b-ab10-bfa7229e5e40}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\graph\optimizer">
+      <UniqueIdentifier>{7e6b8a64-23cc-4ac4-8515-94f707158539}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="training_ops\cpu\tensorboard">
+      <UniqueIdentifier>{d8bdc7f7-a65c-4c40-b710-61cfe8756dbc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="runner">
+      <UniqueIdentifier>{65ad8da7-acfe-42ba-a363-ed0c2149ae1f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="pertest">
+      <UniqueIdentifier>{7c717176-9337-4fe0-b477-c5d269ce82bc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\dll">
+      <UniqueIdentifier>{cd91e68f-7ef6-41df-8fd8-242face6a71b}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\orttraining\training_ops\cpu\activation\activations_grad.h">
+      <Filter>training_ops\cpu\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\activations_grad.h">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\activations_grad_impl.h">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\adam.h">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\adasum_optimizer_graph_builder.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer\adam_optimizer_builder.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\all.h">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\allreduce_optimizer_graph_builder.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\batch_norm_grad.h">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_func\bert_loss.h">
+      <Filter>core\graph\loss_func</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_func\bert_loss_legacy.h">
+      <Filter>core\graph\loss_func</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\bias_dropout_fusion.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad_impl.h">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad.h">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\broadcast_grad_args.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\checkpointing.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\checkpoint_registry.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\common.cuh">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\common.h">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\common.h">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\common.h">
+      <Filter>training_ops\cpu\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\common.h">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\concat.h">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\concat.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\concat_replacement.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\models\runner\constant.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\tensorboard\crc32c.h">
+      <Filter>core\framework\tensorboard</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\conv_grad.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\cpu_training_kernels.h">
+      <Filter>training_ops\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\cross_entropy.h">
+      <Filter>training_ops\cpu\loss</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\cuda_training_kernels.h">
+      <Filter>training_ops\cuda</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\models\runner\data_loader.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\distributed_run_context.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\div_grad.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\div_grad_impl.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\dropout.h">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\dropout_7.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\dropout_impl.h">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\dropout_op.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\dropout_recompute.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\event_pool.h">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\tensorboard\event_writer.h">
+      <Filter>core\framework\tensorboard</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad_impl.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\gather_grad.h">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_grad.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_grad_impl.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\gather_nd_grad.h">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad_impl.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\generic_registry.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\activation\gelu_grad_impl_common.cuh">
+      <Filter>training_ops\cpu\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\activation\gelu_computation_mode.h">
+      <Filter>training_ops\cpu\activation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\gist_encode_decode.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\gist\gistencode_op.h">
+      <Filter>training_ops\cpu\gist</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\gist\gistdecode_op.h">
+      <Filter>training_ops\cpu\gist</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\gradient_config.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder_base.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\gradient_builder_registry.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\gradient_control.h">
+      <Filter>training_ops\cpu\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.h">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\gradient_graph_builder.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\graph_augmenter.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\graph_transformer_utils.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\insert_output_rewriter.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\group.h">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\lamb.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\isfinite.cuh">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\isfinite.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer\lamb_optimizer_builder.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\layer_norm_impl.h">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\nn\layer_norm.h">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\layer_norm.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\localized_recompute.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_func\loss_func_common.h">
+      <Filter>core\graph\loss_func</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_func\mean_squared_error.h">
+      <Filter>core\graph\loss_func</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_function_registry.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_function_builder.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\megatron_transformer.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\mixed_precision_transformer.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\mpi_context.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\nccl_service.h">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\nonzero_shape_setter.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\op_gradients.h">
+      <Filter>training_ops\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_output_key.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer_builder.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer_config.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_builder.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer_graph_builder_registry.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\optimizer\optimizers.h">
+      <Filter>training_ops\cpu\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\runner\orttraining_apis.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\include\runner\orttraining_c_api.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\models\runner\pipeline.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\pipeline_transformer.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\nn\pool_gradient_op.h">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\recompute_graph_utils.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\framework\protobuf_message_sequence.h">
+      <Filter>core\framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\record.h">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\controlflow\record.h">
+      <Filter>training_ops\cuda\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\recv.h">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\reduction_all.h">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\reduction\reduction_ops.h">
+      <Filter>training_ops\cpu\reduction</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\reduction_type.h">
+      <Filter>training_ops\cpu\loss</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\reduction\reduction_ops.h">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\scale.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\math\scale.h">
+      <Filter>training_ops\cpu\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\communication\send.h">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\optimizer\sg.h">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\optimizer\sgd_optimizer_builder.h">
+      <Filter>core\graph\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\slice_grad.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\slice_grad.h">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\loss_func\softmax_cross_entropy.h">
+      <Filter>core\graph\loss_func</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\loss\softmax_cross_entropy_loss.h">
+      <Filter>training_ops\cpu\loss</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.h">
+      <Filter>training_ops\cuda\loss</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\math\softmax_grad.h">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.h">
+      <Filter>training_ops\cuda\loss</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\split.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensor\split.h">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\tensorboard\summary_op.h">
+      <Filter>training_ops\cpu\tensorboard</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\training_op_defs.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\tensorboard_transformer.h">
+      <Filter>core\graph</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\models\runner\training_runner.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\session\training_session.h">
+      <Filter>core\session</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\models\runner\training_util.h">
+      <Filter>runner</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\optimizer\transformer_layer_recompute.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\tensor\view.h">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cpu\controlflow\wait.h">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\training_ops\cuda\controlflow\wait.h">
+      <Filter>training_ops\cuda\controlflow</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\graph\zero_optimizer_graph_builder.h">
+      <Filter>core\optimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\orttraining\core\dll\resource.h">
+      <Filter>core\dll</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\orttraining\training_ops\cuda\activation\activations_grad.cc">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\activation\activations_grad.cc">
+      <Filter>training_ops\cpu\activation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\adam.cc">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\adam_optimizer_builder.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\adasum_optimizer_graph_builder.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\all.cc">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\allreduce_optimizer_graph_builder.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\batch_norm_grad.cc">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\bert_loss.cc">
+      <Filter>core\graph\loss_func</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\bert_loss_legacy.cc">
+      <Filter>core\graph\loss_func</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\bias_dropout_fusion.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad.cc">
+      <Filter>training_ops\cuda\activation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\broadcast_grad_args.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\checkpoint_registry.cc">
+      <Filter>core\framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\checkpointing.cc">
+      <Filter>core\framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\concat.cc">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\concat.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\concat_replacement.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\tensorboard\crc32c.cc">
+      <Filter>core\framework\tensorboard</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\conv_grad.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\cpu_training_kernels.cc">
+      <Filter>training_ops\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\loss\cross_entropy.cc">
+      <Filter>training_ops\cpu\loss</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\cuda_training_kernels.cc">
+      <Filter>training_ops\cuda</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\data_loader.cc">
+      <Filter>runner</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\distributed_run_context.cc">
+      <Filter>core\framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\div_grad.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\dropout.cc">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\dropout_7.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\dropout_op.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\dropout_recompute.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\event_pool.cc">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\tensorboard\event_writer.cc">
+      <Filter>core\framework\tensorboard</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_elements_grad.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\gather_grad.cc">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_grad.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\gather_nd_grad.cc">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\gist_encode_decode.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\gist\gistdecode_op.cc">
+      <Filter>training_ops\cpu\gist</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\gist\gistencode_op.cc">
+      <Filter>training_ops\cpu\gist</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder_base.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\gradient_builder_registry.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.cc">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\optimizer\gradient_control.cc">
+      <Filter>training_ops\cpu\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\gradient_graph_builder.cc">
+      <Filter>core\framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\graph_augmenter.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\graph_transformer_utils.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\insert_output_rewriter.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\group.cc">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\group.cc">
+      <Filter>training_ops\cuda\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\isfinite.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\lamb.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\lamb_optimizer_builder.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\nn\layer_norm.cc">
+      <Filter>training_ops\cuda\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\layer_norm.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\localized_recompute.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\loss_func_common.cc">
+      <Filter>core\graph\loss_func</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\mean_squared_error.cc">
+      <Filter>core\graph\loss_func</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_function_builder.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_function_registry.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\megatron_transformer.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\mixed_precision_transformer.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\framework\mpi_context.cc">
+      <Filter>core\framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\nccl_service.cc">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\nonzero_shape_setter.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\op_gradients.cc">
+      <Filter>training_ops\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_builder.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_graph_builder.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer_graph_builder_registry.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\optimizer\optimizers.cc">
+      <Filter>training_ops\cpu\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\runner\orttraining_c_api.cc">
+      <Filter>runner</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\pipeline.cc">
+      <Filter>runner</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\pipeline_transformer.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\nn\pool_gradient_op.cc">
+      <Filter>training_ops\cpu\nn</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\record.cc">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\record.cc">
+      <Filter>training_ops\cuda\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\recv.cc">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_ops.cc">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_all.cc">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\reduction\reduction_ops.cc">
+      <Filter>training_ops\cpu\reduction</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\scale.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\math\scale.cc">
+      <Filter>training_ops\cpu\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\communication\send.cc">
+      <Filter>training_ops\cuda\communication</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\optimizer\sg.cc">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\optimizer\sgd_optimizer_builder.cc">
+      <Filter>core\graph\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\slice_grad.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\slice_grad.cc">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\loss_func\softmax_cross_entropy.cc">
+      <Filter>core\graph\loss_func</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\loss\softmax_cross_entropy_loss.cc">
+      <Filter>training_ops\cpu\loss</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.cc">
+      <Filter>training_ops\cuda\loss</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\math\softmax_grad.cc">
+      <Filter>training_ops\cuda\math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.cc">
+      <Filter>training_ops\cuda\loss</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\split.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensor\split.cc">
+      <Filter>training_ops\cpu\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\tensorboard\summary_op.cc">
+      <Filter>training_ops\cpu\tensorboard</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\tensorboard_transformer.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\training_op_defs.cc">
+      <Filter>core\graph</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\training_runner.cc">
+      <Filter>runner</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\session\training_session.cc">
+      <Filter>core\session</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\models\runner\training_util.cc">
+      <Filter>runner</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\optimizer\transformer_layer_recompute.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\onnxruntime\test\perftest\windows\utils.cc">
+      <Filter>pertest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\tensor\view.cc">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cpu\controlflow\wait.cc">
+      <Filter>training_ops\cpu\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\training_ops\cuda\controlflow\wait.cc">
+      <Filter>training_ops\cuda\controlflow</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\graph\zero_optimizer_graph_builder.cc">
+      <Filter>core\optimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\orttraining\core\dll\dllmain.cpp">
+      <Filter>core\dll</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\activation\activations_grad_impl.cu">
+      <Filter>training_ops\cuda\activation</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\adam.cu">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\reduction\all.cu">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\activation\bias_gelu_grad_impl.cu">
+      <Filter>training_ops\cuda\activation</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\div_grad_impl.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\nn\dropout_impl.cu">
+      <Filter>training_ops\cuda\nn</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\tensor\gather_grad_impl.cu">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\tensor\gather_nd_grad_impl.cu">
+      <Filter>training_ops\cuda\tensor</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\gradient_control.cu">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\isfinite.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\lamb.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\nn\layer_norm_impl.cu">
+      <Filter>training_ops\cuda\nn</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\mixed_precision_scale.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\reduction\reduction_all.cu">
+      <Filter>training_ops\cuda\reduction</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\scale.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\optimizer\sg.cu">
+      <Filter>training_ops\cuda\optimizer</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\loss\softmax_cross_entropy_loss_impl.cu">
+      <Filter>training_ops\cuda\loss</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\math\softmax_grad_impl.cu">
+      <Filter>training_ops\cuda\math</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\orttraining\training_ops\cuda\loss\softmaxcrossentropy_impl.cu">
+      <Filter>training_ops\cuda\loss</Filter>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\orttraining\core\dll\orttraining_dll.def">
+      <Filter>core\dll</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\orttraining\core\dll\Resource.rc">
+      <Filter>core\dll</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>

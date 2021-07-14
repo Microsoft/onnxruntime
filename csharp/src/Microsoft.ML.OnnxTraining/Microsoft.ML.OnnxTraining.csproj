@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard1.1</TargetFramework>
+    <PackageId>Microsoft.ML.OnnxTraining.Managed</PackageId>
+    <Description>This package contains ONNX Runtime for training on .Net platforms</Description>
+    <PackageTags>ONNX;ONNX Runtime;Machine Learning</PackageTags>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>OnnxRuntime.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.ML.OnnxRuntime\Microsoft.ML.OnnxRuntime.csproj" />
+  </ItemGroup>
+
+</Project>
