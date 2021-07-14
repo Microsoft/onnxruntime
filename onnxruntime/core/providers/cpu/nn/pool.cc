@@ -253,6 +253,70 @@ Status MaxPoolV8::ComputeImpl(OpKernelContext* context) const {
   return Status::OK();
 }
 
+template <typename T>
+Status MaxPoolV8::ComputeImplOptimized(OpKernelContext* context) const {
+
+  const auto* X = context->Input<Tensor>(0);
+  const auto* X_data = X->template Data<T>();
+  const TensorShape& x_shape = X->Shape();
+  std::vector<int64_t> pads = pool_attrs_.pads;
+  std::vector<int64_t> output_dims = pool_attrs_.SetOutputSize(x_shape, x_shape[1], &pads);
+  const auto& dilations = pool_attrs_.dilations;
+  const auto& pool_size = pool_attrs_.kernel_shape;
+
+  if (dilations[0] != stride_h() ||
+      pool_size.size() > 1 && dilations[1] != stride_w() || 
+      pool_size.size() > 2 && dilations[2] != stride_d() ||
+      context->Output(1, output_dims) ||
+      pool_size.size() == 1 && pool_size[0] < 128 || 
+      pool_size.size() == 2 && pool_size[0] * pool_size[1] < 64*64 || 
+      pool_size.size() == 3 && pool_size[0] * pool_size[1] * pool_size[2] < 32*32*32) {
+
+    return Status(ONNXRUNTIME, INVALID_ARGUMENT, "Arguments are not optimizable.");
+  }
+
+  Tensor* Y = context->Output(0, output_dims);
+  auto* Y_data = Y->template MutableData<T>();
+  auto tp = context->GetOperatorThreadPool();
+  auto channels = x_shape[0] * x_shape[1];
+
+  switch (pool_size.size()) {
+    case 1: {
+      RunLoop<MaxPool1DTaskOpt<T>>(tp,
+                                   channels,
+                                   {X_data, Y_data,
+                                    x_shape[2], output_dims[2],
+                                    pads[0], pads[1], stride_h(), pool_size[0]});
+      break;
+    }
+    case 2: {
+      RunLoop<MaxPool2DTaskOpt<T>>(tp,
+                                   channels,
+                                   {X_data, Y_data,
+                                    x_shape[2], x_shape[3],
+                                    output_dims[2], output_dims[3],
+                                    pads[0], pads[2], pads[1], pads[3],
+                                    stride_h(), stride_w(),
+                                    pool_size[0], pool_size[1]});
+      break;
+    }
+    case 3: {
+      RunLoop<MaxPool3DTaskOpt<T>>(tp,
+                                   channels,
+                                   {X_data, Y_data,
+                                    x_shape[2], x_shape[3], x_shape[4],
+                                    output_dims[2], output_dims[3], output_dims[4],
+                                    pads[0], pads[3], pads[1], pads[4], pads[2], pads[5],
+                                    stride_h(), stride_w(), stride_d(),
+                                    pool_size[0], pool_size[1], pool_size[2]});
+      break;
+    }
+    default:
+      return Status(ONNXRUNTIME, INVALID_ARGUMENT, "Unsupported pooling size.");
+  }
+  return Status::OK();
+}
+ 
 ONNX_CPU_OPERATOR_VERSIONED_KERNEL(AveragePool, 7, 9,
                                    KernelDefBuilder().TypeConstraint("T", DataTypeImpl::GetTensorType<float>()),
                                    Pool<float, AveragePool>);

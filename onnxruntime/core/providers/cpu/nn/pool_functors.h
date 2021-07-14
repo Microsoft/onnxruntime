@@ -395,4 +395,274 @@ struct MaxPool3DTask {
   }
 };
 
+template<typename T>
+T* FindLastLargerEqual(T* head, T* tail, const T* key) {
+  //find first elem smaller than key in a descending vector
+  while (head < tail) {
+    auto mid = head + ((tail-head)>>1);
+    if (*mid >= *key) {
+      head = mid + 1;
+    } else {
+      tail = mid;
+    }
+  }
+  return head - 1;
+}
+
+template<typename T>
+void MaxPoolOpt(const T* x,
+                const T* x_end,
+                int64_t x_gap, //x_next = x + x_gap
+                int64_t dilation,
+                int64_t pad_front,
+                int64_t pad_back,
+                int64_t pool_size,
+                T* y, int64_t y_gap, //y_next = y + y_gap 
+                T* que) { //que of size pool_size
+
+  T padding = std::numeric_limits<T>::lowest();
+  T* head = que;
+  T* tail = head;
+  int64_t cnt = 0; //num of elems in que
+  int64_t x_step = x_gap * dilation;
+  T* back = que + pool_size - 1;
+  const T* x_i = x - pad_front * x_gap;
+  const T* last_x_i = x_i;
+  const T* x_end_with_pads = x_end + pad_back * x_gap;
+
+  //init queue with first pool_size elems
+  for (int64_t i = 0; i < pool_size; i++, x_i += x_step) {
+    if (x_i < x) {
+      *tail = padding;
+      tail = tail == back ? que : tail + 1;
+      ++cnt;
+    } else {
+      if (cnt == 0) {
+        *tail = *x_i;
+        tail = tail == back ? que : tail + 1;
+        ++cnt;
+      } else {
+        T* last_le = nullptr;
+        if (head < tail) {
+          last_le = FindLastLargerEqual(head, tail, x_i);
+          cnt = last_le - head + 2;
+        } else {
+          if (*back >= *x_i) {
+            last_le = FindLastLargerEqual(que, tail, x_i);
+            cnt = back - head + last_le - que + 3;
+          } else {
+            last_le = FindLastLargerEqual(head, back + 1, x_i);
+            cnt = last_le - head + 2;
+          }
+        }
+        *++last_le = *x_i;
+        tail = last_le == back ? que : last_le + 1; 
+      }
+    }
+  }
+  
+  //fill max in current window
+  for (;; x_i += x_step, last_x_i += x_step, y += y_gap) {
+    //save max
+    *y = *head;
+    //dequeue
+    if (((last_x_i < x || last_x_i >= x_end) && *head == padding) ||
+        (last_x_i >= x && last_x_i < x_end && *head == *last_x_i)) {
+      head = head == back ? que : head + 1;
+      --cnt;
+    }
+    if (x_i >= x_end_with_pads) {
+      break;
+    }
+    //enqueue
+    if (x_i < x || x_i >= x_end) {
+      *tail = padding;
+      tail = tail == back ? que : tail + 1;
+      ++cnt;
+    } else {
+      if (cnt == 0) {
+        *tail = *x_i;
+        tail = tail == back ? que : tail + 1;
+        ++cnt;
+      } else {
+        T* last_le = nullptr;
+        if (head < tail) {
+          last_le = FindLastLargerEqual(head, tail, x_i);
+          cnt = last_le - head + 2;
+        } else {
+          if (*back >= *x_i) {
+            last_le = FindLastLargerEqual(que, tail, x_i);
+            cnt = back - head + last_le - que + 3;
+          } else {
+            last_le = FindLastLargerEqual(head, back + 1, x_i);
+            cnt = last_le - head + 2;
+          }
+        }
+        *++last_le = *x_i;
+        tail = last_le == back ? que : last_le + 1; 
+      }
+    }
+  }
+}//MaxPoolOpt
+
+template <typename T>
+struct MaxPool1DTaskOpt {
+
+  const T* X_data;
+  T* Y_data;
+  int64_t x_h;
+  int64_t y_h;
+  int64_t pad_front;
+  int64_t pad_back;
+  int64_t dilation;
+  int64_t pool_size;
+
+  TensorOpCost Cost() const {
+    auto loop_count = static_cast<double>(x_h);
+    return TensorOpCost{loop_count, loop_count, loop_count};
+  }
+
+  void operator()(std::ptrdiff_t begin, std::ptrdiff_t end) const {
+    std::unique_ptr<T[]> que_ptr{new T[pool_size]};
+    for (int64_t c = begin; c < end; ++c) {
+      operator()(c, que_ptr);
+    }//for
+  }//operator
+
+  void operator()(std::ptrdiff_t c, std::unique_ptr<T[]>& que_ptr) const {
+    MaxPoolOpt(X_data + c * x_h,
+               X_data + (c + 1) * x_h, 1,
+               dilation, pad_front, pad_back, pool_size,
+               Y_data + c * y_h, 1,
+               que_ptr.get());
+  }
+};
+
+template <typename T>
+struct MaxPool2DTaskOpt {
+
+  const T* X_data;
+  T* Y_data;
+  int64_t x_h;
+  int64_t x_w;
+  int64_t y_h;
+  int64_t y_w;
+  int64_t pad_h_front;
+  int64_t pad_h_back;
+  int64_t pad_w_front;
+  int64_t pad_w_back;
+  int64_t dilation_h;
+  int64_t dilation_w;
+  int64_t pool_h;
+  int64_t pool_w;
+
+  TensorOpCost Cost() const {
+    auto loop_count = static_cast<double>(x_h * x_w);
+    return TensorOpCost{loop_count, loop_count, loop_count};
+  }
+
+  void operator()(std::ptrdiff_t begin, std::ptrdiff_t end) const {
+    std::unique_ptr<T[]> que_ptr{new T[std::max(pool_h, pool_w)]};
+    std::unique_ptr<T[]> y_temp{new T[x_h * y_w]};
+    for (int64_t c = begin; c < end; ++c) {
+      operator()(c, que_ptr, y_temp);
+    }//for
+  }//operator
+
+  void operator()(std::ptrdiff_t c, std::unique_ptr<T[]>& que_ptr, std::unique_ptr<T[]>& y_temp) const {
+
+    auto x = X_data + c * x_h * x_w;
+    auto y = Y_data + c * y_h * y_w;
+    //reduce width
+    for (int h_i = 0; h_i < x_h; ++h_i) {
+      MaxPoolOpt(x + h_i * x_w,
+                 x + (h_i + 1) * x_w,
+                 1, dilation_w, pad_w_front, pad_w_back, pool_w,
+                 y_temp.get() + h_i * y_w, 1, que_ptr.get());
+    }
+    //reduce height
+    for (int w_i = 0; w_i < y_w; ++w_i) {
+      MaxPoolOpt(y_temp.get() + w_i,
+                 y_temp.get() + w_i + x_h * y_w,
+                 y_w, dilation_h, pad_h_front, pad_h_back,
+                 pool_h, y + w_i, y_w, que_ptr.get());
+    }
+  }
+};
+
+template <typename T>
+struct MaxPool3DTaskOpt {
+
+  const T* X_data;
+  T* Y_data;
+  int64_t x_h;
+  int64_t x_w;
+  int64_t x_d;
+  int64_t y_h;
+  int64_t y_w;
+  int64_t y_d;
+  int64_t pad_h_front;
+  int64_t pad_h_back;
+  int64_t pad_w_front;
+  int64_t pad_w_back;
+  int64_t pad_d_front;
+  int64_t pad_d_back;
+  int64_t dilation_h;
+  int64_t dilation_w;
+  int64_t dilation_d;
+  int64_t pool_h;
+  int64_t pool_w;
+  int64_t pool_d;
+
+  TensorOpCost Cost() const {
+    auto loop_count = static_cast<double>(x_h * x_w * x_d);
+    return TensorOpCost{loop_count, loop_count, loop_count};
+  }
+
+  void operator()(std::ptrdiff_t begin, std::ptrdiff_t end) const {
+    std::unique_ptr<T[]> que_ptr{new T[std::max(pool_h, std::max(pool_w, pool_d))]};
+    std::unique_ptr<T[]> y_temp_1{new T[x_h * x_w * y_d]};
+    std::unique_ptr<T[]> y_temp_2{new T[x_h * y_w * y_d]};
+    for (int64_t c = begin; c < end; ++c) {
+      operator()(c, que_ptr, y_temp_1, y_temp_2);
+    }//for
+  }//operator
+
+  void operator()(std::ptrdiff_t c,
+                  std::unique_ptr<T[]>& que_ptr,
+                  std::unique_ptr<T[]>& y_temp_1,
+                  std::unique_ptr<T[]>& y_temp_2) const {
+
+    auto x = X_data + c * x_h * x_w * x_d;
+    auto y = Y_data + c * y_h * y_w * y_d;
+    //reduce depth
+    for (int h_i = 0; h_i < x_h; h_i++) {
+      for (int w_i = 0; w_i < x_w; w_i++) {
+        MaxPoolOpt(x + h_i * x_w * x_d + w_i * x_d,
+                   x + h_i * x_w * x_d + w_i * x_d + x_d,
+                   1, dilation_d, pad_d_front, pad_d_back, pool_d,
+                   y_temp_1.get() + h_i * x_w * y_d + w_i * y_d, 1, que_ptr.get());
+      }
+    }
+    //reduce width
+    for (int h_i = 0; h_i < x_h; h_i++) {
+      for (int d_i = 0; d_i < y_d; d_i++) {
+        MaxPoolOpt(y_temp_1.get() + h_i * x_w * y_d + d_i,
+                   y_temp_1.get() + (h_i + 1) * x_w * y_d + d_i,
+                   y_d, dilation_w, pad_w_front, pad_w_back, pool_w,
+                   y_temp_2.get() + h_i * y_w * y_d + d_i, y_d, que_ptr.get());
+      }
+    }
+    //reduce height
+    for (int w_i = 0; w_i < y_w; w_i++) {
+      for (int d_i = 0; d_i < y_d; d_i++) {
+        MaxPoolOpt(y_temp_2.get() + w_i * y_d + d_i,
+                   y_temp_2.get() + x_h * y_w * y_d + w_i * y_d + d_i,
+                   y_w * y_d, dilation_h, pad_h_front, pad_h_back, pool_h,
+                   y + w_i * y_d + d_i, y_w * y_d, que_ptr.get());
+      }
+    }//for
+  }
+};
+
 }  // namespace onnxruntime
