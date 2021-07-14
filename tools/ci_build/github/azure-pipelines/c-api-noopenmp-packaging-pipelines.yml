@@ -12,7 +12,7 @@ parameters:
 - name: DoEsrp
   displayName: Run code sign tasks? Must be true if you are doing an Onnx Runtime release.
   type: boolean
-  default: false
+  default: true
 
 - name: IsReleaseBuild
   displayName: Is a release build? Set it to true if you are doing an Onnx Runtime release.
