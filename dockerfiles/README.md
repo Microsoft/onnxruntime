@@ -79,7 +79,9 @@ Use `docker pull` with any of the images and tags below to pull an image and try
 2. Run the Docker image
 
   ```
-  docker run -it onnxruntime-trt
+  docker run --gpus all -it onnxruntime-trt
+    or
+  nvidia-docker run -it onnxruntime-trt
   ```
 
 ## OpenVINO
