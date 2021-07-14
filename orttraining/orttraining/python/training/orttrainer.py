@@ -293,7 +293,6 @@ class ORTTrainer(object):
         from onnx import helper, TensorProto, numpy_helper
         import numpy as np
         from numpy.testing import assert_allclose
-        import _test_helpers
         onnx_model_copy = copy.deepcopy(self._onnx_model)
 
         # Mute the dropout nodes
