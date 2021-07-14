@@ -78,6 +78,8 @@ TEST_F(CopyTest, Transpose4D) {
       }
     }
   }
+  delete[] src;
+  delete[] dst;
 }
 
 TEST_F(CopyTest, Concat2D) {
@@ -108,6 +110,8 @@ TEST_F(CopyTest, Concat2D) {
       }
     }
   }
+  delete[] src;
+  delete[] dst;
 }
 
 }  // namespace test
