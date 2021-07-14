@@ -30,7 +30,7 @@ GraphAugmenter::GraphDefs SoftmaxCrossEntropy::operator()(
     new_nodes.emplace_back(NodeDef(OpDef("SoftmaxCrossEntropy", kMSDomain, 1),  // Op
                                    {ArgDef(prediction_name),
                                     ArgDef(label_name, label_type_proto)},  // Inputs
-                                   {ArgDef(loss_name, graph_defs.CreateTypeProto({1,}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT)),
+                                   {ArgDef(loss_name, graph_defs.CreateTypeProto({}, ONNX_NAMESPACE::TensorProto_DataType_FLOAT)),
                                     ArgDef(prob_name)},  // Outputs
                                    NodeAttributes(),
                                    "SoftmaxCrossEntropy"  // name
