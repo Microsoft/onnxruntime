@@ -446,9 +446,9 @@ class ORTTrainer(object):
         if isinstance(inputs, torch.Tensor):
             inputs = [inputs]
         if isinstance(inputs, dict):
-            sample_inputs = [inputs[k.name_].to(device=device) for k in self.model_desc.inputs]
+            sample_inputs = [inputs[k.name_][:1].to(device=device) for k in self.model_desc.inputs]
         elif isinstance(inputs, (list, tuple)):
-            sample_inputs = [input.to(device=device) for i, input in enumerate(inputs) if i < len(self.model_desc.inputs)]
+            sample_inputs = [input[:1].to(device=device) for i, input in enumerate(inputs) if i < len(self.model_desc.inputs)]
         else:
             raise RuntimeError("Unexpected input type. Only torch.Tensor, or dict/list/tuple of torch.Tensor is supported.")
 
@@ -498,6 +498,7 @@ class ORTTrainer(object):
 
         # Do an inference to grab output types
         model.eval()
+        model.to(device)
         with torch.no_grad():
             # Deepcopy inputs, since input values may change after model run.
             sample_inputs_copy = copy.deepcopy(sample_inputs)
@@ -676,6 +677,9 @@ class ORTTrainer(object):
         if len(self.options.debug.graph_save_paths.model_with_training_graph_after_optimization_path) > 0:
             session_options.optimized_model_filepath = self.options.debug.graph_save_paths.model_with_training_graph_after_optimization_path
 
+        # PyTorch model is moved to cpu to save GPU memory
+        self._torch_model.cpu()
+        torch.cuda.empty_cache()
         # old ort session may already exists and occupies GPU memory when creating new session, this may cause OOM error.
         # for example, load_state_dict will be called before returing the function, and it calls _init_session again
         del self._training_session
@@ -717,15 +721,12 @@ class ORTTrainer(object):
             return
 
         if self._torch_model is not None:
-            # PyTorch model is moved to cpu to save GPU memory
-            self._torch_model.cpu()
-
             # PyTorch buffers (created using 'register_buffer') shouldn't be trained
             torch_buffers = list(dict(self._torch_model.named_buffers()).keys())
             self.options.utils.frozen_weights.extend(torch_buffers)
 
             # Export to ONNX
-            self._onnx_model = self._convert_torch_model_loss_fn_to_onnx(inputs, 'cpu')
+            self._onnx_model = self._convert_torch_model_loss_fn_to_onnx(inputs, torch.cuda.current_device())
 
             # Post processing for ONNX models expported from PyTorch
             if self.options._internal_use.enable_internal_postprocess:
