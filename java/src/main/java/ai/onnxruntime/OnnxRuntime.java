@@ -10,8 +10,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -30,6 +34,14 @@ final class OnnxRuntime {
   private static final int ORT_API_VERSION_3 = 3;
   // Post 1.6 builds of the ORT API
   private static final int ORT_API_VERSION_7 = 7;
+  // Post 1.7 builds of the ORT API
+  private static final int ORT_API_VERSION_8 = 8;
+
+  /**
+   * The name of the system property which when set gives the path on disk where the ONNX Runtime
+   * native libraries are stored.
+   */
+  static final String ONNXRUNTIME_NATIVE_PATH = "onnxruntime.native.path";
 
   /** The short name of the ONNX runtime shared library */
   static final String ONNXRUNTIME_LIBRARY_NAME = "onnxruntime";
@@ -38,12 +50,29 @@ final class OnnxRuntime {
 
   /** The short name of the ONNX runtime shared provider library */
   static final String ONNXRUNTIME_LIBRARY_SHARED_NAME = "onnxruntime_providers_shared";
-  /** The short name of the ONNX runtime cuda provider library */
+  /** The short name of the ONNX runtime CUDA provider library */
   static final String ONNXRUNTIME_LIBRARY_CUDA_NAME = "onnxruntime_providers_cuda";
+  /** The short name of the ONNX runtime DNNL provider library */
+  static final String ONNXRUNTIME_LIBRARY_DNNL_NAME = "onnxruntime_providers_dnnl";
+  /** The short name of the ONNX runtime OpenVINO provider library */
+  static final String ONNXRUNTIME_LIBRARY_OPENVINO_NAME = "onnxruntime_providers_openvino";
+  /** The short name of the ONNX runtime TensorRT provider library */
+  static final String ONNXRUNTIME_LIBRARY_TENSORRT_NAME = "onnxruntime_providers_tensorrt";
 
+  /** The OS & CPU architecture string */
   private static final String OS_ARCH_STR = initOsArch();
 
+  /** Have the core ONNX Runtime native libraries been loaded */
   private static boolean loaded = false;
+
+  /** The temp directory where native libraries are extracted */
+  private static Path tempDirectory;
+
+  /** The value of the {@link #ONNXRUNTIME_NATIVE_PATH} system property */
+  private static String libraryDirPathProperty;
+
+  /** Tracks if the shared providers have been extracted */
+  private static final Set<String> extractedSharedProviders = new HashSet<>();
 
   /** The API handle. */
   static long ortApiHandle;
@@ -96,40 +125,112 @@ final class OnnxRuntime {
     if (loaded) {
       return;
     }
-    Path tempDirectory = isAndroid() ? null : Files.createTempDirectory("onnxruntime-java");
+    tempDirectory = isAndroid() ? null : Files.createTempDirectory("onnxruntime-java");
     try {
-      // Extract and prepare the shared provider libraries but don't try to load them, Onnxruntime
-      // itself will load them
-      load(tempDirectory, ONNXRUNTIME_LIBRARY_SHARED_NAME, false);
-      load(tempDirectory, ONNXRUNTIME_LIBRARY_CUDA_NAME, false);
+      libraryDirPathProperty = System.getProperty(ONNXRUNTIME_NATIVE_PATH);
+      // Extract and prepare the shared provider library but don't try to load it,
+      // the ONNX Runtime native library will load it
+      extractProviderLibrary(ONNXRUNTIME_LIBRARY_SHARED_NAME);
 
-      load(tempDirectory, ONNXRUNTIME_LIBRARY_NAME, true);
-      load(tempDirectory, ONNXRUNTIME_JNI_LIBRARY_NAME, true);
-      ortApiHandle = initialiseAPIBase(ORT_API_VERSION_7);
+      load(ONNXRUNTIME_LIBRARY_NAME);
+      load(ONNXRUNTIME_JNI_LIBRARY_NAME);
+      ortApiHandle = initialiseAPIBase(ORT_API_VERSION_8);
       providers = initialiseProviders(ortApiHandle);
       loaded = true;
     } finally {
       if (tempDirectory != null) {
-        cleanUp(tempDirectory.toFile(), false);
+        cleanUp(tempDirectory.toFile());
       }
     }
   }
 
   /**
-   * Attempt to remove a file and then mark for delete on exit if it cannot be deleted at this point
-   * in time.
+   * Marks the file for delete on exit.
    *
    * @param file The file to remove.
-   * @param onExitOnly Delete the file on exit only, vs trying to do it immediately
    */
-  private static void cleanUp(File file, boolean onExitOnly) {
+  private static void cleanUp(File file) {
     if (!file.exists()) {
       return;
     }
-    logger.log(Level.FINE, "Deleting " + file);
-    if (onExitOnly || !file.delete()) {
-      logger.log(Level.FINE, "Deleting " + file + " on exit");
-      file.deleteOnExit();
+    logger.log(Level.FINE, "Deleting " + file + " on exit");
+    file.deleteOnExit();
+  }
+
+  /**
+   * Extracts the CUDA provider library from the classpath resources if present, or checks to see if
+   * the CUDA provider library is in the directory specified by {@link #ONNXRUNTIME_NATIVE_PATH}.
+   *
+   * @return True if the CUDA provider library is ready for loading, false otherwise.
+   */
+  static boolean extractCUDA() {
+    return extractProviderLibrary(ONNXRUNTIME_LIBRARY_CUDA_NAME);
+  }
+
+  /**
+   * Extracts the DNNL provider library from the classpath resources if present, or checks to see if
+   * the DNNL provider library is in the directory specified by {@link #ONNXRUNTIME_NATIVE_PATH}.
+   *
+   * @return True if the DNNL provider library is ready for loading, false otherwise.
+   */
+  static boolean extractDNNL() {
+    return extractProviderLibrary(ONNXRUNTIME_LIBRARY_DNNL_NAME);
+  }
+
+  /**
+   * Extracts the OpenVINO provider library from the classpath resources if present, or checks to
+   * see if the OpenVINO provider library is in the directory specified by {@link
+   * #ONNXRUNTIME_NATIVE_PATH}.
+   *
+   * @return True if the OpenVINO provider library is ready for loading, false otherwise.
+   */
+  static boolean extractOpenVINO() {
+    return extractProviderLibrary(ONNXRUNTIME_LIBRARY_OPENVINO_NAME);
+  }
+
+  /**
+   * Extracts the TensorRT provider library from the classpath resources if present, or checks to
+   * see if the TensorRT provider library is in the directory specified by {@link
+   * #ONNXRUNTIME_NATIVE_PATH}.
+   *
+   * @return True if the TensorRT provider library is ready for loading, false otherwise.
+   */
+  static boolean extractTensorRT() {
+    return extractProviderLibrary(ONNXRUNTIME_LIBRARY_TENSORRT_NAME);
+  }
+
+  /**
+   * Extracts a shared provider library from the classpath resources if present, or checks to see if
+   * that library is in the directory specified by {@link #ONNXRUNTIME_NATIVE_PATH}.
+   *
+   * @param libraryName The shared provider library to load.
+   * @return True if the library is ready for loading by ORT's native code, false otherwise.
+   */
+  static synchronized boolean extractProviderLibrary(String libraryName) {
+    // Check if we've already extracted or check this provider, and it's ready
+    if (extractedSharedProviders.contains(libraryName)) {
+      return true;
+    }
+    // Otherwise extract the file from the classpath resources
+    Optional<File> file = extractFromResources(libraryName);
+    if (file.isPresent()) {
+      extractedSharedProviders.add(libraryName);
+      return true;
+    } else {
+      // If we failed to extract it, check if there is a valid cache directory
+      // that contains it
+      if (libraryDirPathProperty != null) {
+        String libraryFileName = mapLibraryName(libraryName);
+        File libraryFile = Paths.get(libraryDirPathProperty, libraryFileName).toFile();
+        if (libraryFile.exists()) {
+          extractedSharedProviders.add(libraryName);
+          return true;
+        } else {
+          return false;
+        }
+      } else {
+        return false;
+      }
     }
   }
 
@@ -145,13 +246,13 @@ final class OnnxRuntime {
   /**
    * Load a shared library by name.
    *
-   * @param tempDirectory The temp directory to write the library resource to.
+   * <p>If the library path is not specified via a system property then it attempts to extract the
+   * library from the classpath before loading it.
+   *
    * @param library The bare name of the library.
-   * @param systemLoad If system.Load(..) should be called on the library vs just preparing it
    * @throws IOException If the file failed to read or write.
    */
-  private static void load(Path tempDirectory, String library, boolean systemLoad)
-      throws IOException {
+  private static void load(String library) throws IOException {
     // On Android, we simply use System.loadLibrary
     if (isAndroid()) {
       System.loadLibrary("onnxruntime4j_jni");
@@ -165,7 +266,29 @@ final class OnnxRuntime {
       return;
     }
 
-    // 2) The user may explicitly specify the path to their shared library:
+    // Resolve the platform dependent library name.
+    String libraryFileName = mapLibraryName(library);
+
+    // 2) The user may explicitly specify the path to a directory containing all shared libraries:
+    if (libraryDirPathProperty != null) {
+      logger.log(
+          Level.FINE,
+          "Attempting to load native library '"
+              + library
+              + "' from specified path: "
+              + libraryDirPathProperty);
+      // TODO: Switch this to Path.of when the minimum Java version is 11.
+      File libraryFile = Paths.get(libraryDirPathProperty, libraryFileName).toFile();
+      String libraryFilePath = libraryFile.getAbsolutePath();
+      if (!libraryFile.exists()) {
+        throw new IOException("Native library '" + library + "' not found at " + libraryFilePath);
+      }
+      System.load(libraryFilePath);
+      logger.log(Level.FINE, "Loaded native library '" + library + "' from specified path");
+      return;
+    }
+
+    // 3) The user may explicitly specify the path to their shared library:
     String libraryPathProperty = System.getProperty("onnxruntime.native." + library + ".path");
     if (libraryPathProperty != null) {
       logger.log(
@@ -184,24 +307,39 @@ final class OnnxRuntime {
       return;
     }
 
-    // 3) try loading from resources or library path:
-    // generate a platform specific library name
-    // replace Mac's jnilib extension to dylib
-    String libraryFileName = System.mapLibraryName(library).replace("jnilib", "dylib");
+    // 4) try loading from resources or library path:
+    Optional<File> extractedPath = extractFromResources(library);
+    if (extractedPath.isPresent()) {
+      // extracted library from resources
+      System.load(extractedPath.get().getAbsolutePath());
+      logger.log(Level.FINE, "Loaded native library '" + library + "' from resource path");
+    } else {
+      // failed to load library from resources, try to load it from the library path
+      logger.log(
+          Level.FINE, "Attempting to load native library '" + library + "' from library path");
+      System.loadLibrary(library);
+      logger.log(Level.FINE, "Loaded native library '" + library + "' from library path");
+    }
+  }
+
+  /**
+   * Extracts the library from the classpath resources. returns optional.empty if it failed to
+   * extract or couldn't be found.
+   *
+   * @param library The library name
+   * @return An optional containing the file if it is successfully extracted, or an empty optional
+   *     if it failed to extract or couldn't be found.
+   */
+  private static Optional<File> extractFromResources(String library) {
+    String libraryFileName = mapLibraryName(library);
     String resourcePath = "/ai/onnxruntime/native/" + OS_ARCH_STR + '/' + libraryFileName;
     File tempFile = tempDirectory.resolve(libraryFileName).toFile();
     try (InputStream is = OnnxRuntime.class.getResourceAsStream(resourcePath)) {
       if (is == null) {
-        // 3a) Not found in resources, load from library path
-        if (!systemLoad) {
-          return; // Failure is expected for optional components we don't need to load
-        }
-        logger.log(
-            Level.FINE, "Attempting to load native library '" + library + "' from library path");
-        System.loadLibrary(library);
-        logger.log(Level.FINE, "Loaded native library '" + library + "' from library path");
+        // Not found in classpath resources
+        return Optional.empty();
       } else {
-        // 3b) Found in resources, load via temporary file
+        // Found in classpath resources, load via temporary file
         logger.log(
             Level.FINE,
             "Attempting to load native library '"
@@ -210,23 +348,34 @@ final class OnnxRuntime {
                 + resourcePath
                 + " copying to "
                 + tempFile);
-        byte[] buffer = new byte[1024];
+        byte[] buffer = new byte[4096];
         int readBytes;
         try (FileOutputStream os = new FileOutputStream(tempFile)) {
           while ((readBytes = is.read(buffer)) != -1) {
             os.write(buffer, 0, readBytes);
           }
         }
-        if (systemLoad) {
-          System.load(tempFile.getAbsolutePath());
-          logger.log(Level.FINE, "Loaded native library '" + library + "' from resource path");
-        } else {
-          logger.log(Level.FINE, "Extracted native library '" + library + "' from resource path");
-        }
+        logger.log(Level.FINE, "Extracted native library '" + library + "' from resource path");
+        return Optional.of(tempFile);
       }
+    } catch (IOException e) {
+      logger.log(
+          Level.WARNING, "Failed to extract library '" + library + "' from the resources", e);
+      return Optional.empty();
     } finally {
-      cleanUp(tempFile, !systemLoad);
+      cleanUp(tempFile);
     }
+  }
+
+  /**
+   * Maps the library name into a platform dependent library filename. Converts macOS's "jnilib" to
+   * "dylib" but otherwise is the same as {@link System#mapLibraryName(String)}.
+   *
+   * @param library The library name
+   * @return The library filename.
+   */
+  private static String mapLibraryName(String library) {
+    return System.mapLibraryName(library).replace("jnilib", "dylib");
   }
 
   /**
