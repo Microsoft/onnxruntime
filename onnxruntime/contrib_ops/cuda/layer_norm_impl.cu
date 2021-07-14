@@ -40,17 +40,16 @@ __device__ void cuWelfordOnlineSum(
     U& count) {
   count = count + U(1);
   U delta = curr - mu;
-  U lmean = mu + delta / count;
-  mu = lmean;
+  mu += delta / count;
   if (simplified) {
     sigma2 = sigma2 + curr * curr;
   } else {
-    U delta2 = curr - lmean;
+    U delta2 = curr - mu;
     sigma2 = sigma2 + delta * delta2;
   }
 }
 
-template <typename U, bool simplified>
+template <typename U, bool simplified, bool large_count>
 __device__ void cuChanOnlineSum(
     const U muB,
     const U sigma2B,
@@ -62,15 +61,18 @@ __device__ void cuChanOnlineSum(
   U nA = count;
   U nB = countB;
   count = count + countB;
-  U nX = count;
-  if (nX > U(0)) {
-    nA = nA / nX;
-    nB = nB / nX;
-    mu = nA * mu + nB * muB;
+  if (count > U(0)) {
+    if (large_count) {
+      nB = nB / count;
+      mu = nA * mu / count + nB * muB;
+    } else {
+      nB = nB / count;
+      mu += delta * nB;
+    }
     if (simplified) {
       sigma2 = sigma2 + sigma2B;
     } else {
-      sigma2 = sigma2 + sigma2B + delta * delta * nA * nB * nX;
+      sigma2 = sigma2 + sigma2B + delta * delta * nA * nB;
     }
   } else {
     mu = U(0);
@@ -78,7 +80,7 @@ __device__ void cuChanOnlineSum(
   }
 }
 
-template <typename T, typename U, bool simplified>
+template <typename T, typename U, bool simplified, bool large_count>
 __device__ void cuWelfordMuSigma2(
     const T* __restrict__ vals,
     const int n1,
@@ -120,7 +122,7 @@ __device__ void cuWelfordMuSigma2(
       U muB = WARP_SHFL_DOWN(mu, stride);
       U countB = WARP_SHFL_DOWN(count, stride);
       U sigma2B = WARP_SHFL_DOWN(sigma2, stride);
-      cuChanOnlineSum<U, simplified>(muB, sigma2B, countB, mu, sigma2, count);
+      cuChanOnlineSum<U, simplified, large_count>(muB, sigma2B, countB, mu, sigma2, count);
     }
 
     // threadIdx.x == 0 has correct values for each warp
@@ -142,7 +144,7 @@ __device__ void cuWelfordMuSigma2(
           U muB = ubuf[2 * threadIdx.y];
           U sigma2B = ubuf[2 * threadIdx.y + 1];
           U countB = ibuf[threadIdx.y];
-          cuChanOnlineSum<U, simplified>(muB, sigma2B, countB, mu, sigma2, count);
+          cuChanOnlineSum<U, simplified, large_count>(muB, sigma2B, countB, mu, sigma2, count);
         }
         __syncthreads();
       }
@@ -162,7 +164,7 @@ __device__ void cuWelfordMuSigma2(
   }
 }
 
-template <bool simplified>
+template <bool simplified, bool large_count>
 __device__ void cuWelfordMuSigma2(
     const half* __restrict__ vals,
     const int n1,
@@ -215,7 +217,7 @@ __device__ void cuWelfordMuSigma2(
       float muB = WARP_SHFL_DOWN(mu, stride);
       float countB = WARP_SHFL_DOWN(count, stride);
       float sigma2B = WARP_SHFL_DOWN(sigma2, stride);
-      cuChanOnlineSum<float, simplified>(muB, sigma2B, countB, mu, sigma2, count);
+      cuChanOnlineSum<float, simplified, large_count>(muB, sigma2B, countB, mu, sigma2, count);
     }
 
     // threadIdx.x == 0 has correct values for each warp
@@ -237,7 +239,7 @@ __device__ void cuWelfordMuSigma2(
           float muB = ubuf[2 * threadIdx.y];
           float sigma2B = ubuf[2 * threadIdx.y + 1];
           float countB = ibuf[threadIdx.y];
-          cuChanOnlineSum<float, simplified>(muB, sigma2B, countB, mu, sigma2, count);
+          cuChanOnlineSum<float, simplified, large_count>(muB, sigma2B, countB, mu, sigma2, count);
         }
         __syncthreads();
       }
@@ -305,7 +307,7 @@ struct SharedMemory<double> {
 };
 }  // namespace
 
-template <typename T, typename U, bool simplified>
+template <typename T, typename U, bool simplified, bool large_count>
 __global__ void cuApplyLayerNorm(
     T* __restrict__ output_vals,
     U* __restrict__ mean,
@@ -324,7 +326,7 @@ __global__ void cuApplyLayerNorm(
     SharedMemory<U> shared;
     U* buf = shared.getPointer();
     U mu, sigma2;
-    cuWelfordMuSigma2<T, U, simplified>(vals, n1, n2, i1, mu, sigma2, buf);
+    cuWelfordMuSigma2<T, U, simplified, large_count>(vals, n1, n2, i1, mu, sigma2, buf);
     const T* lvals = vals + i1 * n2;
     T* ovals = output_vals + i1 * n2;
     U c_inv_std_dev = rsqrt(sigma2 + epsilon);
@@ -362,6 +364,7 @@ void HostApplyLayerNorm(
     const T* beta) {
   const int maxGridY = prop.maxGridSize[1];
   const int warp_size = prop.warpSize;
+  bool large_count = n2 > 16384;
   ORT_ENFORCE(warp_size == GPU_WARP_SIZE);
 
   dim3 threads(warp_size, 4, 1);
@@ -372,14 +375,25 @@ void HostApplyLayerNorm(
   const dim3 blocks(1, std::min<unsigned int>(n1, maxGridY), 1);
   int nshared =
       threads.y > 1 ? threads.y * sizeof(U) + (threads.y / 2) * sizeof(U) : 0;
-  cuApplyLayerNorm<T, U, simplified><<<blocks, threads, nshared, stream>>>(
-      output,
-      mean,
-      inv_std_dev,
-      input,
-      n1, n2,
-      U(epsilon),
-      gamma, beta);
+  if (large_count) {
+    cuApplyLayerNorm<T, U, simplified, true><<<blocks, threads, nshared, stream>>>(
+        output,
+        mean,
+        inv_std_dev,
+        input,
+        n1, n2,
+        U(epsilon),
+        gamma, beta);
+  } else {
+    cuApplyLayerNorm<T, U, simplified, false><<<blocks, threads, nshared, stream>>>(
+        output,
+        mean,
+        inv_std_dev,
+        input,
+        n1, n2,
+        U(epsilon),
+        gamma, beta);
+  }
 }
 
 #define LAYERNORM_LINEAR_IMPL(T, U, simplified)                                                                                                 \
