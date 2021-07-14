@@ -326,6 +326,20 @@ void addObjectMethodsForTraining(py::module& m) {
         return py::reinterpret_steal<py::object>(ToDlpack(v->at(idx)));
       });
 
+  py::class_<OrtValueCache>(m, "OrtValueCache")
+      .def(py::init<>())
+      .def("insert", [](OrtValueCache& cache, std::string node_arg_name, OrtValue& value) {
+        cache.CacheOrtValue(node_arg_name, value);
+      })
+      .def("keys", [](OrtValueCache& cache) {
+        std::vector<std::string> key_vec;
+        cache.GetCachedIds(key_vec);
+        return key_vec;
+      })
+      .def("drop", [](OrtValueCache& cache) {
+        cache.DeleteCache();
+      });
+
   py::class_<TrainingParameters> parameters(m, "TrainingParameters", R"pbdoc(Configuration information for training.)pbdoc");
   parameters.def(py::init())
       .def_readwrite("loss_output_name", &TrainingParameters::loss_output_name)
@@ -616,6 +630,7 @@ void addObjectMethodsForTraining(py::module& m) {
       .def_readwrite("output_grad_indices_require_full_shape", &GraphInfo::output_grad_indices_require_full_shape)
       .def_readwrite("module_output_indices_requires_save_for_backward", &GraphInfo::module_output_indices_requires_save_for_backward)
       .def_readwrite("frontier_node_arg_map", &GraphInfo::frontier_node_arg_map)
+      .def_readwrite("cached_node_arg_name", &GraphInfo::cached_node_arg_name)
       .def_readwrite("module_output_gradient_name", &GraphInfo::module_output_gradient_name);
 
   py::class_<OrtModuleGraphBuilder> ortmodule_graph_builder(m, "OrtModuleGraphBuilder");

@@ -134,6 +134,9 @@ class GraphExecutionManager(GraphExecutionInterface):
         if not isinstance(module, torch.nn.Module):
             raise TypeError(f"ORTModule only supports torch.nn.Module as input. {type(module)} is not supported.")
 
+        # WIP feature to enable caching in Gradient accumulation scenario.
+        self._enable_grad_acc_optimization = False
+
     @staticmethod
     def execution_session_run_forward(execution_session, onnx_model, device, *inputs):
         """Runs the forward pass on `execution_session` with given `onnx_model`, `device` and `inputs`
