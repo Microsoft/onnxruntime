@@ -1489,6 +1489,7 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
                 cwd = os.path.join(cwd, config)
 
             run_subprocess([sys.executable, 'onnxruntime_test_python.py'], cwd=cwd, dll_path=dll_path)
+            run_subprocess([sys.executable, 'orttraining_test_gradient_graph.py'], cwd=cwd, dll_path=dll_path)
 
             if args.enable_symbolic_shape_infer_tests:
                 run_subprocess([sys.executable, 'onnxruntime_test_python_symbolic_shape_infer.py'],

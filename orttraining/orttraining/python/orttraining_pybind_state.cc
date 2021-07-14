@@ -8,11 +8,14 @@
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 
+#include "core/graph/model.h"
 #include "core/session/environment.h"
 #include "orttraining/core/session/training_session.h"
 #include "orttraining/core/agent/training_agent.h"
+#include "orttraining/core/graph/gradient_config.h"
 #include "orttraining/core/graph/optimizer_config.h"
 #include "orttraining/core/framework/communication/mpi/mpi_context.h"
+#include "orttraining/core/framework/gradient_graph_builder.h"
 #include "orttraining/core/framework/ortmodule_graph_builder.h"
 #include "python/onnxruntime_pybind_mlvalue.h"
 
@@ -84,6 +87,13 @@ struct TrainingParameters {
 
 struct TrainingConfigurationResult {
   optional<std::string> loss_scale_input_name;
+};
+
+struct PyGradientGraphBuilder {
+  GradientGraphBuilder& builder;
+  Model& model;
+  PyGradientGraphBuilder(GradientGraphBuilder& builder, Model& model)
+      : builder(builder), model(model) {}
 };
 
 // TODO: this method does not handle parallel optimization.
@@ -645,6 +655,36 @@ void addObjectMethodsForTraining(py::module& m) {
            })
       .def("get_graph_info", [](OrtModuleGraphBuilder* ortmodule_graph_builder) {
         return ortmodule_graph_builder->GetGraphInfo();
+      });
+
+  py::class_<PyGradientGraphBuilder> gradient_graph_builder(m, "GradientGraphBuilder", R"pbdoc(A utility for making a gradient graph that can be used to help train a model.)pbdoc");
+  gradient_graph_builder.def(py::init([](
+                                          const std::string& model_path,
+                                          const std::unordered_set<std::string>& y_node_arg_names,
+                                          const std::unordered_set<std::string>& x_node_arg_names,
+                                          const std::string& loss_node_arg_name) {
+                          auto file_path = ToPathString(model_path);
+                          std::shared_ptr<Model> model;
+                          auto logger = logging::LoggingManager::DefaultLogger();
+                          ORT_THROW_IF_ERROR(Model::Load(file_path, model, nullptr, logger));
+                          GradientGraphConfiguration gradient_graph_config{};
+                          gradient_graph_config.set_gradients_as_graph_outputs = true;
+
+                          GradientGraphBuilder builder{
+                              &model->MainGraph(),
+                              y_node_arg_names,
+                              x_node_arg_names,
+                              loss_node_arg_name,
+                              gradient_graph_config,
+                              logger};
+                          return std::make_unique<PyGradientGraphBuilder>(builder, *model);
+                        }))
+      .def("build", [](PyGradientGraphBuilder* gradient_graph_builder) {
+        ORT_THROW_IF_ERROR(gradient_graph_builder->builder.Build());
+      })
+      .def("save", [](PyGradientGraphBuilder* gradient_graph_builder, const std::string& path) {
+        // TODO Maybe just call build here?
+        ORT_THROW_IF_ERROR(Model::Save(gradient_graph_builder->model, path));
       });
 }
 
