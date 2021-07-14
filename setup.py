@@ -295,7 +295,7 @@ if enable_training:
     package_name = 'onnxruntime-training'
 
     # we want put default training packages to pypi. pypi does not accept package with a local version.
-    if not default_training_package_device:
+    if (not default_training_package_device) or nightly_build:
         def get_torch_version():
             try:
                 import torch
@@ -383,8 +383,39 @@ if nightly_build:
     if build_suffix is None:
         # The following line is only for local testing
         build_suffix = str(datetime.datetime.now().date().strftime("%Y%m%d"))
+        print("build_suffix1: ", build_suffix)
     else:
+        print("build_suffix2: ", build_suffix)
         build_suffix = build_suffix.replace('.', '')
+
+    if len(build_suffix) > 8 and len(build_suffix) < 12:
+        # we want to format the build_suffix to avoid (the 12th run on 20210630 vs the first run on 20210701):
+        # 2021063012 > 20210701
+        # in above 2021063012 is treated as the latest which is incorrect.
+        # we want to convert the format to:
+        # 20210630012 < 20210701001
+        # where the first 8 digits are date. the last 3 digits are run count.
+        # as long as there are less than 1000 runs per day, we will not have the problem.
+        def check_date_format(date_str):
+            try:
+                datetime.datetime.strptime(date_str, '%Y%m%d')
+                return True
+            except: # noqa
+                return False
+
+        def reformat_run_count(count_str):
+            try:
+                count = int(count_str)
+                if count >= 0 and count < 1000:
+                    return "{:03}".format(count)
+                return ""
+            except: # noqa
+                return ""
+
+        build_suffix_is_date_format = check_date_format(build_suffix[:8])
+        build_suffix_run_count = reformat_run_count(build_suffix[8:])
+        if build_suffix_is_date_format and build_suffix_run_count:
+            build_suffix = build_suffix[:8] + build_suffix_run_count
 
     if enable_training:
         from packaging import version
