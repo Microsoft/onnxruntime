@@ -3,13 +3,14 @@
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
 
-from . import _utils, _io
-from ._graph_execution_manager import GraphExecutionManager, RunStateInfo
+from . import _utils, _io, _logger
+from ._graph_execution_manager import GraphExecutionManager, _RunStateInfo, _FallbackLevel
 from ._execution_agent import InferenceAgent
 
 from onnxruntime.capi import _pybind_state as C
 import onnx
 import torch
+import warnings
 
 
 class InferenceManager(GraphExecutionManager):
@@ -49,7 +50,7 @@ class InferenceManager(GraphExecutionManager):
         _utils._check_same_device(device, "Output argument from forward", *user_outputs)
 
         output_info = [(output.shape, output.device, output.dtype) for output in user_outputs]
-        run_info = RunStateInfo(state, output_info)
+        run_info = _RunStateInfo(state, output_info)
         # Return user outputs and forward run information
         return user_outputs, run_info
 
@@ -61,44 +62,58 @@ class InferenceManager(GraphExecutionManager):
         Finally, we instantiate the ONNX Runtime InferenceSession through the InferenceAgent.
         '''
 
-        # Exporting module to ONNX for the first time
-        build_graph = self._export_model(*inputs, **kwargs)
-        if build_graph:
-            # If model was exported, then initialize the graph builder
-            self._initialize_graph_builder(training=False)
+        # Fallback to PyTorch due to failures *external* to forward(),
+        #  typically from initialization
+        if self._pending_fallback():
+            return self._apply_fallback(*inputs, **kwargs)
 
-            # Save the onnx model if the model was exported
-            if self._save_onnx:
-                onnx.save(self._onnx_model, self._save_onnx_prefix + '_exported_inference_model.onnx')
+        try:
+            # Exporting module to ONNX for the first time
+            build_graph = self._export_model(*inputs, **kwargs)
+            if build_graph:
+                # If model was exported, then initialize the graph builder
+                self._initialize_graph_builder(training=False)
 
-        # Build the inference graph
-        if build_graph:
-            self._build_graph()
+                # Save the onnx model if the model was exported
+                if self._save_onnx:
+                    onnx.save(self._onnx_model, self._save_onnx_prefix + '_exported_inference_model.onnx')
 
-        module_device = _utils.get_device_from_module(self._original_module)
-        # The inference session should be created every time
-        # the graph was built or if the device changed between calls to forward
-        create_execution_session = build_graph or self._device != module_device
-        if self._device != module_device:
-            self._device = module_device
-        if create_execution_session:
-            # Create execution session creates the inference_session
-            self._create_execution_agent()
+            # Build the inference graph
+            if build_graph:
+                self._build_graph()
 
-        user_outputs, _ = InferenceManager.execution_session_run_forward(self._execution_agent,
-                                                                         self._optimized_onnx_model,
-                                                                         self._device,
-                                                                         *_io._combine_input_buffers_initializers(
-                                                                             self._graph_initializers,
-                                                                             self._graph_info.user_input_names,
-                                                                             self._input_info,
-                                                                             self._flattened_module.named_buffers(),
-                                                                             inputs,
-                                                                             kwargs,
-                                                                             self._device))
+            module_device = _utils.get_device_from_module(self._original_module)
 
-        return _io.unflatten_user_output(self._module_output_schema,
-                                         user_outputs)
+            # The inference session should be created every time
+            # the graph was built or if the device changed between calls to forward
+            create_execution_session = build_graph or self._device != module_device
+            if self._device != module_device:
+                self._device = module_device
+            if create_execution_session:
+                # Create execution session creates the inference_session
+                self._create_execution_agent()
+
+            user_outputs, _ = InferenceManager.execution_session_run_forward(self._execution_agent,
+                                                                            self._optimized_onnx_model,
+                                                                            self._device,
+                                                                            *_io._combine_input_buffers_initializers(
+                                                                                self._graph_initializers,
+                                                                                self._graph_info.user_input_names,
+                                                                                self._input_info,
+                                                                                self._flattened_module.named_buffers(),
+                                                                                inputs,
+                                                                                kwargs,
+                                                                                self._device))
+
+            return _io.unflatten_user_output(self._module_output_schema,
+                                            user_outputs)
+        except Exception as e:
+            self._check_fallback(e)
+
+        # Fallback to PyTorch due to failures *during* to forward(),
+        #  (e.g. export, model/input post-processing, forward, output processing, etc)
+        if self._pending_fallback():
+            return self._apply_fallback(*inputs, **kwargs)
 
     def _build_graph(self):
         """Build an optimized inference graph using the module_graph_builder"""

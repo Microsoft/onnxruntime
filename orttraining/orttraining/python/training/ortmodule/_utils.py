@@ -72,7 +72,7 @@ def get_device_from_module(module):
         device = next(module.parameters()).device
         for param in module.parameters():
             if param.device != device:
-                raise RuntimeError('ORTModule supports a single device per model for now')
+                raise RuntimeError('ORTModule supports a single device per model')
     except StopIteration:
         # Model doesn't have a device set to any of the model parameters
         pass
