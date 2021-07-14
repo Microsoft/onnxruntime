@@ -213,6 +213,16 @@ static Status SliceImpl(OpKernelContext* ctx,
 
   // use MutableDataRaw as actual data type in tensor may not match as we templatize on data size
   T* output = reinterpret_cast<T*>(output_tensor.MutableDataRaw());
+
+  // Bypass the slice logic when only one element is required (usually happens with shapes).
+  if (compute_metadata.starts_.size() == 1 && output_tensor.Shape().Size() == 1 && compute_metadata.steps_[0] > 0 && !output_tensor.IsDataTypeString()) {
+    auto dims = input_tensor.Shape().GetDims();
+    size_t start = compute_metadata.starts_[0] >= 0 ? compute_metadata.starts_[0] : ((compute_metadata.starts_[0] + dims[0]) % dims[0]);
+    const T* input = reinterpret_cast<const T*>(input_tensor.DataRaw()) + start;
+    *output = *input;
+    return Status::OK();
+  }
+
   const auto* output_end = output + output_tensor.Shape().Size();
 
   auto create_output = [&output, &output_end](SliceIterator<T>& slice_input_iterator) {
