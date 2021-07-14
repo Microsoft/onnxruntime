@@ -1,4 +1,5 @@
 [flake8]
+select = F,E,W
 max-line-length = 120
 per-file-ignores =
     __init__.py:F401
