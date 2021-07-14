@@ -43,4 +43,22 @@ class AttentionDropoutRecompute : public GraphTransformer {
   bool SatisfyCondition(const Node& node) const;
 };
 
+/**
+@Class ExpandRecompute
+
+Recompute the Expand nodes
+
+*/
+class ExpandRecompute : public GraphTransformer {
+ public:
+  ExpandRecompute() noexcept : GraphTransformer("ExpandRecompute") {}
+
+  Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;
+
+  bool ShouldOnlyApplyOnce() const override { return true; }
+
+ private:
+  bool SatisfyCondition(const Node& node) const;
+};
+
 }  // namespace onnxruntime

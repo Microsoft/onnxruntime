@@ -17,6 +17,8 @@ struct TrainingGraphTransformerConfiguration : public GraphTransformerConfigurat
   bool attn_dropout_recompute{false};
   // Enable recompute of Gelu activation output to save memory
   bool gelu_recompute{false};
+  // Enable recompute of Expand to save memory
+  bool expand_recompute{true};
   // Enable recompute of transformer layer ouput to save memory
   bool transformer_layer_recompute{false};
   // Number of layers to apply recompute

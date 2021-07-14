@@ -111,7 +111,8 @@ class TrainingAgent(object):
         """
 
         self._inference_session = onnxruntime.InferenceSession(path_or_bytes, session_options,
-                                                               providers, provider_options)
+                                                               providers, provider_options,
+                                                               disabled_optimizers=["CommonSubexpressionElimination"])
 
         self._training_agent = C_TrainingAgent(self._inference_session._sess, fw_feed_names, fw_outputs_device_info,
                                                bw_fetches_names, bw_outputs_device_info)

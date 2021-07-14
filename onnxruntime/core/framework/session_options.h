@@ -24,7 +24,7 @@ enum class FreeDimensionOverrideType {
 };
 
 enum class ExecutionPriority : int {
-  GLOBAL_HIGHT = -100,
+  GLOBAL_HIGH = -100,
   LOCAL_HIGH = -10,
   DEFAULT = 0,
   LOCAL_LOW = 10,

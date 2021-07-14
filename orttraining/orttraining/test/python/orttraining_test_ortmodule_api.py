@@ -558,6 +558,40 @@ def test_gradient_correctness():
         _test_helpers.assert_values_are_close(ort_prediction, pt_prediction)
         _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model)
 
+def test_gradient_correctness_with_expand_recompute():
+    device = 'cuda'
+
+    class NeuralNetExpand(torch.nn.Module):
+        def __init__(self, Hin):
+            super(NeuralNetExpand, self).__init__()
+            self.fc = torch.nn.Linear(Hin, Hin)
+
+        def forward(self, input, pos):
+            output = self.fc(input)
+            output = torch.gather(output, dim=-1, index=pos.expand([output.size(0), pos.size(1), pos.size(2)]))
+            return output
+        
+    N, Hin, Hout = 4, 64, 32
+    pt_model = NeuralNetExpand(Hin).to(device)
+    ort_model = ORTModule(copy.deepcopy(pt_model))
+
+    def run_step(model, x, pos):
+        prediction = model(x, pos)
+        loss = prediction.sum()
+        loss.backward()
+        return prediction
+
+    for _ in range(10):
+        pt_x = torch.randn(N, Hin, Hin, device=device, requires_grad=True)
+        ort_x = copy.deepcopy(pt_x)
+        pos = torch.randint(low=0, high=Hin, size=(1, Hin, Hout), device=device)
+        pt_prediction = run_step(pt_model, pt_x, pos)
+        ort_prediction = run_step(ort_model, ort_x, pos)
+        
+        _test_helpers.assert_values_are_close(ort_prediction, pt_prediction)
+        _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model, atol=1e-5)
+        _test_helpers.assert_values_are_close(ort_x.grad, pt_x.grad)        
+
 @pytest.mark.parametrize("use_fp16", [False, True])
 @pytest.mark.parametrize("input_requires_grad", [False, True])
 def test_gradient_correctness_conv1d(use_fp16, input_requires_grad):

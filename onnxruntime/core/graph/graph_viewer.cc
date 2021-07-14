@@ -26,6 +26,11 @@ struct PriorityNodeCompare {
     return op_type == shape_op || op_type == size_op;
   }
 
+  inline bool IsRecomputeNode(const Node* n) const {
+    const auto& node_name = n->Name();
+    return node_name.find("_recompute") != std::string::npos;
+  }
+
   // Used for std::priority_queue
   // If return false, n1 will be output first
   // If return true, n2 will be output first
@@ -33,6 +38,11 @@ struct PriorityNodeCompare {
     // nodes in global high priority list will be output first
     if (IsHighPri(n1) != IsHighPri(n2)) {
       return IsHighPri(n2);
+    }
+
+    // non-recompute nodes should be output first
+    if (IsRecomputeNode(n1) != IsRecomputeNode(n2)) {
+      return !IsRecomputeNode(n2);
     }
 
     // nodes with lower priority value will be output first

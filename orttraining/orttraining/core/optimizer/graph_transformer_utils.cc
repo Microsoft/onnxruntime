@@ -75,7 +75,7 @@ std::vector<std::unique_ptr<GraphTransformer>> GeneratePreTrainingTransformers(
     case TransformerLevel::Level1: {
       rule_transformer =
           std::make_unique<RuleBasedGraphTransformer>(optimizer_utils::GenerateRuleBasedTransformerName(level),
-                                                              compatible_eps);
+                                                      compatible_eps);
       rule_transformer->Register(std::make_unique<InsertMaxPoolOutput>());
       rule_transformer->Register(std::make_unique<BatchNormReplacement>());
       rule_transformer->Register(std::make_unique<UnsqueezeElimination>());
@@ -120,6 +120,9 @@ std::vector<std::unique_ptr<GraphTransformer>> GeneratePreTrainingTransformers(
       if (config.attn_dropout_recompute) {
         transformers.emplace_back(std::make_unique<AttentionDropoutRecompute>());
       }
+      if (config.expand_recompute) {
+        transformers.emplace_back(std::make_unique<ExpandRecompute>());
+      }
       if (config.transformer_layer_recompute) {
         transformers.emplace_back(std::make_unique<TransformerLayerRecompute>(
             config.number_recompute_layers, compatible_eps));
@@ -127,16 +130,16 @@ std::vector<std::unique_ptr<GraphTransformer>> GeneratePreTrainingTransformers(
       if (config.propagate_cast_ops_config.level >= 0) {
         std::unordered_set<std::string> cuda_execution_provider = {onnxruntime::kCudaExecutionProvider, onnxruntime::kRocmExecutionProvider};
         transformers.emplace_back(std::make_unique<PropagateCastOps>(config.propagate_cast_ops_config.strategy,
-                                                                             static_cast<size_t>(config.propagate_cast_ops_config.level),
-                                                                             config.propagate_cast_ops_config.allow,
-                                                                             cuda_execution_provider));
+                                                                     static_cast<size_t>(config.propagate_cast_ops_config.level),
+                                                                     config.propagate_cast_ops_config.allow,
+                                                                     cuda_execution_provider));
       }
     } break;
 
     case TransformerLevel::Level2: {
       rule_transformer =
           std::make_unique<RuleBasedGraphTransformer>(optimizer_utils::GenerateRuleBasedTransformerName(level),
-                                                              compatible_eps);
+                                                      compatible_eps);
       rule_transformer->Register(std::make_unique<ConcatReplacement>());
     } break;
 
