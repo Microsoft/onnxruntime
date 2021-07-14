@@ -67,7 +67,8 @@ inline std::vector<OrtValue> GradientChecker<X_T, Y_T, JAC_T>::EvaluateFunctionA
     const std::vector<TensorInfo>& x_infos,
     const std::vector<TensorInfo>& y_infos,
     std::vector<std::vector<X_T>>* x_datas,
-    std::vector<std::vector<Y_T>>* y_datas) {
+    std::vector<std::vector<Y_T>>* y_datas, 
+    std::vector<std::unique_ptr<IExecutionProvider>>* execution_providers /* = nullptr */) {
   // clear OpTester input/output/initializer_index
   op_session.ClearData();
 
@@ -98,7 +99,7 @@ inline std::vector<OrtValue> GradientChecker<X_T, Y_T, JAC_T>::EvaluateFunctionA
     std::string name = "output" + std::to_string(data_index);
     op_session.AddOutput<Y_T>(name.c_str(), y_infos[data_index].shape.GetDims(), (*y_datas)[data_index]);
   }
-  op_session.Run();
+  op_session.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, execution_providers);
   return op_session.GetFetches();
 }
 
@@ -341,7 +342,8 @@ inline Status GradientChecker<X_T, Y_T, JAC_T>::ComputeNumericJacobianTranspose(
     std::vector<std::vector<Y_T>>* y_datas,
     std::vector<std::vector<JAC_T>>* jacobian_ts,
     const std::vector<AttributeProto>& attributes,
-    bool add_shape) {
+    bool add_shape, 
+    std::vector<std::unique_ptr<IExecutionProvider>>* execution_providers /* = nullptr */) {
   size_t y_num = y_infos.size();
   size_t x_num = x_infos.size();
   X_T x_delta = static_cast<X_T>(delta);
@@ -367,11 +369,11 @@ inline Status GradientChecker<X_T, Y_T, JAC_T>::ComputeNumericJacobianTranspose(
 
       // Evaluate at positive delta.
       (*x_datas)[x_idx][r] = v + x_delta;
-      std::vector<OrtValue> y_plus = EvaluateFunctionAtInput(op_session, x_infos, y_infos, x_datas, y_datas);
+      std::vector<OrtValue> y_plus = EvaluateFunctionAtInput(op_session, x_infos, y_infos, x_datas, y_datas, execution_providers);
 
       // Evaluate at negative delta.
       (*x_datas)[x_idx][r] = v - x_delta;
-      std::vector<OrtValue> y_minus = EvaluateFunctionAtInput(op_session, x_infos, y_infos, x_datas, y_datas);
+      std::vector<OrtValue> y_minus = EvaluateFunctionAtInput(op_session, x_infos, y_infos, x_datas, y_datas, execution_providers);
 
       for (int y_idx = 0; y_idx < static_cast<int>(y_num); y_idx++) {
         if (!y_infos[y_idx].has_gradient) {
@@ -455,7 +457,7 @@ inline Status GradientChecker<X_T, Y_T, JAC_T>::ComputeGradientErrorInternal(
   InitJacobians(x_infos, y_infos, &jacobian_ns);
   // Compute numeric Jacobian.
   ORT_RETURN_IF_ERROR(ComputeNumericJacobianTranspose(
-      op_def, x_infos, y_infos, JAC_T{1e-3f}, x_datas, y_datas, &jacobian_ns, attributes));
+      op_def, x_infos, y_infos, JAC_T{1e-3f}, x_datas, y_datas, &jacobian_ns, attributes, execution_providers));
 
   // Compute the maximum error between theoretical and numeric Jacobians.
   *max_error = 0.0;

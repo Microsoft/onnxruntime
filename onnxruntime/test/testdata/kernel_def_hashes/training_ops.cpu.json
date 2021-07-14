@@ -16,6 +16,14 @@
         15594101660509653368
     ],
     [
+        "BatchNormInternal com.microsoft CPUExecutionProvider",
+        4558561982171377240
+    ],
+    [
+        "BatchNormalizationGrad com.microsoft CPUExecutionProvider",
+        6663011273787109816
+    ],
+    [
         "BroadcastGradientArgs com.microsoft CPUExecutionProvider",
         11924624129611280440
     ],
