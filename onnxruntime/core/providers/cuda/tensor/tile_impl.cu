@@ -51,10 +51,20 @@ __global__ void _TileMemcpyKernel(
     const T* input_data,
     const size_t num_input_elements,
     T* output_data,
-    const size_t N) {
-  CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
-  auto input_index = id % num_input_elements;
-  output_data[id] = input_data[input_index];
+    const size_t N,
+    const int num_per_thread) {
+
+  auto index_of_input = blockIdx.x * blockDim.x + threadIdx.x;
+  if(index_of_input >= num_input_elements)
+      return;
+
+  auto input_val = input_data[index_of_input];
+  for(int i = 0; i < num_per_thread; i++){
+       auto index_of_output = index_of_input + num_input_elements*i;
+       if(index_of_output >= N)
+           return;
+       output_data[index_of_output] = input_val;
+  }
 }
 
 template <typename T>
@@ -64,9 +74,12 @@ void TileMemcpyImpl(
     const size_t num_input_elements,
     T* output_data,
     const size_t num_output_elements) {
-  int blocksPerGrid = (int)(ceil(static_cast<float>(num_output_elements) / GridDim::maxThreadsPerBlock));
+  // each block has 256 threads, total block will be ceil(num_input / 256) >> namely, each thread takes care one input element
+  // each cuda thread processes num_output/num_input output data elements
+  int blocksPerGrid = (int)(ceil(static_cast<float>(num_input_elements) / GridDim::maxThreadsPerBlock));
+  int num_per_thread = (int)(ceil(static_cast<float>(num_output_elements) / num_input_elements));
   _TileMemcpyKernel<<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(
-      input_data, num_input_elements, output_data, (CUDA_LONG)num_output_elements);
+      input_data, num_input_elements, output_data, (CUDA_LONG)num_output_elements, num_per_thread);
 }
 
 template <typename T>
