@@ -77,6 +77,29 @@ BasicBackend::BasicBackend(const ONNX_NAMESPACE::ModelProto& model_proto,
   //validate const subgraphs
   if(!openvino_ep::BackendManager::GetGlobalContext().is_wholly_supported_graph) {
     ie_cnn_network_ = CreateCNNNetwork(model_proto, global_context_, subgraph_context_, const_outputs_map_);
+
+  #if defined(OPENVINO_2022_1)
+    // Replace framework output names with OV output names
+    // Until OV 2022.1 output names from ONNX were stored in the friendly name of a node.
+    // Now output name will be stored in Tensor names.
+    // This change convert tensor names to matching OutputInfo via getOVNameForTensor method
+    std::unordered_map<std::string, int> new_names;
+    for(auto output_name: subgraph_context_.output_names)
+    {
+      try
+      {
+        auto OV_name = ie_cnn_network_->getOVNameForTensor(output_name.first);
+        new_names[OV_name] = output_name.second;
+      }
+      catch(...)
+      {
+        new_names[output_name.first] = output_name.second;
+      }
+    }
+    subgraph_context_.output_names = new_names;
+    // End of Replacement
+  #endif
+
     SetIODefs(model_proto, ie_cnn_network_, subgraph_context_.output_names, const_outputs_map_, global_context_.device_type);
   #if defined(OPENVINO_2021_1) || defined(OPENVINO_2021_2) || defined(OPENVINO_2021_3) || defined(OPENVINO_2021_4)
     if (const_outputs_map_.size() == subgraph_context_.output_names.size())
@@ -115,6 +138,29 @@ BasicBackend::BasicBackend(const ONNX_NAMESPACE::ModelProto& model_proto,
   if ((global_context_.use_compiled_network == true && import_blob_status == false) || vpu_status == false) {
     if(!openvino_ep::backend_utils::UseCompiledNetwork()) {
       ie_cnn_network_ = CreateCNNNetwork(model_proto, global_context_, subgraph_context_, const_outputs_map_);
+
+    #if defined(OPENVINO_2022_1)
+      // Replace framework output names with OV output names
+      // Until OV 2022.1 output names from ONNX were stored in the friendly name of a node.
+      // Now output name will be stored in Tensor names.
+      // This change convert tensor names to matching OutputInfo via getOVNameForTensor method
+      std::unordered_map<std::string, int> new_names;
+      for(auto output_name: subgraph_context_.output_names)
+      {
+        try
+        {
+          auto OV_name = ie_cnn_network_->getOVNameForTensor(output_name.first);
+          new_names[OV_name] = output_name.second;
+        }
+        catch(...)
+        {
+          new_names[output_name.first] = output_name.second;
+        }
+      }
+      subgraph_context_.output_names = new_names;
+      // End of Replacement
+    #endif
+
       SetIODefs(model_proto, ie_cnn_network_, subgraph_context_.output_names, const_outputs_map_, global_context_.device_type);
     #if defined(OPENVINO_2021_1) || defined(OPENVINO_2021_2) || defined(OPENVINO_2021_3) || defined(OPENVINO_2021_4)
       if (const_outputs_map_.size() == subgraph_context_.output_names.size())
