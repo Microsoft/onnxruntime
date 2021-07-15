@@ -33,16 +33,22 @@ class AttentionBase {
     num_heads_ = static_cast<int>(num_heads);
 
     is_unidirectional_ = info.GetAttrOrDefault<int64_t>("unidirectional", 0) == 1;
+
+    if (!info.GetAttrs<int64_t>("qkv_hidden_sizes", qkv_hidden_sizes_).IsOK() || qkv_hidden_sizes_.empty()) {
+      qkv_hidden_sizes_.resize(0);
+    }
   }
 
   Status CheckInputs(const TensorShape& input_shape,
                      const TensorShape& weights_shape,
                      const TensorShape& bias_shape,
                      const Tensor*& mask_index,  // For dummy mask with shape (1, 1) or (batch_size, 1), it will be updated to nullptr.
-                     const Tensor* past) const;
+                     const Tensor* past,
+                     const Tensor *extra_add_qk) const;
 
   int num_heads_;           // number of attention heads
   bool is_unidirectional_;  // whether every token can only attend to previous tokens.
+  std::vector<int64_t> qkv_hidden_sizes_;   // Q, K, V path hidden layer sizes
 };
 
 }  // namespace contrib

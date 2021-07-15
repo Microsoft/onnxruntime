@@ -397,17 +397,32 @@ void AttentionTypeAndShapeInference(ONNX_NAMESPACE::InferenceContext& ctx, int p
 
     auto& bias_shape = getInputShape(ctx, 2);
     auto& bias_dims = bias_shape.dim();
-    if (bias_dims.size() != 1 || bias_shape.dim(0).dim_value() % 3 != 0) {
+    if (bias_dims.size() != 1) {
       fail_shape_inference("Invalid bias shape");
+    }
+
+    std::vector<int64_t> qkv_hidden_sizes;
+    getRepeatedAttribute(ctx, "qkv_hidden_sizes", qkv_hidden_sizes);
+
+    int64_t output_hidden_size;
+    if (qkv_hidden_sizes.size() != 0) {
+      if (qkv_hidden_sizes.size() != 3) {
+        fail_shape_inference("qkv_hidden_sizes should have 3 elements")
+      }
+      output_hidden_size = qkv_hidden_sizes[2];
+    } else {
+      output_hidden_size = bias_shape.dim(0).dim_value() / 3;
     }
 
     ONNX_NAMESPACE::TensorShapeProto output_shape;
     for (auto& dim : input_dims) {
       *output_shape.add_dim() = dim;
     }
-    output_shape.mutable_dim(2)->set_dim_value(bias_shape.dim(0).dim_value() / 3);
+
+    output_shape.mutable_dim(2)->set_dim_value(output_hidden_size);
     updateOutputShape(ctx, 0, output_shape);
 
+    // TODO does the extra output need any changes?
     if (ctx.getNumOutputs() > 1) {
       if (hasInputShape(ctx, past_input_index)) {
         auto& past_shape = getInputShape(ctx, past_input_index);
@@ -453,12 +468,17 @@ and present state are optional. Present state could appear in output even when p
             "Whether every token can only attend to previous tokens. Default value is 0.",
             AttributeProto::INT,
             static_cast<int64_t>(0))
+      .Attr("qkv_hidden_sizes",
+            "Hidden layer sizes of Q, K, V paths in Attention",
+            AttributeProto::INTS,
+            OPTIONAL_VALUE)
       .Input(0, "input", "3D input tensor with shape (batch_size, sequence_length, input_hidden_size)", "T")
       .Input(1, "weight", "2D input tensor with shape (input_hidden_size, 3 * hidden_size), where hidden_size = num_heads * head_size", "T")
       .Input(2, "bias", "1D input tensor with shape (3 * hidden_size)", "T")
       .Input(3, "mask_index", "Attention mask with shape (batch_size, 1, max_sequence_length, max_sequence_length), (batch_size, past_sequence_length + sequence_length)"
                 "or (batch_size, sequence_length, past_sequence_length + sequence_length), or index with shape (batch_size) or (2 * batch_size).", "M", OpSchema::Optional)
       .Input(4, "past", "past state for key and value with shape (2, batch_size, num_heads, past_sequence_length, head_size).", "T", OpSchema::Optional)
+      .Input(5, "extra_add", "additional add to QxK' with shape (1, num_heads, sequence_length, sequence_length).", "T", OpSchema::Optional)
       .Output(0, "output", "3D output tensor with shape (batch_size, append_length, hidden_size)", "T")
       .Output(1, "present", "present state for key and value with shape (2, batch_size, num_heads, past_sequence_length + sequence_length, head_size)", "T", OpSchema::Optional)
       .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output types to float tensors.")
@@ -528,6 +548,12 @@ and present state are optional. Present state could appear in output even when p
           "past state for key and value with shape (2, batch_size, num_heads, past_sequence_length, head_size).",
           "T3",
           OpSchema::Optional)
+      .Input(
+          9,
+          "extra_add",
+          "additional add to QxK' with shape (1, num_heads, sequence_length, sequence_length).",
+          "T3",
+          OpSchema::Optional)
       .Output(
           0,
           "output",
@@ -545,6 +571,7 @@ and present state are optional. Present state could appear in output even when p
       .TypeConstraint("T4", {"tensor(int32)"}, "Constrain mask index to integer types")
       .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
         constexpr int past_input_index = 8;
+
         AttentionTypeAndShapeInference(ctx, past_input_index);
       });
 

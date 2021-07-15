@@ -384,7 +384,7 @@ class BertOnnxModelTF(BertOnnxModel):
                 attention_node = self.attention_fusion.create_attention_node(mask_index, matmul_k, matmul_q, matmul_v,
                                                                              add_k, add_q, add_v, self.num_heads,
                                                                              self.hidden_size, parent.output[0],
-                                                                             qkv_nodes[2].output[0])
+                                                                             qkv_nodes[2].output[0], None)
                 if attention_node is None:
                     continue
 

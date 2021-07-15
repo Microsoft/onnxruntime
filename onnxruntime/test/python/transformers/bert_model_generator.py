@@ -6,6 +6,7 @@
 
 import onnx
 import math
+import numpy as np
 from typing import List
 from packaging import version
 from onnx import helper, TensorProto
@@ -17,7 +18,7 @@ def float_tensor(name: str, shape: List[int], random=False):
     total_elements = 1
     for x in shape:
         total_elements *= x
-    weights = [random.uniform(low, high) for _ in range(total_elements)] if random else [1.0] * total_elements
+    weights = [np.random.uniform(low, high) for _ in range(total_elements)] if random else [1.0] * total_elements
     return helper.make_tensor(name, TensorProto.FLOAT, shape, weights)
 
 

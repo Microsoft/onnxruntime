@@ -128,7 +128,7 @@ class FusionAttention(Fusion):
 
     def create_attention_node(self, mask_index: str, q_matmul: NodeProto, k_matmul: NodeProto, v_matmul: NodeProto,
                               q_add: NodeProto, k_add: NodeProto, v_add: NodeProto, num_heads: int, hidden_size: int,
-                              input: str, output: str) -> Union[NodeProto, None]:
+                              input: str, output: str, add_qk_str: str) -> Union[NodeProto, None]:
         """ Create an Attention node.
 
         Args:
@@ -165,6 +165,7 @@ class FusionAttention(Fusion):
             return None
         if not (k_weight and v_weight and q_bias and k_bias):
             return None
+
         qw = NumpyHelper.to_array(q_weight)
         kw = NumpyHelper.to_array(k_weight)
         vw = NumpyHelper.to_array(v_weight)
@@ -245,6 +246,10 @@ class FusionAttention(Fusion):
         attention_inputs = [input, attention_node_name + '_qkv_weight', attention_node_name + '_qkv_bias']
         if mask_index is not None:
             attention_inputs.append(mask_index)
+
+        if add_qk_str is not None:
+            attention_inputs.append("")
+            attention_inputs.append(add_qk_str)
 
         attention_node = helper.make_node('Attention',
                                           inputs=attention_inputs,
@@ -334,7 +339,7 @@ class FusionAttention(Fusion):
             logger.debug("fuse_attention: failed to match v path")
             return
         (_, _, add_v, matmul_v) = v_nodes
-
+ 
         is_distill = False
         is_distill_add = False
         qk_paths = {
@@ -365,7 +370,7 @@ class FusionAttention(Fusion):
         if is_distill:
             (_, where_qk, matmul_qk, _) = qk_nodes
         elif is_distill_add:
-            (_, _, where_qk, matmul_qk) = qk_nodes
+            (_, add_qk, where_qk, matmul_qk) = qk_nodes
         else:
             (_, add_qk, _, matmul_qk) = qk_nodes
 
@@ -392,6 +397,7 @@ class FusionAttention(Fusion):
 
         # Note that Cast might be removed by OnnxRuntime so we match two patterns here.
         mask_nodes = None
+        add_qk_str = None
         if is_distill:
             _, mask_nodes, _ = self.model.match_parent_paths(where_qk,
                                                              [(['Expand', 'Reshape', 'Equal'], [0, 0, 0]),
@@ -401,6 +407,10 @@ class FusionAttention(Fusion):
             _, mask_nodes, _ = self.model.match_parent_paths(
                 where_qk, [(['Cast', 'Equal', 'Unsqueeze', 'Unsqueeze'], [0, 0, 0, 0]),
                            (['Equal', 'Unsqueeze', 'Unsqueeze'], [0, 0, 0])], output_name_to_node)
+            if add_qk is not None:
+                gather_elements_nodes = self.model.match_parent_path(add_qk, ['GatherElements', 'Expand', 'Where'], [1, 1, 1], output_name_to_node)
+                if gather_elements_nodes is not None:
+                    add_qk_str = gather_elements_nodes[0].output[0]
         else:
             _, mask_nodes, _ = self.model.match_parent_paths(
                 add_qk, [(['Mul', 'Sub', 'Cast', 'Unsqueeze', 'Unsqueeze'], [None, 0, 1, 0, 0]),
@@ -419,7 +429,7 @@ class FusionAttention(Fusion):
             # the input_hidden_size represents the input hidden size, this is used as needed but hidden sizes for Q, K are extracted appropriately
             new_node = self.create_attention_node(mask_index, matmul_q, matmul_k, matmul_v, add_q, add_k, add_v,
                                                   q_num_heads, self.hidden_size, root_input,
-                                                  attention_last_node.output[0])
+                                                  attention_last_node.output[0], add_qk_str)
             if new_node is None:
                 return
 

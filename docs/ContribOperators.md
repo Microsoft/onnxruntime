@@ -84,11 +84,13 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dl>
 <dt><tt>num_heads</tt> : int (required)</dt>
 <dd>Number of attention heads</dd>
+<dt><tt>qkv_hidden_sizes</tt> : list of ints</dt>
+<dd>Hidden layer sizes of Q, K, V paths in Attention</dd>
 <dt><tt>unidirectional</tt> : int</dt>
 <dd>Whether every token can only attend to previous tokens. Default value is 0.</dd>
 </dl>
 
-#### Inputs (3 - 5)
+#### Inputs (3 - 6)
 
 <dl>
 <dt><tt>input</tt> : T</dt>
@@ -101,6 +103,8 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>Attention mask with shape (batch_size, 1, max_sequence_length, max_sequence_length), (batch_size, past_sequence_length + sequence_length)or (batch_size, sequence_length, past_sequence_length + sequence_length), or index with shape (batch_size) or (2 * batch_size).</dd>
 <dt><tt>past</tt> (optional) : T</dt>
 <dd>past state for key and value with shape (2, batch_size, num_heads, past_sequence_length, head_size).</dd>
+<dt><tt>extra_add</tt> (optional) : T</dt>
+<dd>additional add to QxK' with shape (1, num_heads, sequence_length, sequence_length).</dd>
 </dl>
 
 #### Outputs (1 - 2)
@@ -1790,7 +1794,7 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>Whether every token can only attend to previous tokens. Default value is 0.</dd>
 </dl>
 
-#### Inputs (5 - 9)
+#### Inputs (5 - 10)
 
 <dl>
 <dt><tt>input</tt> : T1</dt>
@@ -1811,6 +1815,8 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>zero point of quantized weight tensor. It's a scalar or a 1D tensor, which means a per-tensor/per-column quantization.Its size should be 3 * hidden_size if it is per-column quantization</dd>
 <dt><tt>past</tt> (optional) : T3</dt>
 <dd>past state for key and value with shape (2, batch_size, num_heads, past_sequence_length, head_size).</dd>
+<dt><tt>extra_add</tt> (optional) : T3</dt>
+<dd>additional add to QxK' with shape (1, num_heads, sequence_length, sequence_length).</dd>
 </dl>
 
 #### Outputs (1 - 2)

@@ -140,7 +140,7 @@ class BertOnnxModelKeras(BertOnnxModelTF):
                 attention_node = self.attention_fusion.create_attention_node(mask_index, matmul_q, matmul_k, matmul_v,
                                                                              add_q, add_k, add_v, self.num_heads,
                                                                              self.hidden_size, parent.output[0],
-                                                                             reshape_qkv.output[0])
+                                                                             reshape_qkv.output[0], None)
                 if attention_node is None:
                     continue
 

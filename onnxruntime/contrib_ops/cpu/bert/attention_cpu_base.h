@@ -26,8 +26,10 @@ class AttentionCPUBase : public AttentionBase {
                         Tensor* output,            // output tensor
                         int batch_size,            // batch size
                         int sequence_length,       // sequence length
-                        int head_size,             // head size
-                        int hidden_size,           // hidden size
+                        int qk_head_size,          // qk_head_size
+                        int v_head_size,           // head_size
+                        int v_hidden_size,         // hidden_size
+                        const Tensor* extra_add_qk,// extra add in QK. Its size is BxNxSxS
                         OpKernelContext* context) const {
     AllocatorPtr allocator;
     ORT_RETURN_IF_ERROR(context->GetTempSpaceAllocator(&allocator));
@@ -35,7 +37,7 @@ class AttentionCPUBase : public AttentionBase {
     auto* tp = context->GetOperatorThreadPool();
 
     int past_sequence_length = 0;
-    Tensor* present = GetPresent(context, past, batch_size, head_size, sequence_length, past_sequence_length);
+    Tensor* present = GetPresent(context, past, batch_size, v_head_size, sequence_length, past_sequence_length);
 
     // Total sequence length including that of past state: S* = S' + S
     const int all_sequence_length = past_sequence_length + sequence_length;
@@ -61,18 +63,23 @@ class AttentionCPUBase : public AttentionBase {
     const T* past_data = past != nullptr ? past->template Data<T>() : nullptr;
     T* present_data = present != nullptr ? present->template MutableData<T>() : nullptr;
 
+    const T* extra_add_qk_data = nullptr;
+    if (extra_add_qk != nullptr) {
+      extra_add_qk_data = extra_add_qk->template Data<T>();
+    }
+
     ComputeAttentionProbs<T>(static_cast<T*>(attention_probs), Q, K,
                              mask_index_data, mask_index_dims, static_cast<T*>(mask_data),
-                             batch_size, sequence_length, past_sequence_length, head_size,
-                             past_data, present_data, tp);
+                             batch_size, sequence_length, past_sequence_length, qk_head_size == 0 ? v_head_size : qk_head_size,
+                             past_data, present_data, tp, extra_add_qk_data);
 
     // Compute the attentionScore * Value. It does: out_tmp(B, N, S, H) = attention_probs(B, N, S, S*) x V(B, N, S*, H)
     auto out_tmp_data =
-        allocator->Alloc(SafeInt<size_t>(batch_size) * num_heads_ * sequence_length * head_size * sizeof(T));
+        allocator->Alloc(SafeInt<size_t>(batch_size) * num_heads_ * sequence_length * v_head_size * sizeof(T));
     BufferUniquePtr out_tmp_buffer(out_tmp_data, BufferDeleter(allocator));
 
     ComputeVxAttentionScore(output->template MutableData<T>(), static_cast<T*>(out_tmp_data), static_cast<T*>(attention_probs), V,
-                            batch_size, sequence_length, past_sequence_length, head_size, hidden_size,
+                            batch_size, sequence_length, past_sequence_length, v_head_size, v_hidden_size,
                             past_data, present_data, tp);
 
     return Status::OK();
@@ -96,7 +103,8 @@ class AttentionCPUBase : public AttentionBase {
                              int head_size,                                // head size of self-attention
                              const T* past,                                // past state
                              T* present,                                   // present state
-                             ThreadPool* tp) const {
+                             ThreadPool* tp,
+                             const T* extra_add_qk_data) const {
     const int all_sequence_length = past_sequence_length + sequence_length;                  // S* = S' + S
     const size_t past_chunk_length = static_cast<size_t>(past_sequence_length) * head_size;  // S' x H
     const size_t input_chunk_length = static_cast<size_t>(sequence_length) * head_size;      // S x H
@@ -142,6 +150,23 @@ class AttentionCPUBase : public AttentionBase {
                                     reinterpret_cast<T*>(attention_probs) + sequence_length * all_sequence_length * i, nullptr);
         }
       });
+    }
+
+    if (extra_add_qk_data != nullptr) {
+      int batch_offset = num_heads_*sequence_length*all_sequence_length;
+      int head_offset = sequence_length*all_sequence_length;
+      int seq_len_offset = all_sequence_length;
+
+      for (int i = 0; i < batch_size; i++) {
+        for (int j = 0; j < num_heads_; j++) {
+          for (int k = 0; k < sequence_length; k++) {
+            for (int l = 0; l < all_sequence_length; l++) {
+              int final_offset =  i*batch_offset + j*head_offset + k*seq_len_offset + l;
+              attention_probs[final_offset] += extra_add_qk_data[final_offset];
+            }
+          }
+        }
+      }
     }
 
     //  attention_probs(B, N, S, S*) = Softmax(attention_probs)

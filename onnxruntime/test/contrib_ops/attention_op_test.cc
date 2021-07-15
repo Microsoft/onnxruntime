@@ -38,11 +38,14 @@ static void RunAttentionTest(
     MaskIndexType mask_index_type = kMaskIndexEnd,
     int input_hidden_size = 0,
     int max_sequence_length = 0,
-    bool only_enable_cuda = false) {
+    bool only_enable_cuda = false,
+    bool only_enable_cpu = false,
+    std::vector<int32_t> qkv_sizes = {},
+    const std::vector<float>& extra_add_data = {}) {
   input_hidden_size = (input_hidden_size == 0 ? hidden_size : input_hidden_size);  // By default, no pruning.
 
   int min_cuda_architecture = use_float16 ? 530 : 0;
-  bool enable_cuda = HasCudaEnvironment(min_cuda_architecture) && !is_weights_constant;
+  bool enable_cuda = HasCudaEnvironment(min_cuda_architecture) && !is_weights_constant && !only_enable_cpu;
   bool enable_cpu = (nullptr != DefaultCpuExecutionProvider().get()) && !use_float16 && !only_enable_cuda;
 
   int head_size = hidden_size / number_of_heads;
@@ -51,9 +54,21 @@ static void RunAttentionTest(
     tester.AddAttribute<int64_t>("num_heads", static_cast<int64_t>(number_of_heads));
     tester.AddAttribute<int64_t>("unidirectional", static_cast<int64_t>(is_unidirectional ? 1 : 0));
 
+    int32_t matrix_size;
+    int32_t output_hidden_size;
+    if (qkv_sizes.size() != 0) {
+      matrix_size = qkv_sizes[0] + qkv_sizes[1] + qkv_sizes[2];
+      std::vector<int64_t> sizes_attribute{qkv_sizes[0], qkv_sizes[1], qkv_sizes[2]};
+      tester.AddAttribute<std::vector<int64_t>>("qkv_hidden_sizes", sizes_attribute);
+      output_hidden_size = qkv_sizes[2];
+    } else {
+      matrix_size = 3 * hidden_size;
+      output_hidden_size = hidden_size;
+    }
+
     std::vector<int64_t> input_dims = {batch_size, sequence_length, input_hidden_size};
-    std::vector<int64_t> weights_dims = {input_hidden_size, 3 * hidden_size};
-    std::vector<int64_t> bias_dims = {3 * hidden_size};
+    std::vector<int64_t> weights_dims = {input_hidden_size, matrix_size};
+    std::vector<int64_t> bias_dims = {matrix_size};
 
     std::vector<int64_t> mask_index_dims_1 = {batch_size};
     std::vector<int64_t> mask_index_dims_2 = {2 * batch_size};
@@ -88,7 +103,7 @@ static void RunAttentionTest(
 
     std::vector<int64_t> past_dims = {2, batch_size, number_of_heads, past_sequence_length, head_size};
     std::vector<int64_t> present_dims = {2, batch_size, number_of_heads, past_sequence_length + sequence_length, head_size};
-    std::vector<int64_t> output_dims = {batch_size, sequence_length, hidden_size};
+    std::vector<int64_t> output_dims = {batch_size, sequence_length, output_hidden_size};
 
     if (use_float16) {
       tester.AddInput<MLFloat16>("input", input_dims, ToFloat16(input_data));
@@ -120,6 +135,14 @@ static void RunAttentionTest(
         }
         tester.AddOutput<float>("present", present_dims, *present_data);
       }
+    }
+
+    if (extra_add_data.size() > 0) {
+      if (!use_past_state) {
+        tester.AddOptionalInputEdge<float>();
+      }
+      std::vector<int64_t> extra_add_data_dims = {batch_size, number_of_heads, sequence_length, sequence_length};
+      tester.AddInput<float>("extra_add_qk", extra_add_data_dims, extra_add_data);
     }
 
     if (enable_cuda) {
@@ -155,17 +178,20 @@ static void RunAttentionTest(
     MaskIndexType mask_index_type = kMaskIndexEnd,
     int input_hidden_size = 0,
     int max_sequence_length = 0,
-    bool only_enable_cuda = false) {
-  RunAttentionTest(input_data, weights_data, false, bias_data, mask_index_data, output_data,
-                   batch_size, sequence_length, hidden_size, number_of_heads,
-                   use_float16, is_unidirectional, use_past_state, past_sequence_length,
-                   past_data, present_data, mask_index_type, input_hidden_size, max_sequence_length,
-                   only_enable_cuda);
-  RunAttentionTest(input_data, weights_data, true, bias_data, mask_index_data, output_data,
-                   batch_size, sequence_length, hidden_size, number_of_heads,
-                   use_float16, is_unidirectional, use_past_state, past_sequence_length,
-                   past_data, present_data, mask_index_type, input_hidden_size, max_sequence_length,
-                   only_enable_cuda);
+    bool only_enable_cuda = false,
+    bool only_enable_cpu = false,
+    const std::vector<int32_t> qkv_sizes = {},
+    const std::vector<float>& extra_add_data = {}) {
+    RunAttentionTest(input_data, weights_data, false, bias_data, mask_index_data, output_data,
+                     batch_size, sequence_length, hidden_size, number_of_heads,
+                     use_float16, is_unidirectional, use_past_state, past_sequence_length,
+                     past_data, present_data, mask_index_type, input_hidden_size, max_sequence_length,
+                     only_enable_cuda, only_enable_cpu, qkv_sizes, extra_add_data);
+    RunAttentionTest(input_data, weights_data, true, bias_data, mask_index_data, output_data,
+                     batch_size, sequence_length, hidden_size, number_of_heads,
+                     use_float16, is_unidirectional, use_past_state, past_sequence_length,
+                     past_data, present_data, mask_index_type, input_hidden_size, max_sequence_length,
+                     only_enable_cuda, only_enable_cpu, qkv_sizes, extra_add_data);
 }
 
 TEST(AttentionTest, AttentionBatch1) {
@@ -195,6 +221,121 @@ TEST(AttentionTest, AttentionBatch1) {
 
   RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
                    batch_size, sequence_length, hidden_size, number_of_heads);
+}
+
+TEST(AttentionTest, AttentionBatch1WithQKVAttr1) {
+  int batch_size = 1;
+  int sequence_length = 2;
+  int hidden_size = 4;
+  int number_of_heads = 2;
+  
+  std::vector<float> input_data = {
+      0.8f, -0.5f, 0.0f, 1.f,
+      0.5f, 0.2f, 0.3f, -0.6f};
+
+  std::vector<int32_t> qkv_sizes = {
+      6, 6, 4};
+
+  std::vector<float> weight_data = {
+      0.1f, -0.2f, 0.3f, 1.0f, 1.1f, 0.3f, 0.5f, 0.2f, 0.3f, -0.6f, 1.5f, 2.0f,
+      0.5f, 0.1f, 0.4f, 1.6f, 1.0f, 2.0f, 0.4f, 0.8f, 0.9f, 0.1f, -1.3f, 0.7f,
+
+      0.3f, 0.2f, 4.0f, 2.2f, 1.6f, 1.1f, 0.7f, 0.2f, 0.4f, 1.0f, 1.2f, 0.5f,
+      0.2f, 0.1f, 0.4f, 1.6f, 2.4f, 3.3f, 2.1f, 4.2f, 8.4f, 0.0f, 2.1f, 3.2f,
+
+      0.3f, 0.2f, 4.0f, 2.2f, 2.4f, 3.3f, 2.1f, 4.2f, 0.5f, 0.1f, 0.4f, 1.6f,
+      0.4f, 0.8f, 0.9f, 0.1f
+  };
+
+  std::vector<float> bias_data = {
+      -0.5f, 0.6f, 1.2f, 2.1f, 0.5f, 0.7f,
+      0.2f, 1.2f, 0.5f, 0.4f, 0.3f, 1.2f,
+      0.5f, 0.7f, 0.2f, 1.2f};
+
+  std::vector<int32_t> mask_index_data = {2L};
+
+  std::vector<float> output_data = {
+      3.1967618465423584f, 0.51903456449508667f, 0.63051539659500122f, 2.9394614696502686f,
+      0.65332180261611938f, 1.000949501991272f, 0.74175024032592773f, 2.8231701850891113f};
+
+  RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
+                   batch_size, sequence_length, hidden_size, number_of_heads, 
+                   false, false, false, 0, nullptr, nullptr, kMaskIndexEnd, 0,
+                   0, false, true, qkv_sizes);
+}
+
+TEST(AttentionTest, AttentionBatch1WithQKVAttr2) {
+  int batch_size = 1;
+  int sequence_length = 2;
+  int hidden_size = 4;
+  int number_of_heads = 2;
+
+  std::vector<float> input_data = {
+      -0.031707365f, 0.053643607f, 0.057394292f, -0.019800574f, 0.075466447f, -0.0034214978f, 0.012995008f, -0.019587509f};
+
+  std::vector<int32_t> qkv_sizes = {
+     6, 6, 2};
+
+  std::vector<float> weight_data = {
+      0.1f, -0.2f, 0.3f, 1.0f, 1.1f, 0.3f, 0.5f, 0.2f, 0.3f, -0.6f, 1.5f, 2.0f,
+      0.5f, 0.1f, 0.4f, 1.6f, 1.0f, 2.0f, 0.4f, 0.8f, 0.9f, 0.1f, -1.3f, 0.7f,
+
+      0.3f, 0.2f, 4.0f, 2.2f, 1.6f, 1.1f, 0.7f, 0.2f, 0.4f, 1.0f, 1.2f, 0.5f,
+      0.2f, 0.1f, 0.4f, 1.6f, 2.4f, 3.3f, 2.1f, 4.2f, 8.4f, 0.0f, 2.1f, 3.2f,
+
+      0.3f, 0.2f, 4.0f, 2.2f, 2.4f, 3.3f, 2.1f, 4.2f};
+
+  std::vector<float> bias_data = {
+      -0.5f, 0.6f, 1.2f, 2.1f, 0.5f, 0.7f,
+      0.2f, 1.2f, 0.5f, 0.4f, 0.3f, 1.2f,
+      0.5f, 0.7f};
+
+  std::vector<int32_t> mask_index_data = {2L};
+
+  std::vector<float> output_data = {
+      0.64932525157928467f, 0.79390722513198853f, 0.64932847023010254f, 0.79375863075256348f};
+
+  RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
+                   batch_size, sequence_length, hidden_size, number_of_heads,
+                   false, false, false, 0, nullptr, nullptr, kMaskIndexEnd, 0,
+                   0, false, true, qkv_sizes);
+}
+
+TEST(AttentionTest, AttentionBatch1ExtraAdd) {
+  int batch_size = 1;
+  int sequence_length = 2;
+  int hidden_size = 4;
+  int number_of_heads = 2;
+
+  std::vector<float> input_data = {
+      0.8f, -0.5f, 0.0f, 1.f,
+      0.5f, 0.2f, 0.3f, -0.6f};
+
+  std::vector<int32_t> qkv_sizes = {};
+
+  std::vector<float> weight_data = {
+      0.1f, -0.2f, 0.3f, 1.0f, 1.1f, 0.3f, 0.5f, 0.2f, 0.3f, -0.6f, 1.5f, 2.0f,
+      0.5f, 0.1f, 0.4f, 1.6f, 1.0f, 2.0f, 0.4f, 0.8f, 0.9f, 0.1f, -1.3f, 0.7f,
+      0.3f, 0.2f, 4.0f, 2.2f, 1.6f, 1.1f, 0.7f, 0.2f, 0.4f, 1.0f, 1.2f, 0.5f,
+      0.2f, 0.1f, 0.4f, 1.6f, 2.4f, 3.3f, 2.1f, 4.2f, 8.4f, 0.0f, 2.1f, 3.2f};
+
+  std::vector<float> bias_data = {
+      -0.5f, 0.6f, 1.2f, 2.1f, 0.5f, 0.7f,
+      0.2f, 1.2f, 0.5f, 0.4f, 0.3f, 1.2f};
+
+  std::vector<int32_t> mask_index_data = {2L};
+
+  std::vector<float> extra_add_qk = {
+      0.2f, -0.1f, 0.4f, 2.5f, 1.6f, -1.1f, 0.4f, -2.5f};
+
+  std::vector<float> output_data = {
+      4.066014289855957f, 0.068997815251350403f, 4.25f, 5.6499996185302734f,
+      -1.8799558877944946f, 0.32488855719566345f, 4.25f, 5.6499996185302734f};
+
+  RunAttentionTest(input_data, weight_data, bias_data, mask_index_data, output_data,
+                   batch_size, sequence_length, hidden_size, number_of_heads,
+                   false, false, false, 0, nullptr, nullptr, kMaskIndexEnd, 0,
+                   0, false, true, qkv_sizes, extra_add_qk);
 }
 
 TEST(AttentionTest, AttentionBatch1_Float16) {

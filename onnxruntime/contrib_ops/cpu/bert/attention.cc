@@ -20,6 +20,8 @@ class Attention : public OpKernel, public AttentionCPUBase {
  public:
   explicit Attention(const OpKernelInfo& info);
 
+  bool IsPackWeightsSuccessful(int qkv_index, AllocatorPtr alloc, size_t head_size, size_t input_hidden_size, const T* weights_data, size_t weight_matrix_col_size, PrePackedWeights* prepacked_weights);
+
   Status Compute(OpKernelContext* context) const override;
 
   Status PrePack(const Tensor& tensor, int input_idx, AllocatorPtr alloc,
@@ -31,8 +33,13 @@ class Attention : public OpKernel, public AttentionCPUBase {
                                    /*out*/ bool& used_shared_buffers) override;
 
  private:
-  BufferUniquePtr packed_weights_;
-  size_t packed_weights_size_ = 0;
+  BufferUniquePtr q_packed_weights_;
+  BufferUniquePtr k_packed_weights_;
+  BufferUniquePtr v_packed_weights_;
+
+  size_t q_packed_weights_size_ = 0;
+  size_t k_packed_weights_size_ = 0;
+  size_t v_packed_weights_size_ = 0;
   TensorShape weight_shape_;
 };
 
@@ -51,7 +58,8 @@ Status AttentionBase::CheckInputs(const TensorShape& input_shape,
                                   const TensorShape& weights_shape,
                                   const TensorShape& bias_shape,
                                   const Tensor*& mask_index,
-                                  const Tensor* past) const {
+                                  const Tensor* past,
+                                  const Tensor* extra_add_qk) const {
   // Input shapes:
   //   input       : (batch_size, sequence_length, input_hidden_size)
   //   weights     : (input_hidden_size, 3 * hidden_size)
@@ -61,6 +69,7 @@ Status AttentionBase::CheckInputs(const TensorShape& input_shape,
   //                 or (batch_size, past_sequence_length + sequence_length)
   //                 or (batch_size, sequence_length, past_sequence_length + sequence_length)
   //   past        : (2, batch_size, num_heads, past_sequence_length, head_size)
+  //   extra_add_qk: (batch_size, num_heads, sequence_length, sequence_length)
   //
   // Where hidden_size = num_heads * head_size.
   // When a model is pruned (like some attention heads are removed), hidden_size < input_hidden_size.
@@ -83,21 +92,53 @@ Status AttentionBase::CheckInputs(const TensorShape& input_shape,
                            "Input 1 dimension 0 should have same length as dimension 2 of input 0");
   }
 
-  int hidden_size = static_cast<int>(weights_dims[1]) / 3;
-  if (3 * hidden_size != static_cast<int>(weights_dims[1])) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
-                           "Input 1 dimension 1 should be 3 times of hidden dimension");
-  }
-
-  if (hidden_size % num_heads_ != 0) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "hidden_size should be divisiable by num_heads.");
-  }
-
   const auto& bias_dims = bias_shape.GetDims();
   if (bias_dims.size() != 1) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input 'bias' is expected to have 1 dimension, got ",
                            bias_dims.size());
   }
+
+  int hidden_size = 0;
+
+  if (qkv_hidden_sizes_.size() == 0) {
+    hidden_size = static_cast<int>(weights_dims[1]) / 3;
+    if (3 * hidden_size != static_cast<int>(weights_dims[1])) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "Input 1 dimension 1 should be 3 times of hidden dimension");
+    }
+
+    if (hidden_size % num_heads_ != 0) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "hidden_size should be divisiable by num_heads.");
+    }
+  } else {
+    int qkv_sizes = 0;
+
+    if (qkv_hidden_sizes_.size() != 3) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "qkv_hidden_sizes attribute should have 3 elements");
+    }
+
+    if (qkv_hidden_sizes_[0] != qkv_hidden_sizes_[1]) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                            "qkv_hidden_sizes first element should be same as the second");
+    }
+
+    for (size_t i = 0; i < qkv_hidden_sizes_.size(); i++) {
+      if (qkv_hidden_sizes_[i] % num_heads_ != 0) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "hidden_size should be divisiable by num_heads:", qkv_hidden_sizes_[i]);
+      }
+
+      qkv_sizes += static_cast<int>(qkv_hidden_sizes_[i]);
+    }
+
+    int qkv_hidden_sizes_sum = static_cast<int>(weights_dims[1]);
+    if (qkv_hidden_sizes_sum != qkv_sizes) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "qkv_sizes doesn't match the wights dimension");
+    }
+
+    hidden_size = static_cast<int>(qkv_hidden_sizes_[2]);
+  }
+
   if (bias_dims[0] != weights_dims[1]) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
                            "Input 'bias' dimension 0 should have same length as dimension 1 of input 'weights'");
@@ -157,6 +198,29 @@ Status AttentionBase::CheckInputs(const TensorShape& input_shape,
                              mask_dims.size());
     }
   }
+
+  if (extra_add_qk != nullptr) {
+    const auto& extra_add_qk_dims = extra_add_qk->Shape().GetDims();
+
+    if (extra_add_qk_dims.size() != 4) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input 'extra_add_qk' is expected to have 4 dimensions, got ",
+                             extra_add_qk_dims.size());
+    }
+
+    if (extra_add_qk_dims[1] != num_heads_) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input 'extra_add_qk' dimension 1 should be same as number of heads, got ",
+                             extra_add_qk_dims[1]);
+    }
+    if (extra_add_qk_dims[2] != sequence_length) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input 'extra_add_qk' dimension 2 should be same as sequence_length, got ",
+                             extra_add_qk_dims[2]);
+    }
+    if (extra_add_qk_dims[3] != sequence_length) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input 'extra_add_qk' dimension 3 should be same as sequence_length, got ",
+                             extra_add_qk_dims[3]);
+    }
+  }
+
   return Status::OK();
 }
 
@@ -170,7 +234,7 @@ Status AttentionBase::CheckInputs(const TensorShape& input_shape,
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "num_heads should be no larger than ", max_threads_per_block);
   }
 
-  return CheckInputs(input_shape, weights_shape, bias_shape, mask_index, past);
+  return CheckInputs(input_shape, weights_shape, bias_shape, mask_index, past, nullptr);
 }
 
 Tensor* AttentionBase::GetPresent(OpKernelContext* context,
@@ -204,6 +268,71 @@ Attention<T>::Attention(const OpKernelInfo& info) : OpKernel(info), AttentionCPU
 }
 
 template <typename T>
+bool Attention<T>::IsPackWeightsSuccessful(int qkv_index,
+                                           AllocatorPtr alloc,
+                                           size_t head_size,
+                                           size_t input_hidden_size,
+                                           const T* weights_data,
+                                           size_t weight_matrix_col_size,
+                                           /*out*/ PrePackedWeights* prepacked_weights) {
+  size_t packb_size = MlasGemmPackBSize(head_size, input_hidden_size);
+  if (packb_size == 0) {
+    return false;
+  }
+
+  size_t loop_len = static_cast<size_t>(num_heads_);
+  size_t packed_weights_data_size = packb_size * loop_len;  // The same size would be computed by AllocArray() below
+  auto* packed_weights_data = static_cast<uint8_t*>(alloc->AllocArray(packb_size, loop_len));
+
+  // Initialize memory to 0 as there could be some padding associated with pre-packed
+  // buffer memory and we don not want it uninitialized and generate different hashes
+  // if and when we try to cache this pre-packed buffer for sharing between sessions.
+  memset(packed_weights_data, 0, packed_weights_data_size);
+  switch (qkv_index) {
+    case 0:
+      q_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      q_packed_weights_size_ = packb_size;
+      break;
+    case 1:
+      k_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      k_packed_weights_size_ = packb_size;
+      break;
+    case 2:
+      v_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      v_packed_weights_size_ = packb_size;
+      break;
+    default:
+      return false;
+  }
+
+  for (size_t i = 0; i < loop_len; i++) {
+    MlasGemmPackB(CblasNoTrans, head_size, input_hidden_size, weights_data, weight_matrix_col_size, packed_weights_data);
+    packed_weights_data += packb_size;
+    weights_data += head_size;
+  }
+
+  bool share_prepacked_weights = (prepacked_weights != nullptr);
+  if (share_prepacked_weights) {
+    switch (qkv_index) {
+      case 0:
+        prepacked_weights->buffers_.push_back(std::move(q_packed_weights_));
+        break;
+      case 1:
+        prepacked_weights->buffers_.push_back(std::move(k_packed_weights_));
+        break;
+      case 2:
+        prepacked_weights->buffers_.push_back(std::move(v_packed_weights_));
+        break;
+      default:
+        break;
+    }
+
+    prepacked_weights->buffer_sizes_.push_back(packed_weights_data_size);
+  }
+  return true;
+}
+
+template <typename T>
 Status Attention<T>::PrePack(const Tensor& weights, int input_idx, AllocatorPtr alloc,
                              /*out*/ bool& is_packed,
                              /*out*/ PrePackedWeights* prepacked_weights) {
@@ -219,44 +348,45 @@ Status Attention<T>::PrePack(const Tensor& weights, int input_idx, AllocatorPtr 
     return Status::OK();
   }
 
+  const auto* weights_data = weights.Data<T>();
   const size_t input_hidden_size = static_cast<size_t>(weights_dims[0]);
   const size_t hidden_size_x3 = static_cast<size_t>(weights_dims[1]);
   const size_t hidden_size = hidden_size_x3 / 3;
-  const size_t head_size = hidden_size / num_heads_;
+  size_t q_hidden_size, k_hidden_size, v_hidden_size;
 
-  // Bail out if the weights shape has an expected shape.
-  if ((hidden_size == 0) || ((hidden_size % num_heads_) != 0) || (hidden_size_x3 != 3 * hidden_size)) {
+  if (qkv_hidden_sizes_.size() != 0) {
+    q_hidden_size = qkv_hidden_sizes_[0];
+    k_hidden_size = qkv_hidden_sizes_[1];
+    v_hidden_size = qkv_hidden_sizes_[2];
+
+    if (q_hidden_size == 0 || k_hidden_size == 0 || v_hidden_size == 0) {
+      return Status::OK();
+    }
+
+    if (q_hidden_size % num_heads_ != 0 || k_hidden_size % num_heads_ != 0 || v_hidden_size % num_heads_ != 0) {
+      return Status::OK();
+    }
+  } else {
+
+    if (hidden_size % num_heads_ != 0) {
+      return Status::OK();
+    }
+
+    q_hidden_size = hidden_size;
+    k_hidden_size = hidden_size;
+    v_hidden_size = hidden_size;
+  }
+
+  const size_t q_head_size = q_hidden_size / num_heads_;
+  const size_t k_head_size = k_hidden_size / num_heads_;
+  const size_t v_head_size = v_hidden_size / num_heads_;
+  const size_t weight_matrix_col_size = q_hidden_size + k_hidden_size + v_hidden_size;
+
+  if (!IsPackWeightsSuccessful(0, alloc, q_head_size, input_hidden_size, weights_data, weight_matrix_col_size, prepacked_weights) ||
+      !IsPackWeightsSuccessful(1, alloc, k_head_size, input_hidden_size, weights_data + (num_heads_ * q_head_size), weight_matrix_col_size, prepacked_weights) ||
+      !IsPackWeightsSuccessful(2, alloc, v_head_size, input_hidden_size, weights_data + (num_heads_ * (q_head_size + k_head_size)), weight_matrix_col_size, prepacked_weights)) {
+    // we are not cleaning up anything, assuming caller takes care of this
     return Status::OK();
-  }
-
-  const auto* weights_data = weights.Data<T>();
-
-  packed_weights_size_ = MlasGemmPackBSize(head_size, input_hidden_size);
-  if (packed_weights_size_ == 0) {
-    return Status::OK();
-  }
-
-  const size_t loop_len = static_cast<size_t>(3) * num_heads_;
-  size_t packed_weights_data_size = packed_weights_size_ * loop_len;  // The same size would be computed by AllocArray() below
-  auto* packed_weights_data = static_cast<uint8_t*>(alloc->AllocArray(packed_weights_size_, loop_len));
-
-  // Initialize memory to 0 as there could be some padding associated with pre-packed
-  // buffer memory and we don not want it uninitialized and generate different hashes
-  // if and when we try to cache this pre-packed buffer for sharing between sessions.
-  memset(packed_weights_data, 0, packed_weights_data_size);
-
-  packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
-
-  for (size_t i = 0; i < loop_len; i++) {
-    MlasGemmPackB(CblasNoTrans, head_size, input_hidden_size, weights_data, hidden_size_x3, packed_weights_data);
-    packed_weights_data += packed_weights_size_;
-    weights_data += head_size;
-  }
-
-  bool share_prepacked_weights = (prepacked_weights != nullptr);
-  if (share_prepacked_weights) {
-    prepacked_weights->buffers_.push_back(std::move(packed_weights_));
-    prepacked_weights->buffer_sizes_.push_back(packed_weights_data_size);
   }
 
   is_packed = true;
@@ -272,7 +402,9 @@ Status Attention<T>::UseSharedPrePackedBuffers(std::vector<BufferUniquePtr>& pre
   }
 
   used_shared_buffers = true;
-  packed_weights_ = std::move(prepacked_buffers[0]);
+  q_packed_weights_ = std::move(prepacked_buffers[0]);
+  k_packed_weights_ = std::move(prepacked_buffers[1]);
+  v_packed_weights_ = std::move(prepacked_buffers[2]);
 
   return Status::OK();
 }
@@ -280,25 +412,35 @@ Status Attention<T>::UseSharedPrePackedBuffers(std::vector<BufferUniquePtr>& pre
 template <typename T>
 Status Attention<T>::Compute(OpKernelContext* context) const {
   const Tensor* input = context->Input<Tensor>(0);
-  const Tensor* weights = packed_weights_ ? nullptr : context->Input<Tensor>(1);
+  const Tensor* weights = q_packed_weights_ ? nullptr : context->Input<Tensor>(1);
   const Tensor* bias = context->Input<Tensor>(2);
+
   const Tensor* mask_index = context->Input<Tensor>(3);
   const Tensor* past = context->Input<Tensor>(4);
+  const Tensor* extra_add_qk = context->Input<Tensor>(5);
 
   const TensorShape& weights_shape = (weights ? weights->Shape() : weight_shape_);
   ORT_RETURN_IF_ERROR(CheckInputs(input->Shape(),
                                   weights_shape,
                                   bias->Shape(),
                                   mask_index,
-                                  past));
+                                  past,
+                                  extra_add_qk));
 
   const auto& shape = input->Shape().GetDims();
   const int batch_size = static_cast<int>(shape[0]);
   const int sequence_length = static_cast<int>(shape[1]);
   const int input_hidden_size = static_cast<int>(shape[2]);
+  
+  int hidden_size;
 
-  const auto& weights_dims = weights_shape.GetDims();
-  const int hidden_size = static_cast<int>(weights_dims[1]) / 3;
+  if (qkv_hidden_sizes_.size() == 0) {
+    const auto& weights_dims = weights_shape.GetDims();
+    hidden_size = static_cast<int>(weights_dims[1]) / 3;
+  } else {
+    hidden_size = static_cast<int>(qkv_hidden_sizes_[2]);
+  }
+
   const int head_size = hidden_size / num_heads_;
 
   std::vector<int64_t> output_shape(3);
@@ -309,19 +451,38 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
 
   constexpr size_t element_size = sizeof(T);
 
+  int q_hidden_size = 0;
+  int k_hidden_size = 0;
+  int v_hidden_size = 0;
+  if (qkv_hidden_sizes_.size() == 0) {
+    q_hidden_size = hidden_size;
+    k_hidden_size = hidden_size;
+    v_hidden_size = hidden_size;
+  } else {
+    q_hidden_size = static_cast<int>(qkv_hidden_sizes_[0]);
+    k_hidden_size = static_cast<int>(qkv_hidden_sizes_[1]);
+    v_hidden_size = static_cast<int>(qkv_hidden_sizes_[2]);
+  }
+
+  int q_head_size = q_hidden_size / num_heads_;
+  int k_head_size = k_hidden_size / num_heads_;
+  int v_head_size = v_hidden_size / num_heads_;
+
   AllocatorPtr allocator;
   ORT_RETURN_IF_ERROR(context->GetTempSpaceAllocator(&allocator));
 
   auto* tp = context->GetOperatorThreadPool();
   // Compute Q, K, V
-  // gemm_data(BS, 3NH) = input(BS, D) x weights(D, 3NH) + bias(3NH)
-  // D (input_hidden_size) is hidden dimension of input, where D could be larger than hidden_size (NH) when model is pruned.
-  auto gemm_data = allocator->Alloc(SafeInt<size_t>(batch_size) * sequence_length * 3 * hidden_size * element_size);
+  // gemm_data(BS, NT) = input(BS, D) x weights(D, NT) + bias(NT)
+  // D (input_hidden_size) is hidden dimension of input, where D could be larger than any of the hidden_sizes
+  // (NH) when model is pruned.
+  auto gemm_data = allocator->Alloc(SafeInt<size_t>(batch_size) * sequence_length * (q_hidden_size + k_hidden_size + v_hidden_size) * element_size);
   BufferUniquePtr gemm_buffer(gemm_data, BufferDeleter(allocator));
 
   auto Q = reinterpret_cast<T*>(gemm_data);
-  auto K = Q + static_cast<size_t>(batch_size) * sequence_length * hidden_size;
-  auto V = K + static_cast<size_t>(batch_size) * sequence_length * hidden_size;
+  auto K = Q + static_cast<size_t>(batch_size) * sequence_length * q_hidden_size;
+  auto V = K + static_cast<size_t>(batch_size) * sequence_length * k_hidden_size;
+
   T* QKV[3] = {Q, K, V};
 
   {
@@ -339,30 +500,60 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
         const int qkv_index = static_cast<int>(i % 3);
 
         int input_offset = batch_index * sequence_length * input_hidden_size;
-        int weights_offset = qkv_index * hidden_size + head_index * head_size;
+
         T* qkv_dest = QKV[qkv_index];
-        int qkv_offset = (batch_index * num_heads_ + head_index) * (sequence_length * head_size);
+        int qkv_offset = 0;
+        int head_size_passed_in = 0;
+
+        if (qkv_index == 0) {
+          head_size_passed_in = q_head_size;
+        } else if (qkv_index == 1) {
+          head_size_passed_in = k_head_size;
+        } else {
+          head_size_passed_in = v_head_size;
+        }
+
+        int weights_offset = 0;
+        int bias_offset = qkv_index * q_hidden_size + head_index * head_size_passed_in;
+
+        if (q_packed_weights_ == nullptr) {
+          weights_offset = bias_offset;
+        } else {
+          weights_offset = head_index * head_size_passed_in;
+        }
+
+        qkv_offset += (batch_index * num_heads_ + head_index) * (sequence_length * head_size_passed_in);
 
         // TODO!! memcpy here makes it not worthwhile to use Gemm batch. Possible to post process?
-        // broadcast 3NH -> (3.B.N.S.H)
-        const T* broadcast_data_src = bias_data + weights_offset;
+        // broadcast NH -> (B.N.S.H) for each of Q, K, V
+
+        const T* broadcast_data_src = bias_data + bias_offset;
         T* broadcast_data_dest = QKV[qkv_index] + qkv_offset;
+
         for (int seq_index = 0; seq_index < sequence_length; seq_index++) {
-          memcpy(broadcast_data_dest, broadcast_data_src, head_size * sizeof(T));
-          broadcast_data_dest += head_size;
+          memcpy(broadcast_data_dest, broadcast_data_src, head_size_passed_in * sizeof(T));
+          broadcast_data_dest += head_size_passed_in;
         }
 
         //                   original           transposed            iteration
         // A: input          (BxSxD)            (B.)S x D             S x D
-        // B: weights        (Dx3xNxH)          D x (3.N.)H           D x H
-        // C: QKV[qkv_index] (3xBxNxSxH)        (3.B.N.)S x H         S x H
-        if (packed_weights_) {
-          const auto* packed_weight =
-              static_cast<const uint8_t*>(packed_weights_.get()) + packed_weights_size_ * (weights_offset / head_size);
+        // B: weights        (DxNxT)             D x (N.)T            D x H
+        // C: QKV[qkv_index] (BxNxSxT)          (B.N.)S x T           S x H
+        // T = H1 + H2 + H3, where H1, H2, H3 are head sizes of Q, K, V respectively
+        if (q_packed_weights_) {
+          uint8_t* packed_weight;
+          if (qkv_index == 0) {
+            packed_weight = static_cast<uint8_t*>(q_packed_weights_.get()) + q_packed_weights_size_ * (weights_offset / head_size_passed_in);
+          } else if (qkv_index == 1) {
+            packed_weight = static_cast<uint8_t*>(k_packed_weights_.get()) + k_packed_weights_size_ * (weights_offset / head_size_passed_in);
+          } else {
+            packed_weight = static_cast<uint8_t*>(v_packed_weights_.get()) + v_packed_weights_size_ * (weights_offset / head_size_passed_in);
+          }
+
           MlasGemm(
               CblasNoTrans,               // TransA = no
               sequence_length,            // M      = S
-              head_size,                  // N      = H
+              head_size_passed_in,        // N      = H
               input_hidden_size,          // K      = D
               1.0f,                       // alpha
               input_data + input_offset,  // A
@@ -370,24 +561,24 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
               packed_weight,              // B
               1.0f,                       // beta
               qkv_dest + qkv_offset,      // C
-              head_size,                  // ldc
+              head_size_passed_in,        // ldc
               nullptr);                   // use single-thread
         } else {
           math::GemmEx<float, ThreadPool>(
-              CblasNoTrans,                   // TransA = no
-              CblasNoTrans,                   // TransB = no
-              sequence_length,                // M      = S
-              head_size,                      // N      = H
-              input_hidden_size,              // K      = D
-              1.0f,                           // alpha
-              input_data + input_offset,      // A
-              input_hidden_size,              // lda    = D
-              weights_data + weights_offset,  // B
-              3 * hidden_size,                // ldb    = 3NH
-              1.0f,                           // beta
-              qkv_dest + qkv_offset,          // C
-              head_size,                      // ldc
-              nullptr                         // use single-thread
+              CblasNoTrans,                                 // TransA = no
+              CblasNoTrans,                                 // TransB = no
+              sequence_length,                              // M      = S
+              head_size_passed_in,                          // N      = H
+              input_hidden_size,                            // K      = D
+              1.0f,                                         // alpha
+              input_data + input_offset,                    // A
+              input_hidden_size,                            // lda    = D
+              weights_data + weights_offset,                // B
+              q_hidden_size + k_hidden_size + v_hidden_size,// ldb = NH1 + NH2 + NH3
+              1.0f,                                         // beta
+              qkv_dest + qkv_offset,                        // C
+              head_size_passed_in,                          // ldc
+              nullptr                                       // use single-thread
           );
         }
       }
@@ -397,8 +588,8 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
   // Compute the attention score and apply the score to V
   return ApplyAttention(Q, K, V, mask_index, past, output,
                         batch_size, sequence_length,
-                        head_size, hidden_size, context);
+                        q_head_size, v_head_size, v_hidden_size,
+                        extra_add_qk, context);
 }
-
 }  // namespace contrib
 }  // namespace onnxruntime
