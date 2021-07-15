@@ -10,18 +10,6 @@
 
 namespace onnxruntime {
 namespace contrib {
-
-Status LongformerAttentionBase__CheckInputs(const LongformerAttentionBase* p,
-                                            const TensorShape& input_shape,
-                                            const TensorShape& weights_shape,
-                                            const TensorShape& bias_shape,
-                                            const TensorShape& mask_shape,
-                                            const TensorShape& global_weights_shape,
-                                            const TensorShape& global_bias_shape,
-                                            const TensorShape& global_shape) {
-  return p->CheckInputs(input_shape, weights_shape, bias_shape, mask_shape, global_weights_shape, global_bias_shape, global_shape);
-}
-
 namespace embed_layer_norm {
 
 Status CheckInputs(const OpKernelContext* context) {

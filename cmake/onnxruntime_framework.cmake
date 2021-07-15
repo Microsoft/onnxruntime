@@ -25,7 +25,6 @@ endif()
 
 if (onnxruntime_MINIMAL_BUILD)
   set(onnxruntime_framework_src_exclude
-    "${ONNXRUNTIME_ROOT}/core/framework/provider_bridge_ort.cc"
     "${ONNXRUNTIME_ROOT}/core/framework/fallback_cpu_capability.h"
     "${ONNXRUNTIME_ROOT}/core/framework/fallback_cpu_capability.cc"
   )

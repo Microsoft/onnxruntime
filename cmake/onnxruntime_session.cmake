@@ -7,6 +7,14 @@ file(GLOB onnxruntime_session_srcs CONFIGURE_DEPENDS
     "${ONNXRUNTIME_ROOT}/core/session/*.cc"
     )
 
+if (onnxruntime_MINIMAL_BUILD)
+  set(onnxruntime_session_src_exclude
+    "${ONNXRUNTIME_ROOT}/core/session/provider_bridge_ort.cc"
+  )
+
+  list(REMOVE_ITEM onnxruntime_session_srcs ${onnxruntime_session_src_exclude})
+endif()
+
 source_group(TREE ${REPO_ROOT} FILES ${onnxruntime_session_srcs})
 
 onnxruntime_add_static_library(onnxruntime_session ${onnxruntime_session_srcs})

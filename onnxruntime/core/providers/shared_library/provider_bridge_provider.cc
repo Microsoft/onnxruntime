@@ -61,6 +61,7 @@ void operator delete(void* p, size_t /*size*/) noexcept { return Provider_GetHos
 namespace onnxruntime {
 
 ProviderHost* g_host = Provider_GetHost();
+ProviderHostCPU& g_host_cpu = g_host->GetProviderHostCPU();
 
 static std::unique_ptr<std::vector<std::function<void()>>> s_run_on_unload_;
 
@@ -379,28 +380,27 @@ Status UnpackTensor(const ONNX_NAMESPACE::TensorProto& tensor, const void* raw_d
 
 }  // namespace utils
 
-Status GatherBase::PrepareForCompute(OpKernelContext* context, GatherBase::Prepare& p) const { return g_host->GatherBase__PrepareForCompute(this, context, reinterpret_cast<GatherBase__Prepare&>(p)); }
-Status UnsqueezeBase::PrepareCompute(OpKernelContext* ctx, UnsqueezeBase::Prepare& p) const { return g_host->UnsqueezeBase__PrepareCompute(this, ctx, reinterpret_cast<UnsqueezeBase__Prepare&>(p)); }
+Status NonMaxSuppressionBase::PrepareCompute(OpKernelContext* ctx, PrepareContext& pc) { return g_host_cpu.NonMaxSuppressionBase__PrepareCompute(ctx, pc); }
+Status NonMaxSuppressionBase::GetThresholdsFromInputs(const PrepareContext& pc, int64_t& max_output_boxes_per_class, float& iou_threshold, float& score_threshold) { return g_host_cpu.NonMaxSuppressionBase__GetThresholdsFromInputs(pc, max_output_boxes_per_class, iou_threshold, score_threshold); }
 
+Status GatherBase::PrepareForCompute(OpKernelContext* context, GatherBase::Prepare& p) const { return g_host_cpu.GatherBase__PrepareForCompute(this, context, reinterpret_cast<GatherBase__Prepare&>(p)); }
+Status UnsqueezeBase::PrepareCompute(OpKernelContext* ctx, UnsqueezeBase::Prepare& p) const { return g_host_cpu.UnsqueezeBase__PrepareCompute(this, ctx, reinterpret_cast<UnsqueezeBase__Prepare&>(p)); }
 
 #ifdef USE_CUDA
 bool TileOp::IsTileMemcpy(const TensorShape& input_shape, const int64_t* repeats, size_t rank, bool& is_batched_memcpy, size_t& num_of_elements_per_batch, size_t& num_of_copies_per_batch, size_t& num_of_batch_copies) {
-  return g_host->TileOp__IsTileMemcpy(input_shape, repeats, rank, is_batched_memcpy, num_of_elements_per_batch, num_of_copies_per_batch, num_of_batch_copies);
+  return g_host_cpu.TileOp__IsTileMemcpy(input_shape, repeats, rank, is_batched_memcpy, num_of_elements_per_batch, num_of_copies_per_batch, num_of_batch_copies);
 }
-
-Status NonMaxSuppressionBase::PrepareCompute(OpKernelContext* ctx, PrepareContext& pc) { return g_host->NonMaxSuppressionBase__PrepareCompute(ctx, pc); }
-Status NonMaxSuppressionBase::GetThresholdsFromInputs(const PrepareContext& pc, int64_t& max_output_boxes_per_class, float& iou_threshold, float& score_threshold) { return g_host->NonMaxSuppressionBase__GetThresholdsFromInputs(pc, max_output_boxes_per_class, iou_threshold, score_threshold); }
 
 Status SliceBase::PrepareForCompute(const std::vector<int64_t>& raw_starts,
                                     const std::vector<int64_t>& raw_ends,
                                     const std::vector<int64_t>& raw_axes,
-                                    SliceOp::PrepareForComputeMetadata& compute_metadata) { return g_host->SliceBase__PrepareForCompute(raw_starts, raw_ends, raw_axes, reinterpret_cast<SliceOp__PrepareForComputeMetadata&>(compute_metadata)); }
+                                    SliceOp::PrepareForComputeMetadata& compute_metadata) { return g_host_cpu.SliceBase__PrepareForCompute(raw_starts, raw_ends, raw_axes, reinterpret_cast<SliceOp__PrepareForComputeMetadata&>(compute_metadata)); }
 
 Status SliceBase::PrepareForCompute(const std::vector<int64_t>& raw_starts,
                                     const std::vector<int64_t>& raw_ends,
                                     const std::vector<int64_t>& raw_axes,
                                     const std::vector<int64_t>& raw_steps,
-                                    SliceOp::PrepareForComputeMetadata& compute_metadata) { return g_host->SliceBase__PrepareForCompute(raw_starts, raw_ends, raw_axes, raw_steps, reinterpret_cast<SliceOp__PrepareForComputeMetadata&>(compute_metadata)); }
+                                    SliceOp::PrepareForComputeMetadata& compute_metadata) { return g_host_cpu.SliceBase__PrepareForCompute(raw_starts, raw_ends, raw_axes, raw_steps, reinterpret_cast<SliceOp__PrepareForComputeMetadata&>(compute_metadata)); }
 
 Status SliceBase::FillVectorsFromInput(const Tensor& start_tensor,
                                        const Tensor& ends_tensor,
@@ -409,81 +409,81 @@ Status SliceBase::FillVectorsFromInput(const Tensor& start_tensor,
                                        std::vector<int64_t>& input_starts,
                                        std::vector<int64_t>& input_ends,
                                        std::vector<int64_t>& input_axes,
-                                       std::vector<int64_t>& input_steps) { return g_host->SliceBase__FillVectorsFromInput(start_tensor, ends_tensor, axes_tensor, steps_tensor, input_starts, input_ends, input_axes, input_steps); }
+                                       std::vector<int64_t>& input_steps) { return g_host_cpu.SliceBase__FillVectorsFromInput(start_tensor, ends_tensor, axes_tensor, steps_tensor, input_starts, input_ends, input_axes, input_steps); }
 
 Status SplitBase::PrepareForCompute(const TensorShape& input_shape, int num_outputs, int64_t& axis, int& before_dims,
                                     int& after_dims_including_split_axis, int& after_dims_excluding_split,
-                                    std::vector<int64_t>& split_sizes) const { return g_host->SplitBase__PrepareForCompute(this, input_shape, num_outputs, axis, before_dims, after_dims_including_split_axis, after_dims_excluding_split, split_sizes); }
+                                    std::vector<int64_t>& split_sizes) const { return g_host_cpu.SplitBase__PrepareForCompute(this, input_shape, num_outputs, axis, before_dims, after_dims_including_split_axis, after_dims_excluding_split, split_sizes); }
 
-Status Size::Compute(OpKernelContext* context) const { return g_host->Size__Compute(this, context); }
+Status Size::Compute(OpKernelContext* context) const { return g_host_cpu.Size__Compute(this, context); }
 
 Status ScatterNDBase::ValidateShapes(const TensorShape& input_shape,
                                      const TensorShape& indice_shape,
-                                     const TensorShape& update_shape) { return g_host->ScatterNDBase__ValidateShapes(input_shape, indice_shape, update_shape); }
+                                     const TensorShape& update_shape) { return g_host_cpu.ScatterNDBase__ValidateShapes(input_shape, indice_shape, update_shape); }
 
-Status PadBase::HandleDimValueZero(const Mode& mode, const TensorShape& input_shape, TensorShape& output_shape) { return g_host->PadBase__HandleDimValueZero(mode, input_shape, output_shape); }
+Status PadBase::HandleDimValueZero(const Mode& mode, const TensorShape& input_shape, TensorShape& output_shape) { return g_host_cpu.PadBase__HandleDimValueZero(mode, input_shape, output_shape); }
 
 Status ConcatBase::PrepareForCompute(OpKernelContext* ctx, const std::vector<const Tensor*>& input_tensors,
-                                     Prepare& p) const { return g_host->ConcatBase__PrepareForCompute(this, ctx, input_tensors, p); }
+                                     Prepare& p) const { return g_host_cpu.ConcatBase__PrepareForCompute(this, ctx, input_tensors, p); }
 
 PhiloxGenerator& PhiloxGenerator::Default() { return g_host->PhiloxGenerator__Default(); }
 
-Status Einsum::Compute(OpKernelContext* context) const { return g_host->Einsum__Compute(this, context); }
+Status Einsum::Compute(OpKernelContext* context) const { return g_host_cpu.Einsum__Compute(this, context); }
 
 template <>
-std::unique_ptr<EinsumTypedComputeProcessor<float>> EinsumTypedComputeProcessor<float>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host->EinsumTypedComputeProcessor_float__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
+std::unique_ptr<EinsumTypedComputeProcessor<float>> EinsumTypedComputeProcessor<float>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host_cpu.EinsumTypedComputeProcessor_float__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
 template <>
-std::unique_ptr<EinsumTypedComputeProcessor<double>> EinsumTypedComputeProcessor<double>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host->EinsumTypedComputeProcessor_double__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
+std::unique_ptr<EinsumTypedComputeProcessor<double>> EinsumTypedComputeProcessor<double>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host_cpu.EinsumTypedComputeProcessor_double__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
 template <>
-std::unique_ptr<EinsumTypedComputeProcessor<MLFloat16>> EinsumTypedComputeProcessor<MLFloat16>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host->EinsumTypedComputeProcessor_MLFloat16__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
+std::unique_ptr<EinsumTypedComputeProcessor<MLFloat16>> EinsumTypedComputeProcessor<MLFloat16>::Create(OpKernelContext* context, AllocatorPtr allocator, concurrency::ThreadPool* tp, EinsumComputePreprocessor& einsum_compute_preprocessor, void* einsum_cuda_assets) { return g_host_cpu.EinsumTypedComputeProcessor_MLFloat16__Create(context, allocator, tp, einsum_compute_preprocessor, einsum_cuda_assets); }
 
 #ifndef DISABLE_CONTRIB_OPS
 namespace contrib {
-Status embed_layer_norm::CheckInputs(const OpKernelContext* context) { return g_host->embed_layer_norm__CheckInputs(context); }
-Status bias_gelu_helper::CheckInputs(const OpKernelContext* context) { return g_host->bias_gelu_helper__CheckInputs(context); }
+Status embed_layer_norm::CheckInputs(const OpKernelContext* context) { return g_host_cpu.embed_layer_norm__CheckInputs(context); }
+Status bias_gelu_helper::CheckInputs(const OpKernelContext* context) { return g_host_cpu.bias_gelu_helper__CheckInputs(context); }
 Status LongformerAttentionBase::CheckInputs(const TensorShape& input_shape, const TensorShape& weights_shape, const TensorShape& bias_shape, const TensorShape& mask_shape, const TensorShape& global_weights_shape, const TensorShape& global_bias_shape, const TensorShape& global_shape) const {
-  return g_host->LongformerAttentionBase__CheckInputs(this, input_shape, weights_shape, bias_shape, mask_shape, global_weights_shape, global_bias_shape, global_shape);
+  return g_host_cpu.LongformerAttentionBase__CheckInputs(this, input_shape, weights_shape, bias_shape, mask_shape, global_weights_shape, global_bias_shape, global_shape);
 }
 
 Status AttentionBase::CheckInputs(const TensorShape& input_shape, const TensorShape& weights_shape, const TensorShape& bias_shape, const Tensor*& mask_index, const Tensor* past, const int max_threads_per_block) const {
-  return g_host->AttentionBase__CheckInputs(this, input_shape, weights_shape, bias_shape, mask_index, past, max_threads_per_block);
+  return g_host_cpu.AttentionBase__CheckInputs(this, input_shape, weights_shape, bias_shape, mask_index, past, max_threads_per_block);
 }
 Tensor* AttentionBase::GetPresent(OpKernelContext* context, const Tensor* past, int batch_size, int head_size, int sequence_length, int& past_sequence_length) const {
-  return g_host->AttentionBase__GetPresent(this, context, past, batch_size, head_size, sequence_length, past_sequence_length);
+  return g_host_cpu.AttentionBase__GetPresent(this, context, past, batch_size, head_size, sequence_length, past_sequence_length);
 }
 
 }  // namespace contrib
 #endif
 
-void If::Init(const OpKernelInfo& info) { g_host->If__Init(this, info); }
-Status If::Compute(OpKernelContext* ctx) const { return g_host->If__Compute(this, ctx); }
-Status If::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host->If__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
+void If::Init(const OpKernelInfo& info) { g_host_cpu.If__Init(this, info); }
+Status If::Compute(OpKernelContext* ctx) const { return g_host_cpu.If__Compute(this, ctx); }
+Status If::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host_cpu.If__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
 
-void Loop::Init(const OpKernelInfo& info) { g_host->Loop__Init(this, info); }
-Status Loop::Compute(OpKernelContext* ctx) const { return g_host->Loop__Compute(this, ctx); }
-Status Loop::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host->Loop__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
+void Loop::Init(const OpKernelInfo& info) { g_host_cpu.Loop__Init(this, info); }
+Status Loop::Compute(OpKernelContext* ctx) const { return g_host_cpu.Loop__Compute(this, ctx); }
+Status Loop::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host_cpu.Loop__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
 
 template <>
-void Scan<8>::Init(const OpKernelInfo& info) { g_host->Scan__Init(this, info); }
+void Scan<8>::Init(const OpKernelInfo& info) { g_host_cpu.Scan__Init(this, info); }
 template <>
-void Scan<9>::Init(const OpKernelInfo& info) { g_host->Scan__Init(this, info); }
+void Scan<9>::Init(const OpKernelInfo& info) { g_host_cpu.Scan__Init(this, info); }
 template <>
-Status Scan<8>::Compute(OpKernelContext* ctx) const { return g_host->Scan__Compute(this, ctx); }
+Status Scan<8>::Compute(OpKernelContext* ctx) const { return g_host_cpu.Scan__Compute(this, ctx); }
 template <>
-Status Scan<9>::Compute(OpKernelContext* ctx) const { return g_host->Scan__Compute(this, ctx); }
+Status Scan<9>::Compute(OpKernelContext* ctx) const { return g_host_cpu.Scan__Compute(this, ctx); }
 template <>
-Status Scan<8>::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host->Scan__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
+Status Scan<8>::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host_cpu.Scan__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
 template <>
-Status Scan<9>::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host->Scan__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
+Status Scan<9>::SetupSubgraphExecutionInfo(const SessionState& session_state, const std::string& attribute_name, const SessionState& subgraph_session_state) { return g_host_cpu.Scan__SetupSubgraphExecutionInfo(this, session_state, attribute_name, subgraph_session_state); }
 
 #ifdef ENABLE_TRAINING
 namespace contrib {
-void ATenOpBase::Init(const OpKernelInfo& info, bool is_backward) { return g_host->ATenOpBase__Init(this, info, is_backward); }
-Status ATenOpBase::Compute(OpKernelContext* p_ctx) const { return g_host->ATenOpBase__Compute(this, p_ctx); }
+void ATenOpBase::Init(const OpKernelInfo& info, bool is_backward) { return g_host_cpu.ATenOpBase__Init(this, info, is_backward); }
+Status ATenOpBase::Compute(OpKernelContext* p_ctx) const { return g_host_cpu.ATenOpBase__Compute(this, p_ctx); }
 
-Status Group::Compute(OpKernelContext* context) const { return g_host->contrib__Group__Compute(this, context); }
-Status PassThrough::Compute(OpKernelContext* context) const { return g_host->contrib__PassThrough__Compute(this, context); }
-Status YieldOp::Compute(OpKernelContext* context) const { return g_host->contrib__YieldOp__Compute(this, context); }
+Status Group::Compute(OpKernelContext* context) const { return g_host_cpu.contrib__Group__Compute(this, context); }
+Status PassThrough::Compute(OpKernelContext* context) const { return g_host_cpu.contrib__PassThrough__Compute(this, context); }
+Status YieldOp::Compute(OpKernelContext* context) const { return g_host_cpu.contrib__YieldOp__Compute(this, context); }
 }
 
 #ifdef ENABLE_TRAINING_TORCH_INTEROP
