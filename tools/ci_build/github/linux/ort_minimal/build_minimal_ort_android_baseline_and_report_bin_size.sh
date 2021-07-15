@@ -47,7 +47,7 @@ if [[ $BUILD_REASON == "IndividualCI" || $BUILD_REASON == "BatchedCI" ]] && [[ $
         --commit_hash=$BUILD_SOURCEVERSION \
         --size_data_file=/build/MinSizeRel/binary_size_data.txt \
         --build_project=onnxruntime \
-        --build_id=$BUILD_ID
+        --build_id=$BUILD_ID --database_server $MYSQL_SERVER_IP
 else
     echo "No binary size report for build reason: [$BUILD_REASON] and build branch: [$BUILD_BRANCH]"
     echo "The content of binary_size_data.txt"

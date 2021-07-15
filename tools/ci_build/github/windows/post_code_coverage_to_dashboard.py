@@ -26,6 +26,7 @@ def parse_arguments():
     parser.add_argument("--os", type=str, help="Build configuration:os")
     parser.add_argument("--arch", type=str, help="Build configuration:arch")
     parser.add_argument("--build_config", type=str, help="Build configuration: build variants")
+    parser.add_argument("--database_server", help="The hostname or ip address of the database server")
     return parser.parse_args()
 
 
@@ -60,7 +61,7 @@ def write_to_db(coverage_data, args):
     cnx = mysql.connector.connect(
         user='ort@onnxruntimedashboard',
         password=os.environ.get('DASHBOARD_MYSQL_ORT_PASSWORD'),
-        host='onnxruntimedashboard.mysql.database.azure.com',
+        host=args.database_server,
         database='onnxruntime')
 
     try:

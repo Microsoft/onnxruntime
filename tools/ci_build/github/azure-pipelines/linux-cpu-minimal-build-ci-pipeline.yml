@@ -22,7 +22,7 @@ jobs:
 
   variables:
     test_data_directory: $(Build.SourcesDirectory)/.test_data
-
+    MYSQL_SERVER_IP: 172.19.0.7
   steps:
   - checkout: self
     clean: true
@@ -167,6 +167,7 @@ jobs:
           --volume $(test_data_directory):/home/onnxruntimedev/.test_data \
           -e ALLOW_RELEASED_ONNX_OPSET_ONLY=1 \
           -e NIGHTLY_BUILD \
+          -e MYSQL_SERVER_IP \
           -e BUILD_BUILDNUMBER \
           -e BUILD_SOURCEVERSION=$(Build.SourceVersion) \
           -e BUILD_ID=$(Build.BuildId) \
@@ -174,7 +175,7 @@ jobs:
           -e BUILD_BRANCH=$(Build.SourceBranch) \
           -e DASHBOARD_MYSQL_ORT_PASSWORD=$(dashboard-mysql-ort-password) \
           onnxruntimecpubuild \
-            /bin/bash /onnxruntime_src/tools/ci_build/github/linux/ort_minimal/build_minimal_ort_android_baseline_and_report_bin_size.sh
+            /bin/bash /onnxruntime_src/tools/ci_build/github/linux/ort_minimal/build_minimal_ort_android_baseline_and_report_bin_size.sh $MYSQL_SERVER_IP
       workingDirectory: $(Build.SourcesDirectory)
 
   - task: PublishTestResults@2

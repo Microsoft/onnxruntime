@@ -50,7 +50,7 @@ steps:
         7z.exe l -slt %%~ni.zip runtimes\win-x64\native\onnxruntime.dll | findstr /R /C:"^Size = [0-9]*" | for /F "tokens=3" %%a  in ('more') do if not "%%a" == "" echo win,x64,${{ parameters.buildVariant }},%%a >> binary_size_data.txt
         7z.exe l -slt %%~ni.zip runtimes\win-x86\native\onnxruntime.dll | findstr /R /C:"^Size = [0-9]*" | for /F "tokens=3" %%a  in ('more') do if not "%%a" == "" echo win,x86,${{ parameters.buildVariant }},%%a >> binary_size_data.txt
         echo calling python script to post to database
-        python.exe $(Build.SourcesDirectory)\tools\ci_build\github\windows\post_binary_sizes_to_dashboard.py --commit_hash=${{ parameters.gitCommitHash }} --size_data_file=binary_size_data.txt --build_project=Lotus --build_id=$(Build.BuildId)
+        python.exe $(Build.SourcesDirectory)\tools\ci_build\github\windows\post_binary_sizes_to_dashboard.py --commit_hash=${{ parameters.gitCommitHash }} --size_data_file=binary_size_data.txt --build_project=Lotus --build_id=$(Build.BuildId) --database_server 172.19.0.7
          )
        ) 
   env: 

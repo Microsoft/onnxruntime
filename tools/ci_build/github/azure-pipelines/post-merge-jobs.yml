@@ -16,11 +16,11 @@ jobs:
           sudo apt-get install -y python3-pip
           sudo python3 -m pip install mysql-connector-python
           ln -s /data/models .
-          #Build onnxruntime and run the instrumented program(unitests)
-          LLVM_PROFILE_FILE="%p.profraw" CFLAGS="-g -fprofile-instr-generate -fcoverage-mapping" CXXFLAGS="-g -fprofile-instr-generate -fcoverage-mapping" CC=clang CXX=clang++  python3 $(Build.SourcesDirectory)/tools/ci_build/build.py --build_dir=$(Build.BinariesDirectory) --config Debug --parallel --skip_submodule_sync --build_shared_lib --enable_onnx_tests --cmake_extra_defines RUN_MODELTEST_IN_DEBUG_MODE=ON
-
+          #Build onnxruntime
+          CFLAGS="-g -fprofile-instr-generate -fcoverage-mapping" CXXFLAGS="-g -fprofile-instr-generate -fcoverage-mapping" CC=clang CXX=clang++  python3 $(Build.SourcesDirectory)/tools/ci_build/build.py --build_dir=$(Build.BinariesDirectory) --config Debug --parallel --skip_submodule_sync --build_shared_lib --enable_onnx_tests --cmake_extra_defines RUN_MODELTEST_IN_DEBUG_MODE=ON
+          #Run the instrumented program(unitests)
+          LLVM_PROFILE_FILE="%p.profraw" python3 $(Build.SourcesDirectory)/tools/ci_build/build.py --build_dir=$(Build.BinariesDirectory) --config Debug --parallel --skip_submodule_sync --build_shared_lib --enable_onnx_tests --cmake_extra_defines RUN_MODELTEST_IN_DEBUG_MODE=ON --ctest ''
           cd Debug
-          ./onnxruntime_mlas_test
           #Merge the mulitple prof data into a single indexed profile data file
           llvm-profdata merge -sparse -o ort.profdata *.profraw
           #Create coverage report, output the result to 'report.json'
@@ -41,7 +41,7 @@ jobs:
       displayName: 'Post code coverage data to the Dashboard'
       inputs:
         scriptPath: $(Build.SourcesDirectory)/tools/ci_build/github/windows/post_code_coverage_to_dashboard.py
-        arguments: --commit_hash=$(OnnxRuntimeGitCommitHash) --report_file="$(Build.BinariesDirectory)/report.json" --report_url="https://aiinfra.visualstudio.com/Lotus/_build/results?buildId=$(Build.BuildId)" --branch $(Build.SourceBranchName) --arch $(Agent.OSArchitecture) --os $(Agent.OS) --build_config default
+        arguments: --commit_hash=$(OnnxRuntimeGitCommitHash) --report_file="$(Build.BinariesDirectory)/report.json" --report_url="https://aiinfra.visualstudio.com/Lotus/_build/results?buildId=$(Build.BuildId)" --branch $(Build.SourceBranchName) --arch $(Agent.OSArchitecture) --os $(Agent.OS) --build_config default --database_server 172.19.0.7
         workingDirectory: $(Build.BinariesDirectory)
         pythonInterpreter: '/usr/bin/python3'
       env: 

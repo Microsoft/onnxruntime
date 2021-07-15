@@ -18,7 +18,7 @@ def parse_arguments():
     parser.add_argument("--size_data_file", help="Path to file that contains the binary size data")
     parser.add_argument("--ignore_db_error", action='store_true',
                         help="Ignore database errors while executing this script")
-
+    parser.add_argument("--database_server", help="The hostname or ip address of the database server")
     return parser.parse_args()
 
 # Assumes size_data_file is a csv file with a header line, containing binary sizes and other attributes
@@ -53,7 +53,7 @@ def write_to_db(binary_size_data, args):
     cnx = mysql.connector.connect(
         user='ort@onnxruntimedashboard',
         password=os.environ.get('DASHBOARD_MYSQL_ORT_PASSWORD'),
-        host='onnxruntimedashboard.mysql.database.azure.com',
+        host=args.database_server,
         database='onnxruntime')
 
     try:

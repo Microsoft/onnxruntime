@@ -1471,7 +1471,7 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
                          source_dir, 'cmake\\codeconv.runsettings')] + executables,
                     cwd=cwd2, dll_path=dll_path)
             else:
-                executables = ['onnxruntime_test_all']
+                executables = ['onnxruntime_test_all', 'onnxruntime_mlas_test']
                 if args.build_shared_lib:
                     executables.append('onnxruntime_shared_lib_test')
                     executables.append('onnxruntime_global_thread_pools_test')
