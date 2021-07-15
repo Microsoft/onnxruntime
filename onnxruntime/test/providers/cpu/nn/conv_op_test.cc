@@ -24,7 +24,7 @@ void TestConvOp(const ConvOpAndTestAttributes& attributes,
                 const vector<vector<int64_t>>& input_shapes,
                 const std::initializer_list<float>& expected_output,
                 const vector<int64_t>& expected_output_shape,
-                bool weight_is_initializer = false,
+                bool weight_is_initializer = true,
                 OpTester::ExpectResult expect_result = OpTester::ExpectResult::kExpectSuccess,
                 const std::string& err_str = "",
                 int opset = 7) {
