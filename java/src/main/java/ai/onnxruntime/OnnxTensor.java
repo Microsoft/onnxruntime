@@ -78,6 +78,7 @@ public class OnnxTensor implements OnnxValue {
           return getFloat(OnnxRuntime.ortApiHandle, nativeHandle, info.onnxType.value);
         case DOUBLE:
           return getDouble(OnnxRuntime.ortApiHandle, nativeHandle);
+        case UINT8:
         case INT8:
           return getByte(OnnxRuntime.ortApiHandle, nativeHandle, info.onnxType.value);
         case INT16:
@@ -738,6 +739,7 @@ public class OnnxTensor implements OnnxValue {
         case DOUBLE:
           tmp = buffer.asDoubleBuffer().put((DoubleBuffer) data);
           break;
+        case UINT8:
         case INT8:
           // buffer is already a ByteBuffer, no cast needed.
           tmp = buffer.put((ByteBuffer) data);

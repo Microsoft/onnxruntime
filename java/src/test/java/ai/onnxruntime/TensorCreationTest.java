@@ -4,6 +4,7 @@
  */
 package ai.onnxruntime;
 
+import java.nio.ByteBuffer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -78,6 +79,18 @@ public class TensorCreationTest {
         try (OnnxTensor t = OnnxTensor.createTensor(env, d)) {
           Assertions.assertEquals(d, t.getValue());
         }
+      }
+    }
+  }
+
+  @Test
+  public void testUint8Creation() throws OrtException {
+    try (OrtEnvironment env = OrtEnvironment.getEnvironment()) {
+      byte[] buf = new byte[] {0, 1};
+      ByteBuffer data = ByteBuffer.wrap(buf);
+      long[] shape = new long[] {2};
+      try (OnnxTensor t = OnnxTensor.createTensor(env, data, shape, OnnxJavaType.UINT8)) {
+        Assertions.assertArrayEquals(buf, (byte[]) t.getValue());
       }
     }
   }

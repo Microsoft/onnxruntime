@@ -80,6 +80,8 @@ public class TensorInfo implements ValueInfo {
           return OnnxTensorType.ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE;
         case INT8:
           return OnnxTensorType.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+        case UINT8:
+          return OnnxTensorType.ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
         case INT16:
           return OnnxTensorType.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
         case INT32:
@@ -175,6 +177,7 @@ public class TensorInfo implements ValueInfo {
         return OrtUtil.newFloatArray(shape);
       case DOUBLE:
         return OrtUtil.newDoubleArray(shape);
+      case UINT8:
       case INT8:
         return OrtUtil.newByteArray(shape);
       case INT16:

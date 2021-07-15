@@ -16,9 +16,10 @@ public enum OnnxJavaType {
   INT64(6, long.class, 8),
   BOOL(7, boolean.class, 1),
   STRING(8, String.class, 4),
+  UINT8(9, byte.class, 1),
   UNKNOWN(0, Object.class, 0);
 
-  private static final OnnxJavaType[] values = new OnnxJavaType[9];
+  private static final OnnxJavaType[] values = new OnnxJavaType[10];
 
   static {
     for (OnnxJavaType ot : OnnxJavaType.values()) {
@@ -62,6 +63,7 @@ public enum OnnxJavaType {
   public static OnnxJavaType mapFromOnnxTensorType(OnnxTensorType onnxValue) {
     switch (onnxValue) {
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+        return OnnxJavaType.UINT8;
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
         return OnnxJavaType.INT8;
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:

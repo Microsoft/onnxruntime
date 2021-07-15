@@ -401,6 +401,7 @@ public final class OrtUtil {
         double[] doubleArr = new double[1];
         doubleArr[0] = (Double) data;
         return doubleArr;
+      case UINT8:
       case INT8:
         byte[] byteArr = new byte[1];
         byteArr[0] = (Byte) data;

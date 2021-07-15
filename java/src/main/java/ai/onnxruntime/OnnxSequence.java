@@ -100,6 +100,7 @@ public class OnnxSequence implements OnnxValue {
           list.addAll(Arrays.asList(strings));
           return list;
         case BOOL:
+        case UINT8:
         case INT8:
         case INT16:
         case INT32:

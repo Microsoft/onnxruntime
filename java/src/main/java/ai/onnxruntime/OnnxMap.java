@@ -77,6 +77,7 @@ public class OnnxMap implements OnnxValue {
           return OnnxMapValueType.LONG;
         case STRING:
           return OnnxMapValueType.STRING;
+        case UINT8:
         case INT8:
         case INT16:
         case INT32:
