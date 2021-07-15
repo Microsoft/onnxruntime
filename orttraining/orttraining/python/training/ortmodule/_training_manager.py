@@ -25,32 +25,6 @@ class TrainingManager(GraphExecutionManager):
         super().__init__(model)
         self._export_mode = torch.onnx.TrainingMode.TRAINING
 
-    @staticmethod
-    def execution_session_run_forward(execution_session, onnx_model, device, *inputs):
-        """Runs the forward graph on execution_session with given model inputs and device"""
-
-        # Assert that the input and model device match
-        _utils._check_same_device(device, "Input argument to forward", *inputs)
-
-        # TODO: Try to reuse the output buffers as some of the output tensors are same sizes,
-        #   especially the backward graph outputs.
-        # REVIEW(codemzs): Consolidate Training Agent with InferenceAgent on C++ side to not
-        # have the need for passing IOBinding.
-        state = C.PartialGraphExecutionState()
-        forward_inputs = C.OrtValueVector()
-        forward_inputs.reserve(len(inputs))
-        for input in inputs:
-            forward_inputs.push_back(to_dlpack(input), input.dtype == torch.bool)
-
-        forward_outputs = C.OrtValueVector()
-        # Run and return module outputs.
-        execution_session.run_forward(forward_inputs, forward_outputs, state)
-        user_outputs = tuple(_utils._ortvalue_to_torch_tensor(forward_output) for forward_output in forward_outputs)
-
-        output_info = [(output.shape, output.device, output.dtype) for output in user_outputs]
-        run_info = RunStateInfo(state, output_info)
-        # Return user outputs and forward run information
-        return user_outputs, run_info
 
     def forward(self, *inputs, **kwargs):
         '''Forward pass starts here and continues at `_ORTModuleFunction.forward`
@@ -106,10 +80,7 @@ class TrainingManager(GraphExecutionManager):
                 Module outputs are returned to the user
                 '''
 
-                user_outputs, ctx.run_info = TrainingManager.execution_session_run_forward(self._execution_agent,
-                                                                                           self._optimized_onnx_model,
-                                                                                           self._device,
-                                                                                           *inputs)
+                user_outputs, ctx.run_info = self._execution_agent.forward(*inputs)
 
                 # Disable materializing grads then None object will not be
                 # converted to a tensor filled with zeros prior to calling backward.
@@ -130,39 +101,12 @@ class TrainingManager(GraphExecutionManager):
                 '''Performs backward pass based on grad wrt module output'''
 
                 assert ctx.run_info is not None, 'forward() or __call__() methods must be called before backward()'
-                _utils._check_same_device(self._device, "Input argument to backward", *grad_outputs)
 
                 # Unpack saved_tensor to trigger version detection that catches inplace corruption
                 _ = ctx.saved_tensors
 
-                # Use IO binding
-                # Push user output grads to ONNX backend.
-                backward_inputs = C.OrtValueVector()
-                # Preallocate length of the vector. And then delete as required towards the end.
-                backward_inputs.reserve(len(grad_outputs))
-                for idx, grad_output in enumerate(grad_outputs):
-                    if idx in self._graph_info.output_grad_indices_non_differentiable:
-                        assert grad_output is None, "ORT found the {}-th module output '{}' is " \
-                                                    "non-differentiable according to the onnx graph. " \
-                                                    "However, the gradient value is still provided by " \
-                                                    "PyTorch's autograd engine." \
-                                                    .format(idx, self._graph_info.user_output_names[idx])
-                        continue
+                backward_outputs = self._execution_agent.backward(ctx.run_info, *grad_outputs)
 
-                    if grad_output is None:
-                        shape, device, dtype = ctx.run_info.output_info[idx]
-                        if idx in self._graph_info.output_grad_indices_require_full_shape:
-                            grad_output = torch.zeros(shape, device=device, dtype=dtype)
-                        else:
-                            grad_output = torch.tensor(0., device=device, dtype=dtype)
-                    elif not grad_output.is_contiguous():
-                        grad_output = grad_output.contiguous()
-                    backward_inputs.push_back(to_dlpack(grad_output), grad_output.dtype == torch.bool)
-                backward_inputs.shrink_to_fit()
-
-                # Run and get results
-                backward_outputs = C.OrtValueVector()
-                self._execution_agent.run_backward(backward_inputs, backward_outputs, ctx.run_info.state)
                 # Destroy the state immediately (as opposed to be at the mercy of garbage collector) so it does not
                 # affect peak memory usage in a subsequent graph run.
                 del ctx.run_info.state
@@ -174,27 +118,23 @@ class TrainingManager(GraphExecutionManager):
                 for input_name in self._graph_info.user_input_names:
                     # Append to the results the backward output for each input that required grad
                     if input_name in require_grad_names_set:
-                        results.append(_utils._torch_tensor_from_dl_pack(
-                            backward_outputs.dlpack_at(require_grad_names_index),
-                            backward_outputs[require_grad_names_index]))
+                        results.append(backward_outputs[require_grad_names_index])
                         require_grad_names_index += 1
                     else:
                         # input_name is not found in the self._input_info.require_grad_names list
                         # Append None to results for each input that did not require grad
                         results.append(None)
-
+                assert require_grad_names_index == num_user_input_grads
                 # Append gradients of initializer to results
                 # Go over each initializer, check if it required grad and append to results accordingly
                 initializer_index = num_user_input_grads
                 for initializer_name in self._graph_info.initializer_names:
                     if initializer_name in self._graph_initializer_names_to_train:
-                        results.append(_utils._torch_tensor_from_dl_pack(
-                            backward_outputs.dlpack_at(initializer_index),
-                            backward_outputs[initializer_index]))
+                        results.append(backward_outputs[initializer_index])
                         initializer_index += 1
                     else:
                         results.append(None)
-
+                assert initializer_index == len(backward_outputs)
                 return tuple(results)
 
         return _io.unflatten_user_output(self._module_output_schema,
@@ -222,25 +162,8 @@ class TrainingManager(GraphExecutionManager):
         """Creates a TrainingAgent that can run the forward and backward graph on the training model"""
 
         session_options, providers, provider_options = self._get_session_config()
-        fw_feed_names = [input.name for input in self._optimized_onnx_model.graph.input]
-        fw_outputs_device_info = [
-            C.OrtDevice(get_ort_device_type(self._device.type),
-                        C.OrtDevice.default_memory(),
-                        _utils.get_device_index(self._device)
-            )] * len(self._graph_info.user_output_names)
-
-        bw_fetches_names = [output.name for output in self._optimized_onnx_model.graph.output]
-        bw_outputs_device_info = [
-            C.OrtDevice(get_ort_device_type(self._device.type),
-                        C.OrtDevice.default_memory(),
-                        _utils.get_device_index(self._device)
-            )] * len(bw_fetches_names)
-
-        self._execution_agent = TrainingAgent(self._optimized_onnx_model.SerializeToString(),
-                                              fw_feed_names,
-                                              fw_outputs_device_info,
-                                              bw_fetches_names,
-                                              bw_outputs_device_info,
+        self._execution_agent = TrainingAgent(self._optimized_onnx_model,
+                                              self._device,
                                               session_options,
                                               providers,
                                               provider_options)
