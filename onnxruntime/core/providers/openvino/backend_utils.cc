@@ -99,11 +99,6 @@ struct static_cast_int64 {
 
 std::shared_ptr<InferenceEngine::CNNNetwork>
 CreateCNNNetwork(const ONNX_NAMESPACE::ModelProto& model_proto, const GlobalContext& global_context, const SubGraphContext& subgraph_context, std::map<std::string, std::shared_ptr<ngraph::Node>>& const_outputs_map) {
-#if defined OPENVINO_2020_3
-  ORT_UNUSED_PARAMETER(const_outputs_map);
-#endif
-
-  std::istringstream model_stream{model_proto.SerializeAsString()};
   std::shared_ptr<ngraph::Function> ng_function;
 
 #ifndef NDEBUG
@@ -112,6 +107,9 @@ CreateCNNNetwork(const ONNX_NAMESPACE::ModelProto& model_proto, const GlobalCont
   }
 #endif
 
+#if (defined OPENVINO_2020_3) || (defined OPENVINO_2021_1) || (defined OPENVINO_2021_2) || (defined OPENVINO_2021_3)
+  ORT_UNUSED_PARAMETER(const_outputs_map);
+  std::istringstream model_stream{model_proto.SerializeAsString()};
   try {
     ng_function = ngraph::onnx_import::import_onnx_model(model_stream);
     LOGS_DEFAULT(INFO) << "ONNX Import Done";
@@ -120,6 +118,21 @@ CreateCNNNetwork(const ONNX_NAMESPACE::ModelProto& model_proto, const GlobalCont
   } catch (...) {
     ORT_THROW(log_tag + "[OpenVINO-EP] Unknown exception while importing model to nGraph Func");
   }
+#else
+  //ReadNetwork() API flow will be used in OpenVINO-EP starting from OpenVINO 2021.4
+  InferenceEngine::CNNNetwork cnn_network;
+  const std::string model = model_proto.SerializeAsString();
+  InferenceEngine::Blob::Ptr blob = {nullptr};
+  try {
+    cnn_network = global_context.ie_core.ReadNetwork(model, blob);
+    LOGS_DEFAULT(INFO) << "Read network Done";
+  } catch (const Exception& e) {
+    ORT_THROW(log_tag + "[OpenVINO-EP] Exception while Reading network: " + std::string(e.what()));
+  } catch (...) {
+    ORT_THROW(log_tag + "[OpenVINO-EP] Unknown exception while Reading network");
+  }
+  ng_function = cnn_network.getFunction();
+#endif
 
   if (global_context.device_type.find("GPU") != std::string::npos &&
       subgraph_context.precision == InferenceEngine::Precision::FP16) {
@@ -318,6 +331,10 @@ void FillOutputsWithConstantData(Ort::CustomOpApi& ort, std::shared_ptr<ngraph::
     }
     case ngraph::element::Type_t::i64: {
       FillOutputHelper<int64_t>(ort, out_tensor, node);
+      break;
+    }
+    case ngraph::element::Type_t::f16: {
+      FillOutputHelper<float>(ort, out_tensor, node);
       break;
     }
     default:

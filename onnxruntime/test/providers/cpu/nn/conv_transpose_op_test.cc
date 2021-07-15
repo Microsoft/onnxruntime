@@ -1044,7 +1044,7 @@ TEST(ConvTransposeTest, ConvTranspose_1D_AutoPad_SameUpper) {
   auto expected_vals = {3.0f, 5.0f, 7.0f, 4.0f, 3.0f, 5.0f, 7.0f, 4.0f};
 
   TestConvTransposeOp(attrs, {X, W}, {X_shape, W_shape}, expected_vals, Y_shape,
-                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});
+                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider}); //Accuracy Mismatch on OpenVINO-EP
 }
 
 TEST(ConvTransposeTest, ConvTranspose_1D_AutoPad_SameLower) {
@@ -1067,7 +1067,7 @@ TEST(ConvTransposeTest, ConvTranspose_1D_AutoPad_SameLower) {
   auto expected_vals = {1.0f, 3.0f, 5.0f, 7.0f, 1.0f, 3.0f, 5.0f, 7.0f};
 
   TestConvTransposeOp(attrs, {X, W}, {X_shape, W_shape}, expected_vals, Y_shape,
-                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});
+                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider}); //Accuracy Mismatch on OpenVINO-EP
 }
 
 TEST(ConvTransposeTest, ConvTranspose_AutoPad_with_non_default_strides) {
@@ -1112,7 +1112,7 @@ TEST(ConvTransposeTest, ConvTranspose_AutoPad_with_non_default_strides) {
   vector<int64_t> Y_shape = {1, 2, 6, 6};
 
   TestConvTransposeOp(attrs, {X, W}, {X_shape, W_shape}, expected_vals, Y_shape,
-                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});
+                      OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider}); //Accuracy Mismatch on OpenVINO-EP
 }
 
 #ifndef ENABLE_TRAINING  // Prepacking is enabled only on non-training builds

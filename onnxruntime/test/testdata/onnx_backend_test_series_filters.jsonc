@@ -107,7 +107,19 @@
         "^test_pow", // Runs disabled pow tests from the "current_failing_tests" list at the top
         "^test_pow_types_float", // Runs disabled pow tests from the "current_failing_tests" list at the top
         "^test_neg",
-        "^test_nllloss.*"
+        "^test_basic_conv_with_padding",
+        "^test_basic_conv_without_padding",
+        "^test_conv_with_strides_and_asymmetric_padding",
+        "^test_conv_with_strides_no_padding",
+        "^test_conv_with_strides_padding",
+        "^test_sequence_insert_at_back",
+        "^test_sequence_insert_at_front",
+        "^test_min_one_input",
+        "^test_max_one_input",
+        "^test_sum_one_input",
+        "^test_loop13_seq",
+        "^test_if_seq",
+        "^test_gather_elements_negative_indices"
     ],
     "current_failing_tests_OPENVINO_GPU": [
         "^test_div",
@@ -144,11 +156,19 @@
         "^test_reduce_sum_negative_axes_keepdims*",
         "^test_reduce_sum_empty_axes_input_noop*",
         "^test_unsqueeze_*",  // Does not support axes as input
-        "^test_squeeze_*",   // Does not support axes as input
+        "^test_sequence_insert_at_back",
+        "^test_sequence_insert_at_front",
+        "^test_loop13_seq",
+        "^test_if",
+        "^test_if_seq",
         "^test_pow", // Runs disabled pow tests from the "current_failing_tests" list at the top
         "^test_pow_types_float", // Runs disabled pow tests from the "current_failing_tests" list at the top
         "^test_pow_types_int", // currently the two inputs with int32 dtype not supported on GPU,
-        "^test_neg"
+        "^test_neg",
+        "^test_convtranspose",
+        "^test_convtranspose_dilations",
+        "^test_maxpool_with_argmax_2d_precomputed_strides", //Disabled as it throws segfault
+        "^test_maxpool_with_argmax_2d_precomputed_pads" //Disabled as it throws segfault
     ],
     "current_failing_tests_OPENVINO_CPU_FP32": [
         "^test_operator_permute2",

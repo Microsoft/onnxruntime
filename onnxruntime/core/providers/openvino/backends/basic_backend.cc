@@ -277,10 +277,13 @@ void BasicBackend::Infer(Ort::CustomOpApi& ort, OrtKernelContext* context) {
     LOGS_DEFAULT(INFO) << log_tag << "Inference successful";
   } else {
       //Requesting for an idle infer_request from a pool of infer_requests_
-      std::shared_ptr<InferenceEngine::InferRequest> infer_request = inferRequestsQueue_->getIdleRequest();
-      if (!infer_request) {
-        LOGS_DEFAULT(INFO) << "No idle Infer Requests found from the infer_requests_ pool!";
-        THROW_IE_EXCEPTION << "No idle Infer Requests!";
+      std::shared_ptr<InferenceEngine::InferRequest> infer_request;
+      try {
+      infer_request = inferRequestsQueue_->getIdleRequest();
+	    } catch (const Exception& e) {
+      ORT_THROW(log_tag + " No idle Infer Requests found from the infer_requests_ pool! " + e.what());
+	    } catch (...) {
+      ORT_THROW(log_tag + "No idle Infer Requests!");
       }
       StartAsyncInference(ort, context, infer_request);
       CompleteAsyncInference(ort, context, infer_request);

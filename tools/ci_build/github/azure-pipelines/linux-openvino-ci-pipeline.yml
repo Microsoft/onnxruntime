@@ -3,7 +3,7 @@ jobs:
   parameters:
     AgentPool : 'Linux-CPU-2019'
     JobName: 'Linux_CI_Dev'
-    RunDockerBuildArgs: '-o ubuntu20.04 -d openvino -v 2021.3 -x "--use_openvino CPU_FP32 --build_wheel"'
+    RunDockerBuildArgs: '-o ubuntu20.04 -d openvino -v 2021.4 -x "--use_openvino CPU_FP32 --build_wheel"'
     DoNugetPack:  'false'
     ArtifactName: 'drop-linux'
     TimeoutInMinutes: 120
