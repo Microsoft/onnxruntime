@@ -287,6 +287,98 @@ static inline void RegisterExecutionProvider(InferenceSession* sess, onnxruntime
   OrtPybindThrowIfError(sess->RegisterExecutionProvider(std::move(p)));
 }
 
+#ifdef USE_CUDA
+static inline void RegisterCudaExecutionProvider(InferenceSession* sess, const ProviderOptionsMap& provider_options_map) {
+  if (auto* cuda_provider_info = TryGetProviderInfo_CUDA()) {
+    const auto it = provider_options_map.find(kCudaExecutionProvider);
+    CUDAExecutionProviderInfo info{};
+    if (it != provider_options_map.end())
+      cuda_provider_info->CUDAExecutionProviderInfo__FromProviderOptions(it->second, info);
+    else {
+      info.device_id = cuda_device_id;
+      info.gpu_mem_limit = gpu_mem_limit;
+      info.arena_extend_strategy = arena_extend_strategy;
+      info.cudnn_conv_algo_search = cudnn_conv_algo_search;
+      info.do_copy_in_default_stream = do_copy_in_default_stream;
+      info.external_allocator_info = external_allocator_info;
+    }
+
+    // This variable is never initialized because the APIs by which is it should be initialized are deprecated, however they still
+    // exist are are in-use. Neverthless, it is used to return CUDAAllocator, hence we must try to initialize it here if we can
+    // since FromProviderOptions might contain external CUDA allocator.
+    external_allocator_info = info.external_allocator_info;
+
+#ifdef ENABLE_TRAINING
+    // For training, CUDA EPs are created per device
+    // Multiple ORTModule instances will share the CUDA EP for the same physical device
+    static std::unordered_map<CUDAExecutionProviderInfo, std::shared_ptr<IExecutionProvider>,
+                              CUDAExecutionProviderInfoHash, CUDAExecutionProviderInfoEqual>
+        cuda_eps;
+    if (cuda_eps.find(info) == cuda_eps.end()) {
+      auto cuda_ep_factory = cuda_provider_info->CreateExecutionProviderFactory(info);
+      cuda_eps[info] = std::move(cuda_ep_factory->CreateProvider());
+    }
+    OrtPybindThrowIfError(sess->RegisterExecutionProvider(cuda_eps[info]));
+#else
+    RegisterExecutionProvider(sess, *cuda_provider_info->CreateExecutionProviderFactory(info));
+#endif  // ENABLE_TRAINING
+
+  } else {
+    if (!Env::Default().GetEnvironmentVar("CUDA_PATH").empty()) {
+      ORT_THROW("CUDA_PATH is set but CUDA wasn't able to be loaded. Please install the correct version of CUDA and cuDNN as mentioned in the GPU requirements page, make sure they're in the PATH, and that your GPU is supported.");
+    }
+  }
+}
+#endif  // USE_CUDA
+
+#ifdef USE_ROCM
+static inline void RegisterRocmExecutionProvider(InferenceSession* sess, const ProviderOptionsMap& provider_options_map) {
+  const auto it = provider_options_map.find(kRocmExecutionProvider);
+  const ROCMExecutionProviderInfo info =
+      it != provider_options_map.end()
+          ? ROCMExecutionProviderInfo::FromProviderOptions(it->second)
+          : [&]() {
+              ROCMExecutionProviderInfo info{};
+              info.device_id = cuda_device_id;
+              info.gpu_mem_limit = gpu_mem_limit;
+              info.arena_extend_strategy = arena_extend_strategy;
+              info.external_allocator_info = external_allocator_info;
+              return info;
+            }();
+
+  // This variable is never initialized because the APIs by which is it should be initialized are deprecated, however they still
+  // exist are are in-use. Neverthless, it is used to return CUDAAllocator, hence we must try to initialize it here if we can
+  // since FromProviderOptions might contain external CUDA allocator.
+  external_allocator_info = info.external_allocator_info;
+
+#ifdef ENABLE_TRAINING
+  // For training, Rocm EPs are created per device
+  // Multiple ORTModule instances will share the EP for the same physical device
+  static std::unordered_map<ROCMExecutionProviderInfo, std::shared_ptr<IExecutionProvider>,
+                            ROCMExecutionProviderInfoHash, ROCMExecutionProviderInfoEqual>
+      rocm_eps;
+  if (rocm_eps.find(info) == rocm_eps.end()) {
+    auto rocm_ep_factory = onnxruntime::CreateExecutionProviderFactory_ROCM(info);
+    rocm_eps[info] = std::move(rocm_ep_factory->CreateProvider());
+  }
+  OrtPybindThrowIfError(sess->RegisterExecutionProvider(rocm_eps[info]));
+#else
+  RegisterExecutionProvider(sess, *onnxruntime::CreateExecutionProviderFactory_ROCM(info));
+#endif  // ENABLE_TRAINING
+}
+#endif  // USE_ROCM
+
+using RegisterFunc = void (*)(InferenceSession*, const ProviderOptionsMap&);
+
+static std::unordered_map<std::string, RegisterFunc> EP_register_func_map = {
+#ifdef USE_CUDA
+    {kCudaExecutionProvider, RegisterCudaExecutionProvider},
+#endif
+#ifdef USE_ROCM
+    {kRocmExecutionProvider, RegisterRocmExecutionProvider}
+#endif
+};
+
 static std::unique_ptr<onnxruntime::IExecutionProvider> LoadExecutionProvider(
     const std::string& ep_shared_lib_path,
     const ProviderOptions& provider_options = {}) {
@@ -470,55 +562,13 @@ static void RegisterExecutionProviders(InferenceSession* sess, const std::vector
 #endif
     } else if (type == kCudaExecutionProvider) {
 #ifdef USE_CUDA
-      if(auto* cuda_provider_info = TryGetProviderInfo_CUDA())
-      {
-        const auto it = provider_options_map.find(type);
-        CUDAExecutionProviderInfo info{};
-        if (it != provider_options_map.end())
-          cuda_provider_info->CUDAExecutionProviderInfo__FromProviderOptions(it->second, info);
-        else {
-          info.device_id = cuda_device_id;
-          info.gpu_mem_limit = gpu_mem_limit;
-          info.arena_extend_strategy = arena_extend_strategy;
-          info.cudnn_conv_algo_search = cudnn_conv_algo_search;
-          info.do_copy_in_default_stream = do_copy_in_default_stream;
-          info.external_allocator_info = external_allocator_info;
-        }
-
-        // This variable is never initialized because the APIs by which is it should be initialized are deprecated, however they still
-        // exist are are in-use. Neverthless, it is used to return CUDAAllocator, hence we must try to initialize it here if we can
-        // since FromProviderOptions might contain external CUDA allocator.
-        external_allocator_info = info.external_allocator_info;
-        RegisterExecutionProvider(sess, *cuda_provider_info->CreateExecutionProviderFactory(info));
-      }
-      else
-      {
-        if(!Env::Default().GetEnvironmentVar("CUDA_PATH").empty()) {
-          ORT_THROW("CUDA_PATH is set but CUDA wasn't able to be loaded. Please install the correct version of CUDA and cuDNN as mentioned in the GPU requirements page, make sure they're in the PATH, and that your GPU is supported.");
-        }
-      }
+      RegisterFunc func = EP_register_func_map[type];
+      func(sess, provider_options_map);
 #endif
     } else if (type == kRocmExecutionProvider) {
 #ifdef USE_ROCM
-      const auto it = provider_options_map.find(type);
-      const ROCMExecutionProviderInfo info =
-          it != provider_options_map.end()
-              ? ROCMExecutionProviderInfo::FromProviderOptions(it->second)
-              : [&]() {
-                  ROCMExecutionProviderInfo info{};
-                  info.device_id = cuda_device_id;
-                  info.gpu_mem_limit = gpu_mem_limit;
-                  info.arena_extend_strategy = arena_extend_strategy;
-                  info.external_allocator_info = external_allocator_info;
-                  return info;
-                }();
-
-      // This variable is never initialized because the APIs by which is it should be initialized are deprecated, however they still
-      // exist are are in-use. Neverthless, it is used to return CUDAAllocator, hence we must try to initialize it here if we can
-      // since FromProviderOptions might contain external CUDA allocator.
-      external_allocator_info = info.external_allocator_info;
-      RegisterExecutionProvider(
-          sess, *onnxruntime::CreateExecutionProviderFactory_ROCM(info));
+      RegisterFunc func = EP_register_func_map[type];
+      func(sess, provider_options_map);
 #endif
     } else if (type == kDnnlExecutionProvider) {
 #ifdef USE_DNNL

@@ -167,7 +167,7 @@ class InferenceSession {
     * Calling this API is optional in which case onnxruntime will use its internal CPU execution provider.
     * @return OK if success.
     */
-  common::Status RegisterExecutionProvider(std::unique_ptr<IExecutionProvider> p_exec_provider) ORT_MUST_USE_RESULT;
+  common::Status RegisterExecutionProvider(std::shared_ptr<IExecutionProvider> p_exec_provider) ORT_MUST_USE_RESULT;
 
 #if !defined(ORT_MINIMAL_BUILD)
   /**

@@ -38,7 +38,7 @@ ROCMExecutionProviderInfo ROCMExecutionProviderInfo::FromProviderOptions(const P
               [&alloc](const std::string& value_str) -> Status {
                 size_t address;
                 ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, address));
-                alloc  = reinterpret_cast<void*>(address);
+                alloc = reinterpret_cast<void*>(address);
                 return Status::OK();
               })
           .AddValueParser(
@@ -46,10 +46,10 @@ ROCMExecutionProviderInfo ROCMExecutionProviderInfo::FromProviderOptions(const P
               [&free](const std::string& value_str) -> Status {
                 size_t address;
                 ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, address));
-                free  = reinterpret_cast<void*>(address);
+                free = reinterpret_cast<void*>(address);
                 return Status::OK();
               })
-	  .AddValueParser(
+          .AddValueParser(
               rocm::provider_option_names::kDeviceId,
               [&info](const std::string& value_str) -> Status {
                 ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, info.device_id));
@@ -62,7 +62,7 @@ ROCMExecutionProviderInfo ROCMExecutionProviderInfo::FromProviderOptions(const P
                     "Invalid device ID: ", info.device_id,
                     ", must be between 0 (inclusive) and ", num_devices, " (exclusive).");
                 return Status::OK();
-              }) 
+              })
           .AddAssignmentToReference(rocm::provider_option_names::kMemLimit, info.gpu_mem_limit)
           .AddAssignmentToReference(rocm::provider_option_names::kConvExhaustiveSearch, info.miopen_conv_exhaustive_search)
           .AddAssignmentToEnumReference(
@@ -89,4 +89,5 @@ ProviderOptions ROCMExecutionProviderInfo::ToProviderOptions(const ROCMExecution
 
   return options;
 }
+
 }  // namespace onnxruntime

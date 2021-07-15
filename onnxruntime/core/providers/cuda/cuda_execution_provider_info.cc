@@ -101,4 +101,5 @@ ProviderOptions CUDAExecutionProviderInfo::ToProviderOptions(const CUDAExecution
 
   return options;
 }
+
 }  // namespace onnxruntime

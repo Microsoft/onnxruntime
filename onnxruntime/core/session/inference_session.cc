@@ -401,7 +401,7 @@ InferenceSession::~InferenceSession() {
 #endif
 }
 
-common::Status InferenceSession::RegisterExecutionProvider(std::unique_ptr<IExecutionProvider> p_exec_provider) {
+common::Status InferenceSession::RegisterExecutionProvider(std::shared_ptr<IExecutionProvider> p_exec_provider) {
   if (p_exec_provider == nullptr) {
     return Status(common::ONNXRUNTIME, common::FAIL, "Received nullptr for exec provider");
   }

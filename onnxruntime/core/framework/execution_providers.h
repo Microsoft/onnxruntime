@@ -22,7 +22,7 @@ class ExecutionProviders {
  public:
   ExecutionProviders() = default;
 
-  common::Status Add(const std::string& provider_id, std::unique_ptr<IExecutionProvider> p_exec_provider) {
+  common::Status Add(const std::string& provider_id, std::shared_ptr<IExecutionProvider> p_exec_provider) {
     // make sure there are no issues before we change any internal data structures
     if (provider_idx_map_.find(provider_id) != provider_idx_map_.end()) {
       auto status = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Provider ", provider_id, " has already been registered.");
@@ -69,7 +69,7 @@ class ExecutionProviders {
 
   size_t NumProviders() const { return exec_providers_.size(); }
 
-  using const_iterator = typename std::vector<std::unique_ptr<IExecutionProvider>>::const_iterator;
+  using const_iterator = typename std::vector<std::shared_ptr<IExecutionProvider>>::const_iterator;
   const_iterator begin() const noexcept { return exec_providers_.cbegin(); }
   const_iterator end() const noexcept { return exec_providers_.cend(); }
 
@@ -89,7 +89,7 @@ class ExecutionProviders {
   // with a container that has unique_ptr or something move-only.
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ExecutionProviders);
 
-  std::vector<std::unique_ptr<IExecutionProvider>> exec_providers_;
+  std::vector<std::shared_ptr<IExecutionProvider>> exec_providers_;
   std::vector<std::string> exec_provider_ids_;
   ProviderOptionsMap exec_provider_options_;
 
