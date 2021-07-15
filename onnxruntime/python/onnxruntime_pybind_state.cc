@@ -30,6 +30,7 @@
 
 #ifdef ENABLE_TRAINING
 #include "orttraining/training_ops/cpu/aten_ops/aten_op_executor.h"
+#include "orttraining/core/graph/aten_op_gradient.h"
 
 #ifdef ENABLE_TRAINING_TORCH_INTEROP
 #include "core/language_interop_ops/torch/custom_function_register.h"
@@ -819,13 +820,21 @@ void addGlobalMethods(py::module& m, Environment& env) {
         }
       });
 #ifdef ENABLE_TRAINING
-  m.def(
-      "register_aten_op_executor", [](const std::string& aten_op_executor_address_str) -> void {
-        size_t aten_op_executor_address_int;
-        ORT_THROW_IF_ERROR(ParseStringWithClassicLocale(aten_op_executor_address_str, aten_op_executor_address_int));
-        void* p_aten_op_executor = reinterpret_cast<void*>(aten_op_executor_address_int);
-        contrib::aten_ops::ATenOperatorExecutor::Initialize(p_aten_op_executor);
-      });
+  m.def("register_aten_op_executor",
+        [](const std::string& is_tensor_argument_address_str, const std::string& aten_op_executor_address_str,
+           const std::string& get_gradient_definition_address_str) -> void {
+          size_t is_tensor_argument_address_int, aten_op_executor_address_int, get_gradient_definition_address_int;
+          ORT_THROW_IF_ERROR(
+              ParseStringWithClassicLocale(is_tensor_argument_address_str, is_tensor_argument_address_int));
+          ORT_THROW_IF_ERROR(ParseStringWithClassicLocale(aten_op_executor_address_str, aten_op_executor_address_int));
+          ORT_THROW_IF_ERROR(
+              ParseStringWithClassicLocale(get_gradient_definition_address_str, get_gradient_definition_address_int));
+          void* p_is_tensor_argument = reinterpret_cast<void*>(is_tensor_argument_address_int);
+          void* p_aten_op_executor = reinterpret_cast<void*>(aten_op_executor_address_int);
+          void* p_get_gradient_definition = reinterpret_cast<void*>(get_gradient_definition_address_int);
+          contrib::aten_ops::ATenOperatorExecutor::Initialize(p_is_tensor_argument, p_aten_op_executor);
+          training::ATenOpGradientDefinitionGetter::Initialize(p_get_gradient_definition);
+        });
   m.def("register_forward_runner", [](py::object obj) -> void {
 #ifdef ENABLE_TRAINING_TORCH_INTEROP
     auto& pool = onnxruntime::language_interop_ops::torch::OrtTorchFunctionPool::GetInstance();

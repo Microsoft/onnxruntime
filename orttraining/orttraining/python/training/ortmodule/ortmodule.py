@@ -4,6 +4,7 @@
 # --------------------------------------------------------------------------
 
 from ._torch_module_factory import TorchModuleFactory
+from . import torch_cpp_extensions as _cpp_ext
 
 from onnxruntime.training import register_custom_ops_pytorch_exporter
 
@@ -47,6 +48,7 @@ class ORTModule(torch.nn.Module):
 
         # Support contrib OPs
         register_custom_ops_pytorch_exporter.register_custom_op(is_ortmodule=True)
+        _cpp_ext._register_custom_op_symbolic_for_aten_op()
 
     # IMPORTANT: DO NOT add code here
     # This declaration is for automatic document generation purposes only

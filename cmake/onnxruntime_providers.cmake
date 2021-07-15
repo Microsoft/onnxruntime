@@ -225,8 +225,6 @@ if (onnxruntime_ENABLE_TRAINING)
   # DLPack is a header-only dependency
   set(DLPACK_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/external/dlpack/include)
   target_include_directories(onnxruntime_providers PRIVATE ${DLPACK_INCLUDE_DIR})
-
-  target_link_libraries(onnxruntime_providers PRIVATE nlohmann_json::nlohmann_json)
 endif()
 
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/../include/onnxruntime/core/providers/cpu  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/onnxruntime/core/providers)

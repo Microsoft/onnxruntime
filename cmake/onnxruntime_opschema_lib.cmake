@@ -9,7 +9,6 @@ set (TRAINING_OPS_DIR ${ORTTRAINING_ROOT}/orttraining/core/graph)
 file(GLOB_RECURSE contrib_ops_schema_src
    "${CONTRIB_OPS_DIR}/*.cc"
    "${TRAINING_OPS_DIR}/training_op_defs.cc"
-   "${ORTTRAINING_ROOT}/orttraining/training_ops/cpu/aten_ops/aten_op_config.cc"
 )
 
 # The nchwc op schemas are platform-specific and not currently required.

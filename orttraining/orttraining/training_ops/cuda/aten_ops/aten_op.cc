@@ -10,11 +10,7 @@ namespace cuda {
 
 ONNX_OPERATOR_KERNEL_EX(ATenOp, kMSDomain, 1, kCudaExecutionProvider,
                         (*KernelDefBuilder::Create()).TypeConstraint("T", DataTypeImpl::AllTensorAndSequenceTensorTypes()),
-                        onnxruntime::contrib::ATenOpForward);
-
-ONNX_OPERATOR_KERNEL_EX(ATenOpGrad, kMSDomain, 1, kCudaExecutionProvider,
-                        (*KernelDefBuilder::Create()).TypeConstraint("T", DataTypeImpl::AllTensorAndSequenceTensorTypes()),
-                        onnxruntime::contrib::ATenOpBackward);
+                        onnxruntime::contrib::ATenOp);
 
 }  // namespace cuda
 }  // namespace onnxruntime

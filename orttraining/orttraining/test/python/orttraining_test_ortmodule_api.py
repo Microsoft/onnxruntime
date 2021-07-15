@@ -693,7 +693,7 @@ def test_gradient_correctness_maxpool2d():
         _test_helpers.assert_values_are_close(ort_prediction, pt_prediction)
         _test_helpers.assert_gradients_match_and_reset_gradient(ort_model, pt_model, rtol=5e-3, atol=4e-3)
 
-def test_gradient_correctness_unfold():
+def test_gradient_correctness_argmax_unfold():
     class NeuralNetUnfold(torch.nn.Module):
         def __init__(self, input_size, hidden_size, unfold_dim, unfold_size, unfold_step):
             super(NeuralNetUnfold, self).__init__()
@@ -703,7 +703,8 @@ def test_gradient_correctness_unfold():
             self.unfold_step = unfold_step
 
         def forward(self, input):
-            return self.linear(input).unfold(dimension=self.unfold_dim, size=self.unfold_size, step=self.unfold_step)
+            return self.linear(input.argmax(-1).to(torch.float) * input.argmax().to(torch.float)).unfold(
+                dimension=self.unfold_dim, size=self.unfold_size, step=self.unfold_step)
 
     N, D, H = 16, 256, 128
     device = 'cuda'
@@ -717,7 +718,7 @@ def test_gradient_correctness_unfold():
         return prediction
 
     for _ in range(10):
-        input = torch.randn(N, D, device=device)
+        input = torch.randint(0, 100, (N, D, H), dtype=torch.uint8, device=device)
         pt_prediction = run_step(pt_model, input)
         ort_prediction = run_step(ort_model, input)
 

@@ -12,10 +12,6 @@
 #include "onnx/defs/function.h"
 #include "orttraining/core/framework/distributed_run_context.h"
 
-#ifdef ENABLE_TRAINING
-#include "orttraining/training_ops/cpu/aten_ops/aten_op_config.h"
-#endif
-
 namespace onnxruntime {
 namespace training {
 
@@ -2805,53 +2801,20 @@ Return true if all elements are true and false otherwise.
               /*is_homogeneous*/ false,
               /*min_arity*/ 1)
       .Attr("name", "Name of ATen operator.", AttributeProto::STRING)
-      .Attr("custom_attributes_json", "custom attributes in JSON format.", AttributeProto::STRING, false)
+      .Attr("overload_name", "Overload name of ATen operator.", AttributeProto::STRING, false)
+      .Attr("output_types", "Output types of ATenOp's gradient op.", AttributeProto::INTS, false)
       .TypeConstraint("T", OpSchema::all_tensor_types(), "Allow inputs and outputs to be any kind of tensor.")
       .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
-        const auto name_proto = ctx.getAttribute("name");
-        ORT_ENFORCE(name_proto, "ATenOp's must have \"name\" attribute.");
-        const std::string& name = name_proto->s();
-        const auto* op_config_ptr = contrib::aten_ops::ATenOperatorConfigs::Instance().GetConfig(name);
-        ORT_ENFORCE(op_config_ptr, "ATen Op config for ", name, " is not found.");
-        const auto& op_config = *op_config_ptr;
-        ORT_ENFORCE(ctx.getNumOutputs() == op_config.forward_output_type_infer_configs.size());
-
-        // Set inferred output types.
-        for (size_t i = 0; i < ctx.getNumOutputs(); ++i) {
-          int type_config = std::get<1>(op_config.forward_output_type_infer_configs[i]);
-          if (std::get<0>(op_config.forward_output_type_infer_configs[i]) == contrib::aten_ops::PROPAGATE_FROM_INPUT) {
-            propagateElemTypeFromInputToOutput(ctx, static_cast<size_t>(type_config), i);
-          } else {
-            updateOutputElemType(ctx, i, type_config);
-          }
-        }
-      });
-
-  ONNX_CONTRIB_OPERATOR_SCHEMA(ATenOpGrad)
-      .SetDomain(kMSDomain)
-      .SinceVersion(1)
-      .SetSupportLevel(OpSchema::SupportType::EXPERIMENTAL)
-      .SetDoc("ATenOpGrad.")
-      .Input(0, "inputs", "Inputs of ATenOp's gradient op.", "T", OpSchema::Variadic,
-             /*is_homogeneous*/ false,
-             /*min_arity*/ 1)
-      .Output(0, "outputs", "Outputs of ATenOp's gradient op.", "T", OpSchema::Variadic,
-              /*is_homogeneous*/ false,
-              /*min_arity*/ 1)
-      .Attr("name", "Name of ATen operator, should be same as its corresponding forward op.", AttributeProto::STRING)
-      .Attr("output_types", "Output types of ATenOp's gradient op.", AttributeProto::INTS)
-      .Attr("custom_attributes_json", "custom attributes in JSON format.", AttributeProto::STRING, false)
-      .TypeConstraint("T", OpSchema::all_tensor_types(), "Allow inputs and outputs to be any kind of tensor.")
-      .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
-        // Load expected output types.
+        // Load and set output types if there is attribute 'output_type'.
+        // This is usually set in gradient nodes to help resolving graph.
         const auto output_types_proto = ctx.getAttribute("output_types");
-        // This is a required field.
-        ORT_ENFORCE(output_types_proto, "ATenOpGrad's must have \"output_types\" attribute.");
-        ORT_ENFORCE(static_cast<size_t>(output_types_proto->ints_size()) == ctx.getNumOutputs(),
-                    "ATenOpGrad's output list and \"output_types\" attribute should have same length.");
-        // Set inferred output types.
-        for (size_t i = 0; i < ctx.getNumOutputs(); ++i) {
-          updateOutputElemType(ctx, i, static_cast<int>(output_types_proto->ints(static_cast<int>(i))));
+        if (output_types_proto) {
+          ORT_ENFORCE(static_cast<size_t>(output_types_proto->ints_size()) == ctx.getNumOutputs(),
+                      "ATenOpGrad's output list and \"output_types\" attribute should have same length.");
+          // Set inferred output types.
+          for (size_t i = 0; i < ctx.getNumOutputs(); ++i) {
+            updateOutputElemType(ctx, i, static_cast<int>(output_types_proto->ints(static_cast<int>(i))));
+          }
         }
       });
 #endif

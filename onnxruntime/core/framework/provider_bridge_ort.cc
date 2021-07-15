@@ -898,8 +898,7 @@ struct ProviderHostImpl : ProviderHost {
 #endif
 
 #ifdef ENABLE_TRAINING
-  void ATenOpBase__Init(contrib::ATenOpBase* p, const OpKernelInfo& info, bool is_backward) override { return p->ATenOpBase::Init(info, is_backward); }
-  Status ATenOpBase__Compute(const contrib::ATenOpBase* p, OpKernelContext* p_ctx) override { return p->ATenOpBase::Compute(p_ctx); }
+  Status ATenOp__Compute(const contrib::ATenOp* p, OpKernelContext* p_ctx) override { return p->ATenOp::Compute(p_ctx); }
   void contrib__record_event_in_tensor(const Tensor& event_id_tensor) override { return contrib::record_event_in_tensor(event_id_tensor); }
   void contrib__wait_event_in_tensor(const Tensor& event_id_tensor) override { return contrib::wait_event_in_tensor(event_id_tensor); }
   Status contrib__Group__Compute(const contrib::Group* p, OpKernelContext* context) override { return p->Group::Compute(context); }

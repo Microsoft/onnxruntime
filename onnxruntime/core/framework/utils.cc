@@ -21,7 +21,7 @@
 #include "core/framework/TensorSeq.h"
 #ifdef ENABLE_TRAINING
 #include "core/framework/orttraining_partial_executor.h"
-#include "orttraining/training_ops/cpu/aten_ops/aten_op_config.h"
+#include "orttraining/training_ops/cpu/aten_ops/aten_op_executor.h"
 #endif
 
 namespace ONNX_NAMESPACE {
@@ -736,13 +736,16 @@ bool IsInputOnCpu(const Node& node, const KernelCreateInfo* p_kci, size_t index)
   }
 
 #ifdef ENABLE_TRAINING
-  if (node.GetExecutionProviderType() == kCudaExecutionProvider &&
-      (node.OpType() == "ATenOp" || node.OpType() == "ATenOpGrad")) {
-    const std::string name = node.GetAttributes().at("name").s();
-    const auto* op_config_ptr = contrib::aten_ops::ATenOperatorConfigs::Instance().GetConfig(name);
-    if (op_config_ptr) {
-      return op_config_ptr->IsInputOnCpu(index, node.OpType() == "ATenOpGrad");
+  if (node.GetExecutionProviderType() == kCudaExecutionProvider && node.OpType() == "ATenOp") {
+    const auto& attrs = node.GetAttributes();
+    ORT_ENFORCE(utils::HasString(attrs.at("name")));
+    std::string op_name = attrs.at("name").s();
+    std::string overload_name = "";
+    if (attrs.find("overload_name") != attrs.end() && utils::HasString(attrs.at("overload_name"))) {
+      overload_name = attrs.at("overload_name").s();
     }
+
+    return !contrib::aten_ops::ATenOperatorExecutor::Instance().IsTensorArgument(op_name, overload_name, index);
   }
 #else
   ORT_UNUSED_PARAMETER(node);

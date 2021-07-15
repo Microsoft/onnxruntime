@@ -65,6 +65,11 @@ if (onnxruntime_ENABLE_TRAINING OR onnxruntime_ENABLE_TRAINING_OPS)
     target_include_directories(onnxruntime_framework PUBLIC ${MPI_CXX_INCLUDE_DIRS})
   endif()
 endif()
+if (onnxruntime_ENABLE_TRAINING)
+  # DLPack is a header-only dependency
+  set(DLPACK_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/external/dlpack/include)
+  target_include_directories(onnxruntime_framework PRIVATE ${DLPACK_INCLUDE_DIR})
+endif()
 onnxruntime_add_include_to_target(onnxruntime_framework onnxruntime_common onnx onnx_proto ${PROTOBUF_LIB} flatbuffers)
 set_target_properties(onnxruntime_framework PROPERTIES FOLDER "ONNXRuntime")
 # need onnx to build to create headers that this project includes

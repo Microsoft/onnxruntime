@@ -10,6 +10,7 @@
 #include "orttraining/core/graph/graph_augmenter.h"
 #include "orttraining/core/graph/gradient_config.h"
 #include "orttraining/core/graph/recompute_graph_utils.h"
+#include "orttraining/core/graph/aten_op_gradient.h"
 #include "onnx/defs/attr_proto_util.h"
 #include "onnx/defs/tensor_proto_util.h"
 
@@ -294,8 +295,8 @@ class GradientBuilderBase {
 
   const std::string& NodeName() const { return node_->Name(); }
 
-  ArgDef HandleATenOpGradInput(const ArgDef& source_arg_def, const std::string& transform_func,
-                               std::vector<NodeDef>& output) const;
+  AttributeProto AttributeDefinitionToAttributeProto(const std::string& name,
+                                                     const AttributeDefinition& attr_def) const;
 
  private:
   friend class GradientGraphBuilder;

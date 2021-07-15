@@ -7,7 +7,6 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper, shape_inference
 import sympy
-import json
 
 from packaging import version
 assert version.parse(onnx.__version__) >= version.parse("1.5.0")
@@ -189,6 +188,7 @@ class SymbolicShapeInference:
             'aten::embedding': self._infer_Gather,
             'aten::max_pool2d_with_indices': self._infer_aten_max_pool2d,
             'aten::unfold': self._infer_aten_unfold,
+            'aten::argmax': self._infer_aten_argmax,
         }
         self.run_ = True
         self.suggested_merge_ = {}
@@ -1015,20 +1015,48 @@ class SymbolicShapeInference:
                                               get_shape_from_sympy_shape(sympy_shape)))
 
     def _infer_aten_unfold(self, node):
-        attr_values = json.loads(get_attribute(node, 'custom_attributes_json'))
-        dimension = attr_values['dimension']
-        size = attr_values['size']
-        step = attr_values['step']
         sympy_shape = self._get_sympy_shape(node, 0)
-        assert dimension < len(sympy_shape)
-        sympy_shape[dimension] = (sympy_shape[dimension] - size) // step + 1
-        sympy_shape.append(size)
+        dimension = self._try_get_value(node, 1)
+        size = self._try_get_value(node, 2)
+        step = self._try_get_value(node, 3)
+        if dimension is not None and size is not None and step is not None:
+            assert dimension < len(sympy_shape)
+            sympy_shape[dimension] = (sympy_shape[dimension] - size) // step + 1
+            sympy_shape.append(size)
+        else:
+            rank = len(sympy_shape)
+            sympy_shape = self._new_symbolic_shape(rank + 1, node)
         self._update_computed_dims(sympy_shape)
         if node.output[0]:
             vi = self.known_vi_[node.output[0]]
             vi.CopyFrom(
                 helper.make_tensor_value_info(node.output[0], self.known_vi_[node.input[0]].type.tensor_type.elem_type,
                                               get_shape_from_sympy_shape(sympy_shape)))
+
+    def _infer_aten_argmax(self, node):
+        new_shape = None
+        if node.input[1] == '':
+            # The argmax of the flattened input is returned.
+            new_shape = []
+        else:
+            dim = self._try_get_value(node, 1)
+            keepdim = self._try_get_value(node, 2)
+            if keepdim is not None:
+                sympy_shape = self._get_sympy_shape(node, 0)
+                if dim is not None:
+                    dim = handle_negative_axis(dim, len(sympy_shape))
+                    if keepdim:
+                        sympy_shape[dim] = 1
+                    else:
+                        del sympy_shape[dim]
+                else:
+                    rank = len(sympy_shape)
+                    sympy_shape = self._new_symbolic_shape(rank if keepdim else rank - 1, node)
+                self._update_computed_dims(sympy_shape)
+                new_shape = get_shape_from_sympy_shape(sympy_shape)
+        if node.output[0] and new_shape is not None:
+            vi = self.known_vi_[node.output[0]]
+            vi.CopyFrom(helper.make_tensor_value_info(node.output[0], onnx.TensorProto.INT64, new_shape))
 
     def _infer_BatchNormalization(self, node):
         self._propagate_shape_and_type(node)
