@@ -27,20 +27,20 @@ Status BatchNormReplacement::Apply(Graph& graph, Node& bn_node, RewriteRuleEffec
   if (bn_outputs.size() == 3) {
     NodeArg& saved_mean_def = graph.GetOrCreateNodeArg(graph.GenerateNodeArgName("saved_mean_def"), scale_input_def_type_proto);
     NodeArg& saved_inv_std = graph.GetOrCreateNodeArg(graph.GenerateNodeArgName("saved_inv_std"), scale_input_def_type_proto);
-    bn_outputs.push_back(&saved_inv_std);
     bn_outputs.push_back(&saved_mean_def);
+    bn_outputs.push_back(&saved_inv_std);
   }
 
   // check Batch Normalization node has 5 output node args for training mode
   ORT_ENFORCE(bn_node.OutputDefs().size() == 5);
 
   Node& batchnorm_internal_node = graph.AddNode(graph.GenerateNodeName(bn_node.Name() + "_BatchNormInternal"),
-                                             "BatchNormInternal",
-                                             "BatchNormalization with saved mean/inv_std_dev",
-                                             bn_inputs,
-                                             bn_outputs,
-                                             &bn_node.GetAttributes(),
-                                             kMSDomain);
+                                                "BatchNormInternal",
+                                                "BatchNormalization with saved mean/inv_std",
+                                                bn_inputs,
+                                                bn_outputs,
+                                                &bn_node.GetAttributes(),
+                                                kMSDomain);
   batchnorm_internal_node.AddAttribute("training_mode", static_cast<int64_t>(1));
   // Assign provider to this new node. Provider should be same as the provider for old node.
   batchnorm_internal_node.SetExecutionProviderType(bn_node.GetExecutionProviderType());

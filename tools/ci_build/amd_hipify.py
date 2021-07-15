@@ -199,6 +199,8 @@ training_ops_excluded_files = [
                     'math/softmax_grad.cc',
                     'nn/batch_norm_grad.cc',
                     'nn/batch_norm_grad.h',
+                    'nn/batch_norm_internal.cc',
+                    'nn/batch_norm_internal.h',
                     'nn/conv_grad.cc',
                     'nn/conv_grad.h',
                     'reduction/reduction_all.cc',
