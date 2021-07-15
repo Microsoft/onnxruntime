@@ -856,6 +856,8 @@ if (WIN32)
     # parallel build
     # These compiler opitions cannot be forwarded to NVCC, so cannot use add_compiler_options
     string(APPEND CMAKE_CXX_FLAGS " /MP")
+    # Several external libraries, like protobuf and eigen, directly compare constants with a normal 'if'.
+    list(APPEND ORT_WARNING_FLAGS "/wd4127") # conditional expression is constant
     # class needs to have dll-interface to be used by clients
     list(APPEND ORT_WARNING_FLAGS "/wd4251")
     # issued by thrust nonstandard extension used: nameless struct/union
