@@ -267,7 +267,7 @@ IMLOperatorKernelCreationContext : public IMLOperatorAttributes
     //! For kernels registered with MLOperatorExecutionType::D3D12, executionObject will
     //! support the ID3D12GraphicsCommandList interface.
     STDMETHOD_(void, GetExecutionInterface)(
-        _COM_Outptr_result_maybenull_ IUnknown** executionObject
+        _Outptr_result_maybenull_ IUnknown** executionObject
         ) const noexcept PURE;
 };
  
@@ -308,7 +308,7 @@ IMLOperatorTensor : IUnknown
     //! registered using MLOperatorExecutionType::D3D12.  The dataInterface
     //! object supports the ID3D12Resource interface, and is a GPU buffer.
     STDMETHOD_(void, GetDataInterface)(
-        _COM_Outptr_result_maybenull_ IUnknown** dataInterface
+        _Outptr_result_maybenull_ IUnknown** dataInterface
         ) noexcept PURE;
 };
 

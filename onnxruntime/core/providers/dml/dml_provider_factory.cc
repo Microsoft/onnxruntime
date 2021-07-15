@@ -148,7 +148,7 @@ API_IMPL_END
 }
 
 ORT_API_STATUS_IMPL(OrtSessionOptionsAppendExecutionProviderEx_DML, _In_ OrtSessionOptions* options,
-                    IDMLDevice* dml_device, ID3D12CommandQueue* cmd_queue) {
+                    _In_ IDMLDevice* dml_device, _In_ ID3D12CommandQueue* cmd_queue) {
 API_IMPL_BEGIN
   options->provider_factories.push_back(onnxruntime::CreateExecutionProviderFactory_DML(dml_device,
                                                                                         cmd_queue));

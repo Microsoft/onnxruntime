@@ -44,8 +44,8 @@ namespace Dml
     }
 
     static void CreateDmlKernelRegistry(
-        _Outptr_ std::shared_ptr<onnxruntime::KernelRegistry>* registry,
-        _Outptr_ std::shared_ptr<const InternalRegistrationInfoMap>* internalRegInfoMap)
+        _Out_ std::shared_ptr<onnxruntime::KernelRegistry>* registry,
+        _Out_ std::shared_ptr<const InternalRegistrationInfoMap>* internalRegInfoMap)
     {
         ComPtr<AbiCustomRegistry> abiRegistry = wil::MakeOrThrow<AbiCustomRegistry>();
         Dml::RegisterDmlOperators(abiRegistry.Get());
@@ -187,12 +187,16 @@ namespace Dml
 
     HRESULT __stdcall ExecutionProviderImpl::GetD3DDevice(_COM_Outptr_ ID3D12Device** d3dDevice) const noexcept
     {
-        return m_d3d12Device.CopyTo(d3dDevice);
+        m_d3d12Device.CopyTo(d3dDevice);
+        _Analysis_assume_(*d3dDevice != NULL);
+        return S_OK;
     }
 
     HRESULT __stdcall ExecutionProviderImpl::GetDmlDevice(_COM_Outptr_ IDMLDevice** dmlDevice) const noexcept
     {
-        return m_dmlDevice.CopyTo(dmlDevice);
+        m_dmlDevice.CopyTo(dmlDevice);
+        _Analysis_assume_(*dmlDevice != NULL);
+        return S_OK;
     }
 
     HRESULT __stdcall ExecutionProviderImpl::ExecuteCommandList(

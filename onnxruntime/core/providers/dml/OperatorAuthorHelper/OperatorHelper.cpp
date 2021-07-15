@@ -1091,13 +1091,13 @@ namespace OperatorHelper
 
             ML_CHECK_VALID_ARGUMENT(inputShape.size() == dimensionCount, "Mismatch between input tensor shape and string equation label count.");
 
-            for (uint32_t i = 0; i < dimensionCount; ++i)
+            for (uint32_t j = 0; j < dimensionCount; ++j)
             {
                 // If this is the first time seeing this label, then record the size.
                 // Otherwise any following occurrences of the label must match sizes.
                 // e.g. Given "ij,ji", both i's and both j's must match dimension sizes.
-                uint32_t dimensionSize = inputShape[i];
-                uint32_t labelIndex = labelIndices[i];
+                uint32_t dimensionSize = inputShape[j];
+                uint32_t labelIndex = labelIndices[j];
                 assert(labelIndex < labelSizes.size());
 
                 if (labelSizes[labelIndex] == INT_MIN)

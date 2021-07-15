@@ -52,22 +52,22 @@ namespace GraphKernelHelper
         const Dml::GraphDescBuilder::GraphDesc& graphDesc,
         const onnxruntime::ConstPointerContainer<std::vector<onnxruntime::NodeArg*>>& fusedNodeInputDefs,
         _Out_ std::vector<bool>& inputsUsed,
-        _Out_ std::vector<DML_BUFFER_BINDING>& initInputBindings,
-        _Out_ std::vector<ComPtr<ID3D12Resource>>& initInputResources,
-        _Out_ std::vector<ComPtr<ID3D12Resource>>& nonOwnedGraphInputsFromInitializers,
-        _Out_ std::vector<ComPtr<ID3D12Resource>>& initializeResourceRefs,
-        _Out_opt_ std::vector<std::vector<std::byte>>* inputRawData,
+        _Inout_ std::vector<DML_BUFFER_BINDING>& initInputBindings,
+        _Inout_ std::vector<ComPtr<ID3D12Resource>>& initInputResources,
+        _Inout_ std::vector<ComPtr<ID3D12Resource>>& nonOwnedGraphInputsFromInitializers,
+        _Inout_ std::vector<ComPtr<ID3D12Resource>>& initializeResourceRefs,
+        _Inout_opt_ std::vector<std::vector<std::byte>>* inputRawData,
         _Inout_ std::unordered_map<std::string, onnx::TensorProto>& transferredInitializerMap);
 
     void ConvertGraphDesc(
         const Dml::GraphDescBuilder::GraphDesc& graphDesc,
         _Out_ DML_GRAPH_DESC& dmlGraphDesc,
         const onnxruntime::OpKernelInfo& kernelInfo,
-        _Out_ std::vector<DML_OPERATOR_GRAPH_NODE_DESC>& dmlOperatorGraphNodes,
-        _Out_ std::vector<DML_GRAPH_NODE_DESC>& dmlGraphNodes,
-        _Out_ std::vector<DML_GRAPH_EDGE_DESC>& dmlInputEdges,
-        _Out_ std::vector<DML_GRAPH_EDGE_DESC>& dmlOutputEdges,
-        _Out_ std::vector<DML_GRAPH_EDGE_DESC>& dmlIntermediateEdges);
+        _Inout_ std::vector<DML_OPERATOR_GRAPH_NODE_DESC>& dmlOperatorGraphNodes,
+        _Inout_ std::vector<DML_GRAPH_NODE_DESC>& dmlGraphNodes,
+        _Inout_ std::vector<DML_GRAPH_EDGE_DESC>& dmlInputEdges,
+        _Inout_ std::vector<DML_GRAPH_EDGE_DESC>& dmlOutputEdges,
+        _Inout_ std::vector<DML_GRAPH_EDGE_DESC>& dmlIntermediateEdges);
 
     std::string GetFusedNodeArgNameMatchingGraph(const std::string& fusedNodeArgeName);
     

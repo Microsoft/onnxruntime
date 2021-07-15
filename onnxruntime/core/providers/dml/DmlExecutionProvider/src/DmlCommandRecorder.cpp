@@ -166,7 +166,8 @@ void DmlCommandRecorder::ExecuteOperator(
     m_operationsRecordedInCurrentCommandList = true;
 
     // Barrier all outputs.
-    m_currentCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::UAV(nullptr));
+    #pragma warning(suppress: 6387)
+        m_currentCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::UAV(nullptr));
 }
 
 void DmlCommandRecorder::CopyBufferRegion(
@@ -234,7 +235,8 @@ void DmlCommandRecorder::FillBufferWithPattern(
     m_operationsRecordedInCurrentCommandList = true;
 
     // Barrier all outputs.
-    m_currentCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::UAV(nullptr));
+    #pragma warning(suppress: 6387)
+        m_currentCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::UAV(nullptr));
 }
 
 void DmlCommandRecorder::ExecuteCommandList(
@@ -296,7 +298,8 @@ void DmlCommandRecorder::ResourceBarrier(gsl::span<const D3D12_RESOURCE_BARRIER>
 
 void DmlCommandRecorder::AddUAVBarrier()
 {
-    auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    #pragma warning(suppress: 6387)
+        auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
     m_currentCommandList->ResourceBarrier(1, &barrier);
     m_operationsRecordedInCurrentCommandList = true; 
 }
