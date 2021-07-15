@@ -515,6 +515,8 @@ Status Attention<T>::Compute(OpKernelContext* context) const {
         }
 
         int weights_offset = 0;
+        // q_hidden_size is same as k_hidden_size hence, qkv_index can be 2 and q_hidden_size
+        // is good enough for an estimate
         int bias_offset = qkv_index * q_hidden_size + head_index * head_size_passed_in;
 
         if (q_packed_weights_ == nullptr) {

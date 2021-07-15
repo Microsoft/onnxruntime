@@ -503,6 +503,10 @@ and present state are optional. Present state could appear in output even when p
             "Whether every token can only attend to previous tokens. Default value is 0.",
             AttributeProto::INT,
             static_cast<int64_t>(0))
+      .Attr("qkv_hidden_sizes",
+            "Hidden layer sizes of Q, K, V paths in Attention",
+            AttributeProto::INTS,
+            OPTIONAL_VALUE)
       .Input(
           0,
           "input",

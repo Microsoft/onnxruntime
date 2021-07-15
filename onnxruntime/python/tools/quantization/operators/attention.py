@@ -32,6 +32,7 @@ class AttentionQuant(QuantOperatorBase):
         inputs.extend([node.input[3] if len(node.input) > 3 else ""])
         inputs.extend(zero_point_names)
         inputs.extend([node.input[4] if len(node.input) > 4 else ""])
+        inputs.extend([node.input[5] if len(node.input) > 5 else ""])
 
         kwargs = {}
         for attribute in node.attribute:

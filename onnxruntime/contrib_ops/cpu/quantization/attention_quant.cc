@@ -21,6 +21,8 @@ class QAttention : public OpKernel, public AttentionCPUBase {
  public:
   QAttention(const OpKernelInfo& info);
 
+  bool IsPackWeightsSuccessful(int qkv_index, AllocatorPtr alloc, size_t head_size, size_t input_hidden_size, const uint8_t* weights_data, size_t weight_matrix_col_size, PrePackedWeights* prepacked_weights);
+
   Status Compute(OpKernelContext* context) const override;
 
   Status PrePack(const Tensor& tensor, int input_idx, AllocatorPtr alloc,
@@ -32,8 +34,14 @@ class QAttention : public OpKernel, public AttentionCPUBase {
                                    /*out*/ bool& used_shared_buffers) override;
 
  private:
-  BufferUniquePtr packed_weights_;
-  size_t packed_weights_size_;
+  BufferUniquePtr q_packed_weights_;
+  BufferUniquePtr k_packed_weights_;
+  BufferUniquePtr v_packed_weights_;
+
+  size_t q_packed_weights_size_ = 0;
+  size_t k_packed_weights_size_ = 0;
+  size_t v_packed_weights_size_ = 0;
+
   TensorShape weight_shape_;
   bool weights_is_signed_;
 };
@@ -56,6 +64,72 @@ template <typename T>
 QAttention<T>::QAttention(const OpKernelInfo& info) : OpKernel(info), AttentionCPUBase(info) {}
 
 template <typename T>
+bool QAttention<T>::IsPackWeightsSuccessful(int qkv_index,
+                                AllocatorPtr alloc,
+                                size_t head_size,
+                                size_t input_hidden_size,
+                                const uint8_t* weights_data,
+                                size_t weight_matrix_col_size,
+                                /*out*/ PrePackedWeights* prepacked_weights) {
+  size_t packb_size = MlasGemmPackBSize(head_size, input_hidden_size, weights_is_signed_);
+  if (packb_size == 0) {
+    return false;
+  }
+
+  size_t loop_len = static_cast<size_t>(1) * num_heads_;
+  size_t packed_weights_data_size = packb_size * loop_len;
+  auto* packed_weights_data = static_cast<uint8_t*>(alloc->Alloc(packed_weights_data_size));
+
+  // Initialize memory to 0 as there could be some padding associated with pre-packed
+  // buffer memory and we don not want it uninitialized and generate different hashes
+  // if and when we try to cache this pre-packed buffer for sharing between sessions.
+  memset(packed_weights_data, 0, packed_weights_data_size);
+
+  switch (qkv_index) {
+    case 0:
+      q_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      q_packed_weights_size_ = packb_size;
+      break;
+    case 1:
+      k_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      k_packed_weights_size_ = packb_size;
+      break;
+    case 2:
+      v_packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
+      v_packed_weights_size_ = packb_size;
+      break;
+    default:
+      return false;
+  }
+
+  for (size_t i = 0; i < loop_len; i++) {
+    MlasGemmPackB(head_size, input_hidden_size, weights_data, weight_matrix_col_size, weights_is_signed_, packed_weights_data);
+    packed_weights_data += packb_size;
+    weights_data += head_size;
+  }
+
+  bool share_prepacked_weights = (prepacked_weights != nullptr);
+  if (share_prepacked_weights) {
+    switch (qkv_index) {
+      case 0:
+        prepacked_weights->buffers_.push_back(std::move(q_packed_weights_));
+        break;
+      case 1:
+        prepacked_weights->buffers_.push_back(std::move(k_packed_weights_));
+        break;
+      case 2:
+        prepacked_weights->buffers_.push_back(std::move(v_packed_weights_));
+        break;
+      default:
+        break;
+    }
+
+    prepacked_weights->buffer_sizes_.push_back(packed_weights_data_size);
+  }
+  return true;
+}
+
+template <typename T>
 Status QAttention<T>::PrePack(const Tensor& weights, int input_idx, AllocatorPtr alloc,
                               /*out*/ bool& is_packed,
                               /*out*/ PrePackedWeights* prepacked_weights) {
@@ -73,41 +147,43 @@ Status QAttention<T>::PrePack(const Tensor& weights, int input_idx, AllocatorPtr
   const size_t hidden_size_x3 = static_cast<size_t>(weights_dims[1]);
   const size_t hidden_size = hidden_size_x3 / 3;
   const size_t head_size = hidden_size / num_heads_;
+  size_t q_hidden_size, k_hidden_size, v_hidden_size;
 
-  // Bail out if the weights shape has an expected shape.
-  if ((hidden_size == 0) || ((hidden_size % num_heads_) != 0) || (hidden_size_x3 != 3 * hidden_size)) {
-    return Status::OK();
+  if (qkv_hidden_sizes_.size() != 0) {
+    q_hidden_size = qkv_hidden_sizes_[0];
+    k_hidden_size = qkv_hidden_sizes_[1];
+    v_hidden_size = qkv_hidden_sizes_[2];
+
+    if (q_hidden_size == 0 || k_hidden_size == 0 || v_hidden_size == 0) {
+      return Status::OK();
+    }
+
+    if (q_hidden_size % num_heads_ != 0 || k_hidden_size % num_heads_ != 0 || v_hidden_size % num_heads_ != 0) {
+      return Status::OK();
+    }
+  } else {
+    if ((hidden_size == 0) || ((hidden_size % num_heads_) != 0) || (hidden_size_x3 != 3 * hidden_size)) {
+      return Status::OK();
+    }
+
+    q_hidden_size = hidden_size;
+    k_hidden_size = hidden_size;
+    v_hidden_size = hidden_size;
   }
 
-  const auto* weights_data = static_cast<const uint8_t*>(weights.DataRaw());
+  const uint8_t* weights_data = static_cast<const uint8_t*>(weights.DataRaw());
   weights_is_signed_ = weights.IsDataType<int8_t>();
 
-  packed_weights_size_ = MlasGemmPackBSize(head_size, input_hidden_size, weights_is_signed_);
-  if (packed_weights_size_ == 0) {
+  const size_t q_head_size = q_hidden_size / num_heads_;
+  const size_t k_head_size = k_hidden_size / num_heads_;
+  const size_t v_head_size = v_hidden_size / num_heads_;
+  const size_t weight_matrix_col_size = q_hidden_size + k_hidden_size + v_hidden_size;
+
+  if (!IsPackWeightsSuccessful(0, alloc, q_head_size, input_hidden_size, weights_data, weight_matrix_col_size, prepacked_weights) ||
+      !IsPackWeightsSuccessful(1, alloc, k_head_size, input_hidden_size, weights_data + (num_heads_ * q_head_size), weight_matrix_col_size, prepacked_weights) ||
+      !IsPackWeightsSuccessful(2, alloc, v_head_size, input_hidden_size, weights_data + (num_heads_ * (q_head_size + k_head_size)), weight_matrix_col_size, prepacked_weights)) {
+    // we are not cleaning up anything, assuming caller takes care of this
     return Status::OK();
-  }
-
-  const size_t loop_len = 3 * num_heads_;
-  size_t packed_weights_data_size = packed_weights_size_ * loop_len;
-  auto* packed_weights_data = static_cast<uint8_t*>(alloc->Alloc(packed_weights_data_size));
-
-  // Initialize memory to 0 as there could be some padding associated with pre-packed
-  // buffer memory and we don not want it uninitialized and generate different hashes
-  // if and when we try to cache this pre-packed buffer for sharing between sessions.
-  memset(packed_weights_data, 0, packed_weights_data_size);
-
-  packed_weights_ = BufferUniquePtr(packed_weights_data, BufferDeleter(alloc));
-
-  for (size_t i = 0; i < loop_len; i++) {
-    MlasGemmPackB(head_size, input_hidden_size, weights_data, hidden_size_x3, weights_is_signed_, packed_weights_data);
-    packed_weights_data += packed_weights_size_;
-    weights_data += head_size;
-  }
-
-  bool share_prepacked_weights = (prepacked_weights != nullptr);
-  if (share_prepacked_weights) {
-    prepacked_weights->buffers_.push_back(std::move(packed_weights_));
-    prepacked_weights->buffer_sizes_.push_back(packed_weights_data_size);
   }
 
   is_packed = true;
@@ -123,7 +199,9 @@ Status QAttention<T>::UseSharedPrePackedBuffers(std::vector<BufferUniquePtr>& pr
   }
 
   used_shared_buffers = true;
-  packed_weights_ = std::move(prepacked_buffers[0]);
+  q_packed_weights_ = std::move(prepacked_buffers[0]);
+  k_packed_weights_ = std::move(prepacked_buffers[1]);
+  v_packed_weights_ = std::move(prepacked_buffers[2]);
 
   return Status::OK();
 }
@@ -144,7 +222,7 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   //   Output 1 - present           : (2, batch_size, num_heads, past_sequence_length + sequence_length, head_size)
   //   ORT_RETURN_IF_ERROR(CheckInputs(context));
   const Tensor* input = context->Input<Tensor>(0);
-  const Tensor* weights = packed_weights_ ? nullptr : context->Input<Tensor>(1);
+  const Tensor* weights = q_packed_weights_ ? nullptr : context->Input<Tensor>(1);
   const Tensor* bias = context->Input<Tensor>(2);
   const Tensor* input_scale_tensor = context->Input<Tensor>(3);
   const Tensor* weight_scale_tensor = context->Input<Tensor>(4);
@@ -152,14 +230,15 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   const Tensor* i_zp_tensor = context->Input<Tensor>(6);
   const Tensor* w_zp_tensor = context->Input<Tensor>(7);
   const Tensor* past_tensor = context->Input<Tensor>(8);
+  const Tensor* extra_add_qk = context->Input<Tensor>(9);
 
-  const TensorShape& weights_shape = (packed_weights_ ? weight_shape_ : weights->Shape());
+  const TensorShape& weights_shape = (q_packed_weights_ ? weight_shape_ : weights->Shape());
   ORT_RETURN_IF_ERROR(AttentionBase::CheckInputs(input->Shape(),
                                                  weights_shape,
                                                  bias->Shape(),
                                                  mask_index,
                                                  past_tensor,
-                                                 nullptr));
+                                                 extra_add_qk));
 
   ORT_RETURN_IF_NOT(IsScalarOr1ElementVector(input_scale_tensor),
                     "input scale must be a scalar or 1D tensor of size 1");
@@ -194,7 +273,16 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   const int input_hidden_size = static_cast<int>(shape[2]);
 
   const auto hidden_size_x3 = weights_shape.GetDims()[1];
-  const int hidden_size = static_cast<int>(hidden_size_x3) / 3;
+
+  int hidden_size;
+
+  if (qkv_hidden_sizes_.size() == 0) {
+    const auto& weights_dims = weights_shape.GetDims();
+    hidden_size = static_cast<int>(weights_dims[1]) / 3;
+  } else {
+    hidden_size = static_cast<int>(qkv_hidden_sizes_[2]);
+  }
+
   const int head_size = hidden_size / num_heads_;
 
   std::vector<int64_t> output_shape(3);
@@ -202,6 +290,24 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   output_shape[1] = shape[1];
   output_shape[2] = static_cast<int64_t>(hidden_size);
   Tensor* output = context->Output(0, output_shape);
+
+  int q_hidden_size = 0;
+  int k_hidden_size = 0;
+  int v_hidden_size = 0;
+  if (qkv_hidden_sizes_.size() == 0) {
+    q_hidden_size = hidden_size;
+    k_hidden_size = hidden_size;
+    v_hidden_size = hidden_size;
+  } else {
+    q_hidden_size = static_cast<int>(qkv_hidden_sizes_[0]);
+    k_hidden_size = static_cast<int>(qkv_hidden_sizes_[1]);
+    v_hidden_size = static_cast<int>(qkv_hidden_sizes_[2]);
+  }
+
+  int q_head_size = q_hidden_size / num_heads_;
+  int k_head_size = k_hidden_size / num_heads_;
+  int v_head_size = v_hidden_size / num_heads_;
+
 
   AllocatorPtr allocator;
   ORT_RETURN_IF_ERROR(context->GetTempSpaceAllocator(&allocator));
@@ -215,8 +321,8 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   BufferUniquePtr gemm_buffer(gemm_data, BufferDeleter(allocator));
 
   auto Q = reinterpret_cast<T*>(gemm_data);
-  auto K = Q + batch_size * sequence_length * hidden_size;
-  auto V = K + batch_size * sequence_length * hidden_size;
+  auto K = Q + batch_size * sequence_length * q_hidden_size;
+  auto V = K + batch_size * sequence_length * k_hidden_size;
   T* QKV[3] = {Q, K, V};
 
   {
@@ -224,12 +330,12 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
     const auto* input_data = input->template Data<uint8_t>();
     const auto* bias_data = bias->template Data<T>();
 
-    const auto* weights_data = packed_weights_ ? nullptr : static_cast<const uint8_t*>(weights->DataRaw());
-    const bool weights_is_signed = packed_weights_ ? weights_is_signed_ : weights->IsDataType<int8_t>();
+    const auto* weights_data = q_packed_weights_ ? nullptr : static_cast<const uint8_t*>(weights->DataRaw());
+    const bool weights_is_signed = q_packed_weights_ ? weights_is_signed_ : weights->IsDataType<int8_t>();
 
     MLAS_GEMM_U8X8_SHAPE_PARAMS gemm_shape;
     gemm_shape.M = sequence_length;
-    gemm_shape.N = head_size;
+    //gemm_shape.N = head_size;
     gemm_shape.K = input_hidden_size;
     gemm_shape.BIsSigned = weights_is_signed;
 
@@ -242,12 +348,33 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
       const int head_index = static_cast<int>((i / 3) % num_heads_);
       const int qkv_index = static_cast<int>(i % 3);
 
+      int head_size_passed_in = 0;
+
+      if (qkv_index == 0) {
+        head_size_passed_in = q_head_size;
+      } else if (qkv_index == 1) {
+        head_size_passed_in = k_head_size;
+      } else {
+        head_size_passed_in = v_head_size;
+      }
+
+      gemm_shape.N = head_size_passed_in;
+
       int input_offset = batch_index * sequence_length * input_hidden_size;
-      int weights_offset = qkv_index * hidden_size + head_index * head_size;
+      int weights_offset = 0;
+       //qkv_index* hidden_size + head_index* head_size;
+      int bias_offset = qkv_index * q_hidden_size + head_index * head_size_passed_in;
+
+      if (q_packed_weights_ == nullptr) {
+        weights_offset = bias_offset;
+      } else {
+        weights_offset = head_index * head_size_passed_in;
+      }
+
       int weights_scale_offset = is_weight_scale_per_column ? weights_offset : 0;
       int weights_zp_offset = is_weight_zp_per_column ? weights_offset : 0;
-      float* qkv_dest = QKV[qkv_index];
-      int qkv_offset = (batch_index * num_heads_ + head_index) * (sequence_length * head_size);
+      T* qkv_dest = QKV[qkv_index];
+      int qkv_offset = (batch_index * num_heads_ + head_index) * (sequence_length * head_size_passed_in);
 
       //                   original           transposed            iteration
       // A: input          (BxSxD)            (B.)S x D             S x D
@@ -255,9 +382,9 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
       // C: QKV[qkv_index] (3xBxNxSxH)        (3.B.N.)S x H         S x H
 
       scale_bias_procs.emplace_back(qkv_dest + qkv_offset,
-                                    head_size,
+                                    head_size_passed_in,
                                     dequant_scales.data() + weights_scale_offset,
-                                    bias_data + weights_offset,
+                                    bias_data + bias_offset,
                                     MLAS_QGEMM_OUTPUT_MODE::ZeroMode,
                                     is_weight_scale_per_column ? MLAS_QUANTIZATION_GRANULARITY::PerColumn : MLAS_QUANTIZATION_GRANULARITY::PerMatrix);
 
@@ -265,19 +392,25 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
       gemm_params.A = input_data + input_offset;
       gemm_params.lda = input_hidden_size;
       gemm_params.ZeroPointA = input_zero_point;
-      if (packed_weights_) {
-        const auto* packed_weight =
-            static_cast<const uint8_t*>(packed_weights_.get()) + packed_weights_size_ * (weights_offset / head_size);
+      if (q_packed_weights_) {
+        uint8_t* packed_weight;
+        if (qkv_index == 0) {
+          packed_weight = static_cast<uint8_t*>(q_packed_weights_.get()) + q_packed_weights_size_ * (weights_offset / head_size_passed_in); 
+        } else if (qkv_index == 1) {
+          packed_weight = static_cast<uint8_t*>(k_packed_weights_.get()) + k_packed_weights_size_ * (weights_offset / head_size_passed_in);
+        } else {
+          packed_weight = static_cast<uint8_t*>(v_packed_weights_.get()) + v_packed_weights_size_ * (weights_offset / head_size_passed_in);
+        }
         gemm_params.B = packed_weight;
         gemm_params.BIsPacked = true;
       } else {
         gemm_params.B = weights_data + weights_offset;
-        gemm_params.ldb = 3 * hidden_size;
+        gemm_params.ldb = q_hidden_size + k_hidden_size + v_hidden_size;
       }
       gemm_params.ZeroPointB = nullptr != weight_zp_data ? weight_zp_data + weights_zp_offset : &weight_zp_default;
       gemm_params.PerColumnZeroPoints = is_weight_zp_per_column;
       gemm_params.C = reinterpret_cast<int32_t*>(qkv_dest + qkv_offset);
-      gemm_params.ldc = head_size;
+      gemm_params.ldc = head_size_passed_in;
       gemm_params.OutputProcessor = &(scale_bias_procs[i]);
     }
 
@@ -287,7 +420,7 @@ Status QAttention<T>::Compute(OpKernelContext* context) const {
   // Compute the attention score and apply the score to V
   return ApplyAttention(Q, K, V, mask_index, past_tensor, output,
                         batch_size, sequence_length,
-                        head_size, head_size, hidden_size, nullptr, context);
+                        q_head_size, v_head_size, v_hidden_size, extra_add_qk, context);
 }
 
 }  // namespace contrib
