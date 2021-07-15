@@ -40,7 +40,7 @@ Status ConcatFromSequence::Compute(OpKernelContext* ctx) const {
     return Status::OK();
 
   // Compute values to be placed in the output tensor
-  return ComputeImpl(p);
+  return ComputeImpl(p, ctx);
 }
 
 }  // namespace onnxruntime

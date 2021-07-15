@@ -48,7 +48,7 @@ Status ConcatTraining::Compute(OpKernelContext* ctx) const {
     }
   }
   // Compute values to be placed in the output tensor
-  return ComputeImpl(p);
+  return ComputeImpl(p, ctx);
 }
 
 }  // namespace contrib

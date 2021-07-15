@@ -38,7 +38,7 @@ class ConcatBase {
       is_stack_ = info.GetAttrOrDefault<int64_t>("new_axis", 0) == 0 ? false : true;
     }
   }
-  Status ComputeImpl(Prepare& p) const;
+  Status ComputeImpl(Prepare& p, OpKernelContext* ctx) const;
 
   int64_t axis_;
   bool is_stack_ = false;

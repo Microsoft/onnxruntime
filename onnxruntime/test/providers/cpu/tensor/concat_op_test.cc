@@ -131,6 +131,25 @@ TEST(ConcatOpTest, Concat2D_4) {
            {kTensorrtExecutionProvider});  //TensorRT: no support for dynamic shape tensor
 }
 
+TEST(ConcatOpTest, Concat2D_5) {
+  OpTester test("Concat");
+  test.AddAttribute("axis", int64_t{0});
+
+  std::vector<int64_t> dims{2, 2};
+  test.AddInput<double>("input1", dims,
+                        {111.0f, 112.0f,
+                         121.0f, 122.0f});
+  test.AddInput<double>("input2", dims,
+                        {211.0f, 212.0f,
+                         221.0f, 222.0f});
+  test.AddOutput<double>("concat_result", {4, 2},
+                         {111.0f, 112.0f,
+                          121.0f, 122.0f,
+                          211.0f, 212.0f,
+                          221.0f, 222.0f});
+  test.Run();
+}
+
 TEST(ConcatOpTest, Concat3D_1) {
   OpTester test("Concat");
   test.AddAttribute("axis", int64_t{0});
@@ -254,6 +273,58 @@ TEST(ConcatOpTest, Concat3D_3) {
                          7.0f, 8.0f,
                          13.0f, 14.0f,
                          15.0f, 16.0f});
+  test.Run();
+}
+
+TEST(ConcatOpTest, Concat3D_4) {
+  OpTester test("Concat");
+  test.AddAttribute("axis", int64_t{2});
+
+  test.AddInput<float>("input1", {1, 3, 3},
+                       {111.0f, 112.0f, 113.0f,
+                        121.0f, 122.0f, 123.0f,
+                        131.0f, 132.0f, 133.0f});
+  test.AddInput<float>("input2", {1, 3, 4},
+                       {211.0f, 212.0f, 213.0f, 214.0f,
+                        221.0f, 222.0f, 223.0f, 224.0f,
+                        231.0f, 232.0f, 233.0f, 234.0f});
+  test.AddInput<float>("input3", {1, 3, 5},
+                       {311.0f, 312.0f, 313.0f, 314.0f, 315.0f,
+                        321.0f, 322.0f, 323.0f, 324.0f, 325.0f,
+                        331.0f, 332.0f, 333.0f, 334.0f, 335.0f});
+  test.AddOutput<float>("concat_result", {1, 3, 12},
+                        {111.0f, 112.0f, 113.0f, 211.0f, 212.0f, 213.0f, 214.0f, 311.0f, 312.0f, 313.0f, 314.0f, 315.0f,
+                         121.0f, 122.0f, 123.0f, 221.0f, 222.0f, 223.0f, 224.0f, 321.0f, 322.0f, 323.0f, 324.0f, 325.0f,
+                         131.0f, 132.0f, 133.0f, 231.0f, 232.0f, 233.0f, 234.0f, 331.0f, 332.0f, 333.0f, 334.0f, 335.0f});
+  test.Run();
+}
+
+TEST(ConcatOpTest, Concat3D_5) {
+  OpTester test("Concat");
+  test.AddAttribute("axis", int64_t{1});
+
+  test.AddInput<float>("input1", {1, 3, 2},
+                       {111.0f, 112.0f,
+                        121.0f, 122.0f,
+                        131.0f, 132.0f});
+  test.AddInput<float>("input2", {1, 2, 2},
+                       {211.0f, 212.0f,
+                        221.0f, 222.0f});
+  test.AddInput<float>("input3", {1, 4, 2},
+                       {311.0f, 312.0f,
+                        321.0f, 322.0f,
+                        331.0f, 332.0f,
+                        341.0f, 342.0f});
+  test.AddOutput<float>("concat_result", {1, 9, 2},
+                        {111.0f, 112.0f,
+                         121.0f, 122.0f,
+                         131.0f, 132.0f,
+                         211.0f, 212.0f,
+                         221.0f, 222.0f,
+                         311.0f, 312.0f,
+                         321.0f, 322.0f,
+                         331.0f, 332.0f,
+                         341.0f, 342.0f});
   test.Run();
 }
 
