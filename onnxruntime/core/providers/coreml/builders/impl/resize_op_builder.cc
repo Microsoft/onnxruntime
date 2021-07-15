@@ -83,7 +83,7 @@ void ResizeOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const N
 Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
                                               const Node& node,
                                               const logging::Logger& logger) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   auto* coreml_upsample = layer->mutable_upsample();
   NodeAttrHelper helper(node);

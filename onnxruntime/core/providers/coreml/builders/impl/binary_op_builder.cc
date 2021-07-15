@@ -30,7 +30,7 @@ Status BinaryOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
   const auto& op_type(node.OpType());
   const auto& input_defs(node.InputDefs());
 
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   if (op_type == "Add") {
     layer->mutable_add();

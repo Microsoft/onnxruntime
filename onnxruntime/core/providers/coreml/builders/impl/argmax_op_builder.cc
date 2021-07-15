@@ -27,7 +27,7 @@ class ArgMaxOpBuilder : public BaseOpBuilder {
 Status ArgMaxOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
                                               const Node& node,
                                               const logging::Logger& /* logger */) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
   const auto& graph_viewer = model_builder.GetGraphViewer();
 
   NodeAttrHelper helper(node);
@@ -46,7 +46,7 @@ Status ArgMaxOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
   if (node.GetOutputEdgesCount() == 1) {
     auto it = node.OutputEdgesBegin();
     const auto* succ_node(graph_viewer.GetNode(it->GetNode().Index()));
-    // If Argmax's successive node is a Cast from int64 to int32 output 
+    // If Argmax's successive node is a Cast from int64 to int32 output
     // The 'cast to' type is checked in operater supported related, omit the check here
     if (succ_node->OpType() == "Cast") {
       // Skip the cast's input/argmax's output

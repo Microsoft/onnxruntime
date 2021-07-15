@@ -24,7 +24,10 @@ class BaseOpBuilder : public IOpBuilder {
   virtual Status AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node,
                                        const logging::Logger& logger) const ORT_MUST_USE_RESULT = 0;
 
-  static std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> CreateNNLayer(const Node& node);
+  static std::unique_ptr<COREML_SPEC::NeuralNetworkLayer>
+  CreateNNLayer(ModelBuilder& model_builder, const Node& node);
+
+  static std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> CreateNNLayer(const std::string& layer_name);
 
   // Operator support related
  public:

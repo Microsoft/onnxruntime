@@ -29,7 +29,7 @@ class ConcatOpBuilder : public BaseOpBuilder {
 Status ConcatOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
                                               const Node& node,
                                               const logging::Logger& logger) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   layer->mutable_concat()->set_sequenceconcat(false);
 

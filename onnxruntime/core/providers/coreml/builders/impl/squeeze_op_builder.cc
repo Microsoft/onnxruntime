@@ -61,7 +61,7 @@ void SqueezeOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const 
 Status SqueezeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
                                                const Node& node,
                                                const logging::Logger& /* logger */) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   auto* coreml_squeeze = layer->mutable_squeeze();
   std::vector<int64_t> axes = GetAxes(model_builder, node);

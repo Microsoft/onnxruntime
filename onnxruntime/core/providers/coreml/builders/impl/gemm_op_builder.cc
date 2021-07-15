@@ -61,7 +61,7 @@ static std::vector<float> GetTensorFloatDataTransposed(const ONNX_NAMESPACE::Ten
 
 Status GemmOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node,
                                             const logging::Logger& /* logger */) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   const auto& op_type = node.OpType();
   const auto& input_defs = node.InputDefs();

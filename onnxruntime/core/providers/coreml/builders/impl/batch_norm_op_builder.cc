@@ -45,7 +45,7 @@ void BatchNormalizationOpBuilder::AddInitializersToSkip(ModelBuilder& model_buil
 Status BatchNormalizationOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder,
                                                           const Node& node,
                                                           const logging::Logger& /* logger */) const {
-  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(node);
+  std::unique_ptr<COREML_SPEC::NeuralNetworkLayer> layer = CreateNNLayer(model_builder, node);
 
   const auto& input_defs = node.InputDefs();
   const auto& initializers(model_builder.GetInitializerTensors());
