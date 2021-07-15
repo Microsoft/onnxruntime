@@ -128,6 +128,7 @@ typedef enum ONNXType {
   ONNX_TYPE_MAP,
   ONNX_TYPE_OPAQUE,
   ONNX_TYPE_SPARSETENSOR,
+  ONNX_TYPE_OPTIONAL
 } ONNXType;
 
 typedef enum OrtLoggingLevel {
@@ -1425,9 +1426,9 @@ struct OrtApi {
   * \param num_keys - number of keys
   */
   ORT_API2_STATUS(UpdateTensorRTProviderOptions, _Inout_ OrtTensorRTProviderOptionsV2* tensorrt_options,
-                 _In_reads_(num_keys) const char* const* provider_options_keys,
-                 _In_reads_(num_keys) const char* const* provider_options_values,
-                 _In_ size_t num_keys);
+                  _In_reads_(num_keys) const char* const* provider_options_keys,
+                  _In_reads_(num_keys) const char* const* provider_options_values,
+                  _In_ size_t num_keys);
 
   /**
   * Get serialized TensorRT provider options string.
@@ -1450,6 +1451,16 @@ struct OrtApi {
   * Enable custom operators in onnxruntime-extensions: https://github.com/microsoft/onnxruntime-extensions.git
   */
   ORT_API2_STATUS(EnableOrtCustomOps, _Inout_ OrtSessionOptions* options);
+
+  /**
+   * \Sets *out to 1 iff an optional type OrtValue has an element, 0 otherwise
+   * Use this API to find if the optional type OrtValue is None or not.
+   * If the optional type Ortvalue has element, use the OrtValue just like
+   * any other OrtValue.
+   * For example, if you get an OrtValue that corresponds to Optional(tensor) and 
+   * if HasElement() returns true, use it as tensor and so on.
+   */
+  ORT_API2_STATUS(HasElement, _In_ const OrtValue* value, _Out_ int* out);
 };
 
 /*

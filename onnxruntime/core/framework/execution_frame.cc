@@ -681,6 +681,16 @@ Status ExecutionFrame::AllocateAsPerAllocationPlan(OrtValue& ort_value, int ort_
                                 *shape, nnz, per_alloc_plan.create_fence_if_async, session_state_);
   } else if (ml_type->IsTensorSequenceType()) {
     return AllocateTensorSequence(ort_value);
+  } else if (ml_type->IsOptionalType()) {
+    AllocKind alloc_kind = per_alloc_plan.alloc_kind;
+    if (alloc_kind == AllocKind::kReuse) {
+      int reuse_mlvalue_index = per_alloc_plan.reused_buffer;
+      ort_value = GetMutableMLValue(reuse_mlvalue_index);
+    }
+
+    // No action needed to "allocate" optional types if not re-using another OrtValue.
+    // They are "allocated" within the ops based on the "runtime" type and shape.
+    return Status::OK();
   } else {
     return AllocateTraditionalMLValue(ort_value, *static_cast<const NonTensorTypeBase*>(ml_type));
   }

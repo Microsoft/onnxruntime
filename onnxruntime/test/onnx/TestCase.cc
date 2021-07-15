@@ -309,6 +309,12 @@ class OnnxTestCase : public ITestCase {
                        onnxruntime::test::HeapBuffer& b,
                        bool is_input, size_t i,
                        std::unordered_map<std::string, Ort::Value>& out) const;
+
+  void ConvertTestData(const ONNX_NAMESPACE::OptionalProto& test_data_pb,
+                       onnxruntime::test::HeapBuffer& b,
+                       bool is_input, size_t i,
+                       std::unordered_map<std::string, Ort::Value>& out) const;
+
   std::once_flag model_parsed_;
   std::once_flag config_parsed_;
   double per_sample_tolerance_;
@@ -441,6 +447,20 @@ static void LoadSequenceTensor(const PATH_STRING_TYPE& pb_file, ONNX_NAMESPACE::
   }
 }
 
+template <typename PATH_STRING_TYPE>
+static void LoadOptional(const PATH_STRING_TYPE& pb_file,
+                         ONNX_NAMESPACE::OptionalProto& input_pb) {
+  int tensor_fd;
+  auto st = Env::Default().FileOpenRd(pb_file, tensor_fd);
+  if (!st.IsOK()) {
+    ORT_THROW("open file '", ToMBString(pb_file), "' failed:", st.ErrorMessage());
+  }
+  google::protobuf::io::FileInputStream f(tensor_fd, protobuf_block_size_in_bytes);
+  f.SetCloseOnDelete(true);
+  if (!input_pb.ParseFromZeroCopyStream(&f)) {
+    ORT_THROW("parse file '", ToMBString(pb_file), "' failed");
+  }
+}
 void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
                                 std::unordered_map<std::string, Ort::Value>& name_data_map,
                                 bool is_input) const {
@@ -509,6 +529,10 @@ void OnnxTestCase::LoadTestData(size_t id, onnxruntime::test::HeapBuffer& b,
     } else if (value_info_proto->type().has_sequence_type()) {
       ONNX_NAMESPACE::SequenceProto test_pb;
       LoadSequenceTensor(test_data_pb_files[i], test_pb);
+      ConvertTestData(test_pb, b, is_input, i, name_data_map);
+    } else if (value_info_proto->type().has_optional_type()) {
+      ONNX_NAMESPACE::OptionalProto test_pb;
+      LoadOptional(test_data_pb_files[i], test_pb);
       ConvertTestData(test_pb, b, is_input, i, name_data_map);
     } else {
       ORT_THROW("Unsupported type for the ", is_input ? "input " : "output ", i, " in the test runner");
@@ -592,6 +616,63 @@ void OnnxTestCase::ConvertTestData(const ONNX_NAMESPACE::SequenceProto& test_dat
     ORT_THROW("Creation of empty sequences is currently not supported in the test runner");
   } else {
     out.emplace(name_finalized, Ort::Value::CreateSequence(seq));
+  }
+}
+
+void OnnxTestCase::ConvertTestData(const ONNX_NAMESPACE::OptionalProto& test_data_pb,
+                                   onnxruntime::test::HeapBuffer& b,
+                                   bool is_input, size_t i,
+                                   std::unordered_map<std::string, Ort::Value>& out) const {
+  // Optional Tensor
+  if (test_data_pb.elem_type() ==
+      ONNX_NAMESPACE::OptionalProto_DataType::OptionalProto_DataType_TENSOR) {
+    // The optional tensor is not "None", deal with it as a regular tensor
+    if (test_data_pb.has_tensor_value()) {
+      ConvertTestData(test_data_pb.tensor_value(), b, is_input, i, out);
+    } else {
+      // Process None
+      // If is_input is true, don't include the None in the feeds
+      // If is_input is false, include it in the fetches, so that we can validate
+      // whether we received a None output from ORT.
+
+      if (!is_input) {
+        const std::string& name = test_data_pb.name();
+        const std::string& name_finalized = !name.empty()
+                                                ? name
+                                                : (is_input ? model_info_->GetInputName(i) : model_info_->GetOutputName(i));
+
+        // Our API doesn't support creating None OrtValue,
+        // so we place an nullptr into the expected values.
+        Ort::Value value{nullptr};
+        out.emplace(name_finalized, std::move(value));
+      }
+    }
+  }  // Optional Sequence Tensor
+  else if (test_data_pb.elem_type() ==
+           ONNX_NAMESPACE::OptionalProto_DataType::OptionalProto_DataType_SEQUENCE) {
+    // The optional sequence tensor is not "None", deal with it as a regular tensor
+    if (test_data_pb.has_sequence_value()) {
+      // ConvertTestData() ensures that sequence contains only tensors - we do no need
+      // a redundant check here
+      ConvertTestData(test_data_pb.sequence_value(), b, is_input, i, out);
+    } else {
+      // Process None
+      // If is_input is true, don't include the None in the feeds
+      // If is_input is false, include it in the fetches, so that we can validate
+      // whether we received a None output from ORT.
+
+      if (!is_input) {
+        const std::string& name = test_data_pb.name();
+        const std::string& name_finalized = !name.empty()
+                                                ? name
+                                                : (is_input ? model_info_->GetInputName(i) : model_info_->GetOutputName(i));
+
+        // Our API doesn't support creating None OrtValue,
+        // so we place an nullptr into the expected values.
+        Ort::Value value{nullptr};
+        out.emplace(name_finalized, std::move(value));
+      }
+    }
   }
 }
 

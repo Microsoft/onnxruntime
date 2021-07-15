@@ -1164,10 +1164,10 @@ common::Status InferenceSession::Initialize() {
     onnxruntime::Graph& graph = model_->MainGraph();
 #ifdef DISABLE_EXTERNAL_INITIALIZERS
     const InitializedTensorSet& initializers = graph.GetAllInitializedTensors();
-    for (const auto& it: initializers) {
+    for (const auto& it : initializers) {
       if (utils::HasExternalData(*it.second)) {
         return common::Status(common::ONNXRUNTIME, common::FAIL,
-                  "Initializer tensors with external data is not allowed.");
+                              "Initializer tensors with external data is not allowed.");
       }
     }
 #endif
@@ -1464,12 +1464,20 @@ common::Status InferenceSession::ValidateInputs(const std::vector<std::string>& 
     auto expected_type = iter->second.ml_data_type;
     auto& input_ml_value = feeds.at(i);
     if (input_ml_value.IsTensor()) {
-      // check for type
-      if (!expected_type->IsTensorType()) {
+      if (!expected_type->IsTensorType() &&
+          !(expected_type->IsOptionalType() &&
+            expected_type->AsOptionalType()->GetElementType()->IsTensorType())) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input with name: ", feed_name,
                                " is not expected to be of type tensor.");
       }
-      auto expected_element_type = expected_type->AsTensorType()->GetElementType();
+
+      // check for type
+      auto expected_element_type = expected_type->IsTensorType()
+                                       ? expected_type->AsTensorType()->GetElementType()
+                                       : expected_type->AsOptionalType()
+                                             ->GetElementType()
+                                             ->AsTensorType()
+                                             ->GetElementType();
       auto input_element_type = input_ml_value.Get<Tensor>().DataType();
       ORT_RETURN_IF_ERROR_SESSIONID_(CheckTypes(input_element_type, expected_element_type, "tensor"));
 
@@ -1495,11 +1503,19 @@ common::Status InferenceSession::ValidateInputs(const std::vector<std::string>& 
         ORT_RETURN_IF_ERROR_SESSIONID_(CheckShapes(feed_name, input_shape, expected_shape));
       }
     } else if (input_ml_value.IsTensorSequence()) {
-      if (!expected_type->IsTensorSequenceType()) {
+      if (!expected_type->IsTensorSequenceType() &&
+          !(expected_type->IsOptionalType() &&
+            expected_type->AsOptionalType()->GetElementType()->IsTensorSequenceType())) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Input with name: ", feed_name,
                                " is not expected to be of type tensor sequence.");
       }
-      auto expected_element_type = expected_type->AsSequenceTensorBase()->GetElementType();
+
+      auto expected_element_type = expected_type->IsTensorSequenceType()
+                                       ? expected_type->AsSequenceTensorType()->GetElementType()
+                                       : expected_type->AsOptionalType()
+                                             ->GetElementType()
+                                             ->AsSequenceTensorType()
+                                             ->GetElementType();
       auto input_element_type = input_ml_value.Get<TensorSeq>().DataType();
       ORT_RETURN_IF_ERROR_SESSIONID_(CheckTypes(input_element_type, expected_element_type, "seq"));
     } else {

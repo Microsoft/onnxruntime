@@ -413,9 +413,9 @@ ORT_API_STATUS_IMPL(OrtApis::EnableOrtCustomOps, _Inout_ OrtSessionOptions* opti
 
   if (options) {
 #ifdef ENABLE_EXTENSION_CUSTOM_OPS
-  return RegisterCustomOps(options, OrtGetApiBase());
+    return RegisterCustomOps(options, OrtGetApiBase());
 #else
-  return OrtApis::CreateStatus(ORT_FAIL, "EnableOrtCustomOps: Custom operators in onnxruntime-extensions are not enabled");
+    return OrtApis::CreateStatus(ORT_FAIL, "EnableOrtCustomOps: Custom operators in onnxruntime-extensions are not enabled");
 #endif
   }
   return nullptr;
@@ -796,6 +796,12 @@ ORT_API(void, OrtApis::ClearBoundOutputs, _Inout_ OrtIoBinding* binding_ptr) {
 ORT_API_STATUS_IMPL(OrtApis::IsTensor, _In_ const OrtValue* value, _Out_ int* out) {
   auto v = reinterpret_cast<const ::OrtValue*>(value);
   *out = v->IsTensor() ? 1 : 0;
+  return nullptr;
+}
+
+ORT_API_STATUS_IMPL(OrtApis::HasElement, _In_ const OrtValue* value, _Out_ int* out) {
+  auto v = reinterpret_cast<const ::OrtValue*>(value);
+  *out = v->HasElement() ? 1 : 0;
   return nullptr;
 }
 
@@ -1720,7 +1726,7 @@ ORT_API_STATUS_IMPL(OrtApis::CreateOpaqueValue, _In_z_ const char* domain_name, 
   MLDataType ml_type = DataTypeImpl::GetDataType(dtype);
   ORT_ENFORCE(ml_type != nullptr,
               "Specified domain and type names combination does not refer to a registered opaque type");
-  const auto* non_tensor_base = ml_type->AsNonTensorTypeBase();
+  const auto* non_tensor_base = ml_type->AsNonTensorType();
   ORT_ENFORCE(non_tensor_base != nullptr, "Opaque type is not a non_tensor type!!!");
   std::unique_ptr<OrtValue> ort_val(new OrtValue);
   non_tensor_base->FromDataContainer(data_container, data_container_size, *ort_val);
@@ -1737,7 +1743,7 @@ ORT_API_STATUS_IMPL(OrtApis::GetOpaqueValue, _In_ const char* domain_name, _In_ 
   MLDataType ml_type = DataTypeImpl::GetDataType(dtype);
   ORT_ENFORCE(ml_type != nullptr,
               "Specified domain and type names combination does not refer to a registered opaque type");
-  const auto* non_tensor_base = ml_type->AsNonTensorTypeBase();
+  const auto* non_tensor_base = ml_type->AsNonTensorType();
   ORT_ENFORCE(non_tensor_base != nullptr, "Opaque type is not a non_tensor type!!!");
   non_tensor_base->ToDataContainer(*in, data_container_size, data_container);
   API_IMPL_END
@@ -2296,6 +2302,7 @@ static constexpr OrtApi ort_api_1_to_9 = {
     &OrtApis::GetTensorRTProviderOptionsAsString,
     &OrtApis::ReleaseTensorRTProviderOptions,
     &OrtApis::EnableOrtCustomOps,
+    &OrtApis::HasElement,
 };
 
 // Assert to do a limited check to ensure Version 1 of OrtApi never changes (will detect an addition or deletion but not if they cancel out each other)

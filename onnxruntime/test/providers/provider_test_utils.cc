@@ -475,20 +475,18 @@ void OpTester::FillFeedsAndOutputNames(
       output_names.push_back(output.def_.Name());
   }
 
-  for (size_t i = 0; i < input_data_.size(); ++i) {
-    if (std::find(initializer_index_.begin(), initializer_index_.end(), i) ==
-            initializer_index_.end() &&
-        input_data_[i].def_.Exists()) {
-      feeds[input_data_[i].def_.Name()] = input_data_[i].data_;
-    }
-  }
+  FillFeeds(feeds);
 }
 
 void OpTester::FillFeeds(std::unordered_map<std::string, OrtValue>& feeds) {
   for (size_t i = 0; i < input_data_.size(); ++i) {
     if (std::find(initializer_index_.begin(), initializer_index_.end(), i) ==
             initializer_index_.end() &&
-        input_data_[i].def_.Exists()) {
+        input_data_[i].def_.Exists() &&
+        // We don't include optional type OrtValues of None because this is
+        // how we expect users to deal with sending through "None"s as graph inputs
+        // (i.e.) don't send them through at all
+        input_data_[i].data_.HasElement()) {
       feeds[input_data_[i].def_.Name()] = input_data_[i].data_;
     }
   }
@@ -687,8 +685,19 @@ std::vector<OrtValue> OpTester::ExecuteModel(
           ort_value.Fence()->BeforeUsingAsInput(
               onnxruntime::kCpuExecutionProvider, 0);
 
-        if (expected_data.def_.Exists()) {  // optional outputs won't exist
-          if (expected_data.data_.IsTensor()) {
+        if (expected_data.def_.Exists()) {          // optional edges won't exist (so skip them)
+          if (!expected_data.data_.HasElement()) {  // optional type output (None)
+            EXPECT_TRUE(!ort_value.HasElement())
+                << "Expected to see an output of None "
+                << "but instead got an output that wasn't None";
+
+            // Make sure types align
+            EXPECT_EQ(expected_data.data_.Type(), ort_value.Type())
+                << "Expected optional type: " << expected_data.data_.Type()
+                << " but instead got optional type: " << ort_value.Type();
+          }
+
+          else if (expected_data.data_.IsTensor()) {
             // verify output shape inference when input defs have shape
             if (add_shape_to_tensor_data_) {
               auto out_shape_proto = expected_data.def_.Shape();
@@ -707,10 +716,12 @@ std::vector<OrtValue> OpTester::ExecuteModel(
                       << "Output idx = " << idx << " dim = " << d;
               }
             }
+
             Check(expected_data, ort_value.Get<Tensor>(), provider_type);
           } else {
             Check(expected_data, ort_value, provider_type);
           }
+
           ++idx;
 
           // skip missing trailing optional outputs

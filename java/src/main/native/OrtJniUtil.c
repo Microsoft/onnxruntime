@@ -978,6 +978,7 @@ jobject convertOrtValueToONNXValue(JNIEnv *jniEnv, const OrtApi * api, OrtAlloca
         }
         case ONNX_TYPE_UNKNOWN:
         case ONNX_TYPE_OPAQUE:
+        case ONNX_TYPE_OPTIONAL:
         case ONNX_TYPE_SPARSETENSOR: {
             throwOrtException(jniEnv,convertErrorCode(ORT_NOT_IMPLEMENTED),"These types are unsupported - ONNX_TYPE_UNKNOWN, ONNX_TYPE_OPAQUE, ONNX_TYPE_SPARSETENSOR.");
             break;

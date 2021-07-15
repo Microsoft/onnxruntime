@@ -177,6 +177,9 @@ void addOrtValueMethods(pybind11::module& m) {
 
         return *ONNX_NAMESPACE::Utils::DataTypeUtils::ToType(*type_proto);
       })
+      .def("has_element", [](const OrtValue* ort_value) -> bool {
+        return ort_value->HasElement();
+      })
       .def("is_tensor", [](const OrtValue* ort_value) -> bool {
         return ort_value->IsTensor();
       })

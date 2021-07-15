@@ -194,8 +194,6 @@ struct SequenceTensorTypeProto {
     MLDataType dt = DataTypeImpl::GetTensorType<ElemType>();
     const auto* elem_proto = dt->GetTypeProto();
     proto.mutable_sequence_type()->mutable_elem_type()->CopyFrom(*elem_proto);
-    auto* tensor_type = proto.mutable_sequence_type()->mutable_elem_type()->mutable_tensor_type();
-    tensor_type->set_elem_type(TypeToDataType<ElemType>());
   }
   ONNX_NAMESPACE::TypeProto proto;
 };
@@ -207,6 +205,14 @@ struct SequenceTensorType {
 
 template <typename ElemType>
 const SequenceTensorTypeProto<ElemType> SequenceTensorType<ElemType>::s_sequence_tensor_type_proto;
+
+template <typename ElemType>
+struct OptionalTypeProto {
+  OptionalTypeProto(const ONNX_NAMESPACE::TypeProto& type_proto) {
+    proto.mutable_optional_type()->mutable_elem_type()->CopyFrom(type_proto);
+  }
+  ONNX_NAMESPACE::TypeProto proto;
+};
 
 // To use OpTester:
 //  1. Create one with the op name
@@ -268,7 +274,9 @@ class OpTester {
   }
 
   template <typename T>
-  void AddInput(const char* name, const std::vector<int64_t>& dims, const T* p_values, const size_t size, bool is_initializer = false, const std::vector<std::string>* dim_params = nullptr) {
+  void AddInput(const char* name, const std::vector<int64_t>& dims, const T* p_values,
+                const size_t size, bool is_initializer = false,
+                const std::vector<std::string>* dim_params = nullptr) {
     AddData(input_data_, name, dims, p_values, size, is_initializer, false, dim_params);
   }
 
@@ -299,12 +307,41 @@ class OpTester {
 
   template <typename T>
   void AddSeqInput(const char* name, const SeqTensors<T>& seq_tensors) {
-    AddSeqData<T>(input_data_, name, seq_tensors);
+    AddSeqData<T>(input_data_, name, &seq_tensors);
   }
 
   template <typename T>
   void AddSeqOutput(const char* name, const SeqTensors<T>& seq_tensors) {
-    AddSeqData<T>(output_data_, name, seq_tensors);
+    AddSeqData<T>(output_data_, name, &seq_tensors);
+  }
+
+  template <typename T>
+  void AddOptionalTypeTensorInput(const char* name, const std::vector<int64_t>& dims,
+                                  const std::initializer_list<T>* values = nullptr,
+                                  bool is_initializer = false, const std::vector<std::string>* dim_params = nullptr) {
+    AddData(input_data_, name, dims, values ? values->begin() : nullptr,
+            values ? values->size() : 0, is_initializer, false, dim_params, 0.0f, 0.0f, true);
+  }
+
+  template <typename T>
+  void AddOptionalTypeTensorOutput(const char* name, const std::vector<int64_t>& dims,
+                                   const std::initializer_list<T>* expected_values = nullptr,
+                                   bool sort_output = false, float rel_error = 0.0f, float abs_error = 0.0f) {
+    AddData(output_data_, name, dims, expected_values ? expected_values->begin() : nullptr,
+            expected_values ? expected_values->size() : 0, false,
+            sort_output, nullptr /* dim_params */, rel_error, abs_error, true);
+  }
+
+  template <typename T>
+  void AddOptionalTypeSeqInput(const char* name,
+                               const SeqTensors<T>* seq_tensors) {
+    AddSeqData<T>(input_data_, name, seq_tensors, true);
+  }
+
+  template <typename T>
+  void AddOptionalTypeSeqOutput(const char* name,
+                                const SeqTensors<T>* seq_tensors) {
+    AddSeqData<T>(output_data_, name, seq_tensors, true);
   }
 
   template <typename TKey, typename TVal>
@@ -553,18 +590,33 @@ class OpTester {
   void AddData(std::vector<Data>& data, const char* name, const std::vector<int64_t>& dims, const T* values,
                int64_t values_count, bool is_initializer = false, bool sort_output = false,
                const std::vector<std::string>* dim_params = nullptr,
-               float rel_error = 0.0f, float abs_error = 0.0f) {
+               float rel_error = 0.0f, float abs_error = 0.0f, bool is_optional_type_tensor = false) {
     ORT_TRY {
       TensorShape shape{dims};
-      ORT_ENFORCE(shape.Size() == values_count, values_count, " input values doesn't match tensor size of ",
+
+      // Value being null means we are creating an optional type tensor of None
+      ORT_ENFORCE(values == nullptr ||
+                      shape.Size() == values_count,
+                  values_count, " input values doesn't match tensor size of ",
                   shape.Size());
 
       auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
-      auto p_tensor = std::make_unique<Tensor>(DataTypeImpl::GetType<T>(), shape, allocator);
+      std::unique_ptr<Tensor> p_tensor;
 
-      auto* data_ptr = p_tensor->template MutableData<T>();
-      for (int64_t i = 0; i < values_count; i++) {
-        data_ptr[i] = values[i];
+      // If it is an optional tensor type with no values (i.e.) None,
+      // we won't even pass it in to Run() as part of the feeds,
+      // so we don't even have to create a Tensor.
+      // Conversely, if it is an optional tensor type with values,
+      // we pass it in as a regular tensor.
+      if (values != nullptr || !is_optional_type_tensor) {
+        p_tensor = std::make_unique<Tensor>(DataTypeImpl::GetType<T>(), shape, allocator);
+      }
+
+      if (p_tensor) {
+        auto* data_ptr = p_tensor->template MutableData<T>();
+        for (int64_t i = 0; i < values_count; i++) {
+          data_ptr[i] = values[i];
+        }
       }
 
       std::vector<int64_t> dims_for_proto{dims};
@@ -573,11 +625,16 @@ class OpTester {
         dims_for_proto[add_symbolic_dim_to_tensor_data_] = -1;
       }
 
-      TTypeProto<T> type_proto(add_shape_to_tensor_data_ ? &dims_for_proto : nullptr);
+      TTypeProto<T> tensor_type_proto(add_shape_to_tensor_data_ ? &dims_for_proto : nullptr);
+      OptionalTypeProto<T> optional_type_proto(tensor_type_proto.proto);
+
       OrtValue value;
-      value.Init(p_tensor.release(), DataTypeImpl::GetType<Tensor>(),
+
+      // If p_tensor is nullptr, it is a "None", we won't even include it as part of the feeds.
+      value.Init(p_tensor ? p_tensor.release() : nullptr, DataTypeImpl::GetType<Tensor>(),
                  DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
-      auto node_arg = NodeArg(name, &type_proto.proto);
+      auto node_arg = NodeArg(name, !is_optional_type_tensor ? &tensor_type_proto.proto : &optional_type_proto.proto);
+
       if (dim_params && !(dim_params->empty()) && add_shape_to_tensor_data_) {
         // If dim_params presents, configure node_arg's dim value based on dim_params, which supports symbolic dim and dim broadcast.
         auto& dim_params_data = *dim_params;
@@ -610,7 +667,11 @@ class OpTester {
       }
 
       data.push_back(Data(std::move(node_arg), std::move(value), std::move(rel), std::move(abs), sort_output));
-      if (is_initializer) initializer_index_.push_back(data.size() - 1);
+
+      // Optional values cannot be initializers
+      if (is_initializer && !is_optional_type_tensor) {
+        initializer_index_.push_back(data.size() - 1);
+      }
     }
     ORT_CATCH(const std::exception& ex) {
       ORT_HANDLE_EXCEPTION([&]() {
@@ -622,38 +683,54 @@ class OpTester {
 
  private:
   template <typename T>
-  void AddSeqData(std::vector<Data>& data, const char* name, const SeqTensors<T>& seq_tensors) {
-    auto num_tensors = seq_tensors.tensors.size();
-    std::vector<Tensor> tensors;
-    tensors.resize(num_tensors);
-    auto elem_type = DataTypeImpl::GetType<T>();
-    for (size_t i = 0; i < num_tensors; ++i) {
-      TensorShape shape{seq_tensors.tensors[i].shape};
-      auto values_count = static_cast<int64_t>(seq_tensors.tensors[i].data.size());
-      ORT_ENFORCE(shape.Size() == values_count, values_count,
-                  " input values doesn't match tensor size of ", shape.Size());
+  void AddSeqData(std::vector<Data>& data, const char* name,
+                  const SeqTensors<T>* seq_tensors,
+                  bool is_optional_sequence_tensor_type = false) {
+    std::unique_ptr<TensorSeq> ptr;
 
-      auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
-      auto& tensor = tensors[i];
+    if (seq_tensors) {
+      auto num_tensors = seq_tensors->tensors.size();
+      std::vector<Tensor> tensors;
+      tensors.resize(num_tensors);
+      auto elem_type = DataTypeImpl::GetType<T>();
+      for (size_t i = 0; i < num_tensors; ++i) {
+        TensorShape shape{seq_tensors->tensors[i].shape};
+        auto values_count = static_cast<int64_t>(seq_tensors->tensors[i].data.size());
+        ORT_ENFORCE(shape.Size() == values_count, values_count,
+                    " input values doesn't match tensor size of ", shape.Size());
 
-      tensor = Tensor(elem_type,
-                      shape,
-                      allocator);
+        auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
+        auto& tensor = tensors[i];
 
-      auto* data_ptr = tensor.template MutableData<T>();
-      for (int64_t x = 0; x < values_count; ++x) {
-        data_ptr[x] = seq_tensors.tensors[i].data[x];
+        tensor = Tensor(elem_type,
+                        shape,
+                        allocator);
+
+        auto* data_ptr = tensor.template MutableData<T>();
+        for (int64_t x = 0; x < values_count; ++x) {
+          data_ptr[x] = seq_tensors->tensors[i].data[x];
+        }
       }
+
+      ptr = std::make_unique<TensorSeq>(elem_type);
+      ptr->SetElements(std::move(tensors));
     }
 
     OrtValue value;
     auto mltype = DataTypeImpl::GetType<TensorSeq>();
-    auto ptr = std::make_unique<TensorSeq>(elem_type);
-    ptr->SetElements(std::move(tensors));
-    value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
-    ptr.release();
-    data.push_back(Data(NodeArg(name, &SequenceTensorType<T>::s_sequence_tensor_type_proto.proto), std::move(value),
-                        optional<float>(), optional<float>()));
+
+    // nullptr means None OrtValue which we will skip insering into the feeds
+    value.Init(ptr ? ptr.release() : nullptr, mltype, mltype->GetDeleteFunc());
+
+    SequenceTensorTypeProto<T> sequence_tensor_proto;
+    OptionalTypeProto<T> optional_type_proto(sequence_tensor_proto.proto);
+
+    data.push_back(
+        Data(NodeArg(name, !is_optional_sequence_tensor_type
+                               ? &sequence_tensor_proto.proto
+                               : &optional_type_proto.proto),
+             std::move(value),
+             optional<float>(), optional<float>()));
   }
 
   const char* domain_;

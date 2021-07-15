@@ -197,6 +197,14 @@ const TensorShapeProto* NodeArg::Shape() const {
       }
       return nullptr;
     }
+    case TypeProto::kOptionalType: {
+      // Store shape only for optional types that are tensors
+      if (type->optional_type().elem_type().has_tensor_type() &&
+          utils::HasShape(type->optional_type().elem_type().tensor_type())) {
+        return &(type->optional_type().elem_type().tensor_type().shape());
+      }
+      return nullptr;
+    }
     case TypeProto::kSequenceType:
     case TypeProto::kMapType:
     case TypeProto::kOpaqueType:
@@ -236,6 +244,16 @@ void NodeArg::SetShape(const TensorShapeProto& shape) {
     case TypeProto::kSparseTensorType:
       *(node_arg_info_.mutable_type()->mutable_sparse_tensor_type()->mutable_shape()) = shape;
       break;
+    case TypeProto::kOptionalType:
+      if (node_arg_info_.type().optional_type().elem_type().has_tensor_type()) {
+        // Set shape only for optional tensors
+        *(node_arg_info_.mutable_type()
+              ->mutable_optional_type()
+              ->mutable_elem_type()
+              ->mutable_tensor_type()
+              ->mutable_shape()) = shape;
+      }
+      break;
     case TypeProto::kSequenceType:
     case TypeProto::kMapType:
     case TypeProto::kOpaqueType:
@@ -254,6 +272,15 @@ void NodeArg::ClearShape() {
     case TypeProto::kSparseTensorType:
       node_arg_info_.mutable_type()->mutable_sparse_tensor_type()->clear_shape();
       break;
+    case TypeProto::kOptionalType:
+      if (node_arg_info_.type().optional_type().elem_type().has_tensor_type()) {
+        // Set shape only for optional tensors
+        node_arg_info_.mutable_type()
+            ->mutable_optional_type()
+            ->mutable_elem_type()
+            ->mutable_tensor_type()
+            ->clear_shape();
+      }
     case TypeProto::kSequenceType:
     case TypeProto::kMapType:
     case TypeProto::kOpaqueType:
@@ -1914,7 +1941,7 @@ class InferenceContextImpl : public ONNX_NAMESPACE::InferenceContext {
   const SparseTensorProto* getInputSparseData(size_t) const override {
     return nullptr;
   }
-  
+
  private:
   Node& node_;
   // node_output_types_ will be populated by the operator-specific shape inference.

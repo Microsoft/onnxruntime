@@ -40,15 +40,17 @@ struct OrtValue {
   }
 
   bool IsAllocated() const {
-    return data_ && type_;
+    return HasElement() && type_;
   }
 
   template <typename T>
   const T& Get() const {
     ORT_ENFORCE(onnxruntime::DataTypeImpl::GetType<T>() == type_, onnxruntime::DataTypeImpl::GetType<T>(), " != ", type_);
+    ORT_ENFORCE(HasElement(), "This optional type ortValue is None");
     return *static_cast<T*>(data_.get());
   }
 
+  // May return nullptr, if this OrtValue is an optional type and it is "None".
   template <typename T>
   T* GetMutable() {
     ORT_ENFORCE(onnxruntime::DataTypeImpl::GetType<T>() == type_, onnxruntime::DataTypeImpl::GetType<T>(), " != ", type_);
@@ -81,6 +83,10 @@ struct OrtValue {
 
   void ShareFenceWith(OrtValue& v) {
     fence_ = v.fence_;
+  }
+
+  bool HasElement() const noexcept {
+    return data_ != nullptr;
   }
 
  private:
@@ -124,4 +130,3 @@ inline onnxruntime::SparseTensor* OrtValue::GetMutable<onnxruntime::SparseTensor
   ORT_ENFORCE(IsSparseTensor(), "Trying to get a SparseTensor, but got: ", onnxruntime::DataTypeImpl::ToString(type_));
   return static_cast<onnxruntime::SparseTensor*>(data_.get());
 }
-

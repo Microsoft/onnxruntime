@@ -443,6 +443,7 @@ struct Value : Base<OrtValue> {
   Value& operator=(Value&&) = default;
 
   bool IsTensor() const;
+  bool HasElement() const;
   size_t GetCount() const;  // If a non tensor, returns 2 for map and N for sequence, where N is the number of elements
   Value GetValue(int index, OrtAllocator* allocator) const;
 
