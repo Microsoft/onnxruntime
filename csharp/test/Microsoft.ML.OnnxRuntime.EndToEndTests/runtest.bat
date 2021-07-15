@@ -7,6 +7,9 @@ SETLOCAL EnableDelayedExpansion
 SET TargetFramework=netcoreapp2.1
 SET TargetArch=x64
 SET dn="C:\Program Files\dotnet\dotnet"
+SET CurrentOnnxRuntimeVersion=""
+SET OrtEp=""
+SET DefineConstants=""
 
 SET LocalNuGetRepo=%1
 IF NOT "%2"=="" (SET TargetFramework=%2)
@@ -37,8 +40,10 @@ IF EXIST test\Microsoft.ML.OnnxRuntime.EndToEndTests\packages RMDIR /S /Q test\M
 IF EXIST test\Microsoft.ML.OnnxRuntime.EndToEndTests\bin RMDIR /S /Q test\Microsoft.ML.OnnxRuntime.EndToEndTests\bin
 IF EXIST test\Microsoft.ML.OnnxRuntime.EndToEndTests\obj RMDIR /S /Q test\Microsoft.ML.OnnxRuntime.EndToEndTests\obj
 
+@echo %PackageName%
 @echo %CurrentOnnxRuntimeVersion%
 %dn% clean test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj
+%dn% add test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj package Microsoft.ML.OnnxRuntime.Managed --no-restore -v %CurrentOnnxRuntimeVersion%
 %dn% restore test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj --configfile .\Nuget.CSharp.config --no-cache --packages test\Microsoft.ML.OnnxRuntime.EndToEndTests\packages --source https://api.nuget.org/v3/index.json --source  %LocalNuGetRepo%
 
 IF NOT errorlevel 0 (
@@ -46,7 +51,10 @@ IF NOT errorlevel 0 (
     EXIT 1
 )
 
-%dn% test test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj --no-restore
+%dn% list test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj package
+dir test\Microsoft.ML.OnnxRuntime.EndToEndTests\packages\
+
+%dn% test test\Microsoft.ML.OnnxRuntime.EndToEndTests\Microsoft.ML.OnnxRuntime.EndToEndTests.csproj --no-restore /p:DefineConstants="USE_TENSORRT"
 IF NOT errorlevel 0 (
     @echo "Failed to build or execute the end-to-end test"
     EXIT 1

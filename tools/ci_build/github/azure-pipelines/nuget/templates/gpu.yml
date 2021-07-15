@@ -7,11 +7,11 @@ jobs:
   parameters:
     AgentPool : 'onnxruntime-gpu-winbuild'
     ArtifactName: 'drop-nuget'
-    JobName: 'Windows_CI_GPU_CUDA_Dev'
-    BuildCommand: --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --enable_onnx_tests --use_telemetry --cmake_generator "Visual Studio 16 2019" --use_cuda --cuda_version=11.1 --cuda_home="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.1" --cudnn_home="C:\local\cudnn-11.1-windows-x64-v8.0.5.39\cuda" --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=37;50;52;60;61;70;75;80"
+    JobName: 'Windows_CI_GPU_Dev'
+    BuildCommand: --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --enable_onnx_tests --use_telemetry --cmake_generator "Visual Studio 16 2019" --use_cuda --cuda_version=11.1 --cuda_home="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.1" --cudnn_home="C:\local\cudnn-11.1-windows-x64-v8.0.5.39\cuda" --use_tensorrt --tensorrt_home="C:\local\TensorRT-7.2.2.3" --cmake_extra_defines "CMAKE_CUDA_ARCHITECTURES=37;50;52;60;61;70;75;80"
     BuildArch: 'x64'
     msbuildArchitecture: 'amd64'
-    EnvSetupScript: 'setup_env_cuda_11.bat'
+    EnvSetupScript: 'setup_env_gpu.bat'
     sln_platform: 'x64'
     DoDebugBuild: 'false'
     DoNugetPack : 'true'
@@ -118,22 +118,26 @@ jobs:
 - job: 'Linux_CI_GPU_Dev'
   workspace:
     clean: all
-  timeoutInMinutes: 120
+  timeoutInMinutes:  120
   pool: 'Onnxruntime-Linux-GPU'
+  variables:
+    CUDA_VERSION: '11.1'
   steps:
     - template: ../../templates/set-version-number-variables-step.yml
     - template: ../../templates/get-docker-image-steps.yml
       parameters:
-        Dockerfile: tools/ci_build/github/linux/docker/Dockerfile.manylinux2014_cuda11
+        Dockerfile: tools/ci_build/github/linux/docker/Dockerfile.manylinux2014_cuda11_1_tensorrt7_2
         Context: tools/ci_build/github/linux/docker
-        DockerBuildArgs: "--network=host --build-arg POLICY=manylinux2014 --build-arg PLATFORM=x86_64 --build-arg BASEIMAGE=nvcr.io/nvidia/cuda:11.1-cudnn8-devel-centos7 --build-arg DEVTOOLSET_ROOTPATH=/opt/rh/devtoolset-9/root --build-arg PREPEND_PATH=/opt/rh/devtoolset-9/root/usr/bin: --build-arg LD_LIBRARY_PATH_ARG=/opt/rh/devtoolset-9/root/usr/lib64:/opt/rh/devtoolset-9/root/usr/lib:/opt/rh/devtoolset-9/root/usr/lib64/dyninst:/opt/rh/devtoolset-9/root/usr/lib/dyninst:/usr/local/lib64 --build-arg BUILD_UID=$( id -u )"
-        Repository: onnxruntimecuda11build
+        DockerBuildArgs: "--network=host --build-arg POLICY=manylinux2014 --build-arg PLATFORM=x86_64 --build-arg DEVTOOLSET_ROOTPATH=/opt/rh/devtoolset-9/root --build-arg PREPEND_PATH=/opt/rh/devtoolset-9/root/usr/bin: --build-arg LD_LIBRARY_PATH_ARG=/opt/rh/devtoolset-9/root/usr/lib64:/opt/rh/devtoolset-9/root/usr/lib:/opt/rh/devtoolset-9/root/usr/lib64/dyninst:/opt/rh/devtoolset-9/root/usr/lib/dyninst:/usr/local/lib64 --build-arg BUILD_UID=$( id -u )"
+        Repository: onnxruntimecuda111trt72build
     - task: CmdLine@2
       inputs:
         script: |
           mkdir -p $HOME/.onnx
-          docker run --gpus all -e CC=/opt/rh/devtoolset-9/root/usr/bin/cc -e CXX=/opt/rh/devtoolset-9/root/usr/bin/c++ -e CFLAGS="-Wp,-D_FORTIFY_SOURCE=2 -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -fstack-clash-protection -fcf-protection -O3 -Wl,--strip-all" -e CXXFLAGS="-Wp,-D_FORTIFY_SOURCE=2 -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -fstack-clash-protection -fcf-protection -O3 -Wl,--strip-all" -e NVIDIA_VISIBLE_DEVICES=all --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build --volume /data/models:/build/models:ro --volume $HOME/.onnx:/home/onnxruntimedev/.onnx -e NIGHTLY_BUILD onnxruntimecuda11build \
-          /bin/bash -c "/opt/python/cp37-cp37m/bin/python3 /onnxruntime_src/tools/ci_build/build.py --build_dir /build --config Release --skip_submodule_sync  --parallel --build_shared_lib --use_cuda --cuda_version=11.1 --cuda_home=/usr/local/cuda-11.1 --cudnn_home=/usr/local/cuda-11.1 --enable_onnx_tests --cmake_extra_defines CMAKE_CUDA_HOST_COMPILER=/opt/rh/devtoolset-9/root/usr/bin/cc 'CMAKE_CUDA_ARCHITECTURES=37;50;52;60;61;70;75;80' && cd /build/Release && make install DESTDIR=/build/linux-x64"
+          docker run --gpus all -e CC=/opt/rh/devtoolset-9/root/usr/bin/cc -e CXX=/opt/rh/devtoolset-9/root/usr/bin/c++ -e CFLAGS="-Wp,-D_FORTIFY_SOURCE=2 -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -fstack-clash-protection -fcf-protection -O3 -Wl,--strip-all" -e CXXFLAGS="-Wp,-D_FORTIFY_SOURCE=2 -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -fstack-clash-protection -fcf-protection -O3 -Wl,--strip-all" -e NVIDIA_VISIBLE_DEVICES=all --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build \
+          --volume /data/models:/build/models:ro --volume $HOME/.onnx:/home/onnxruntimedev/.onnx -e NIGHTLY_BUILD onnxruntimecuda111trt72build \
+          /bin/bash -c "/opt/python/cp37-cp37m/bin/python3 /onnxruntime_src/tools/ci_build/build.py --build_dir /build --config Release --skip_submodule_sync --parallel --build_shared_lib --use_tensorrt --cuda_version=$(CUDA_VERSION) --cuda_home=/usr/local/cuda-$(CUDA_VERSION) --cudnn_home=/usr --tensorrt_home=/usr --cmake_extra_defines CMAKE_CUDA_HOST_COMPILER=/opt/rh/devtoolset-9/root/usr/bin/cc 'CMAKE_CUDA_ARCHITECTURES=37;50;52;60;61;70;75;80' && cd /build/Release && make install DESTDIR=/build/linux-x64"
+        workingDirectory: $(Build.SourcesDirectory)
     - script: |
        set -e -x
        mv $(Build.BinariesDirectory)/linux-x64/usr/local/lib64 $(Build.BinariesDirectory)/linux-x64/linux-x64
@@ -159,7 +163,7 @@ jobs:
     clean: all
   pool: 'onnxruntime-gpu-winbuild'
   dependsOn:
-  - Windows_CI_GPU_CUDA_Dev
+  - Windows_CI_GPU_Dev
   - Windows_CI_GPU_DML_Dev
   - Windows_CI_GPU_DML_Dev_x86
   - Windows_CI_GPU_DML_Dev_arm64
@@ -310,6 +314,7 @@ jobs:
   parameters:
     AgentPool : 'onnxruntime-gpu-winbuild'
     Skipx86Tests: 'true'
+    EnvSetupScript: '$(Build.SourcesDirectory)\tools\ci_build\github\windows\setup_env_gpu.bat'
 
 - template: test_linux.yml
   parameters:

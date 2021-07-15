@@ -1,0 +1,17 @@
+schedules:
+- cron: "0 8 * * *"
+  displayName: Daily Build
+  branches:
+    include:
+    - master
+  always: true
+
+variables:
+  PackageName: 'Microsoft.ML.OnnxRuntime.TensorRT'
+  TESTONGPU: 'ON'
+
+jobs: 
+- template: templates/gpu-tensorrt.yml
+  parameters:
+    AgentPool : 'onnxruntime-gpu-winbuild'
+    DoEsrp: 'true'

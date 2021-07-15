@@ -11,12 +11,15 @@ jobs:
   - NuGet_Packaging
   condition: succeeded()
   variables:
-  - name: OnnxRuntimeBuildDirectory
-    value: '$(Build.BinariesDirectory)'
-  - name: SKIPNONPACKAGETESTS
-    value: 'ON'
-  - name: runCodesignValidationInjection
-    value: false
+    OnnxRuntimeBuildDirectory: '$(Build.BinariesDirectory)'
+    SKIPNONPACKAGETESTS: 'ON'
+    runCodesignValidationInjection: false
+    NugetArtifact: $(Build.BinariesDirectory)\nuget-artifact
+    RunTestScript: test\Microsoft.ML.OnnxRuntime.EndToEndTests\runtest.bat
+    DotNetCoreX64Args: ${{ variables.NugetArtifact }} netcoreapp2.1 x64 $(NuGetPackageVersionNumber)
+    DotNetCoreX86Args: ${{ variables.NugetArtifact }} netcoreapp2.1 x86 $(NuGetPackageVersionNumber)
+    DotNetFrameworkX64Args: ${{ variables.NugetArtifact }} net461 x64 $(NuGetPackageVersionNumber)
+    DotNetFrameworkX86Args: ${{ variables.NugetArtifact }} net461 x86 $(NuGetPackageVersionNumber)
 
   steps:
   - task: UsePythonVersion@0
@@ -33,7 +36,7 @@ jobs:
   - task: BatchScript@1
     displayName: 'setup env'
     inputs:
-      filename: '$(Build.SourcesDirectory)\tools\ci_build\github\windows\setup_env_cuda_11.bat'
+      filename: ${{ parameters.EnvSetupScript }} 
       modifyEnvironment: true
       workingFolder: '$(Build.BinariesDirectory)'
 
@@ -69,14 +72,14 @@ jobs:
 
   - script: |
      @echo "Running Runtest.bat"
-     test\Microsoft.ML.OnnxRuntime.EndToEndTests\runtest.bat $(Build.BinariesDirectory)\nuget-artifact netcoreapp2.1 x64 $(NuGetPackageVersionNumber)
+     ${{ variables.RunTestScript }} ${{ variables.DotNetCoreX64Args}}
     workingDirectory: '$(Build.SourcesDirectory)\csharp'
     displayName: 'Run End to End Test (C#) .Net Core x64'
 
   - ${{ if ne(parameters['Skipx86Tests'], 'true') }}:
       - script: |
          @echo "Running Runtest.bat"
-         test\Microsoft.ML.OnnxRuntime.EndToEndTests\runtest.bat $(Build.BinariesDirectory)\nuget-artifact netcoreapp2.1 x86 $(NuGetPackageVersionNumber)
+         ${{ variables.RunTestScript }} ${{ variables.DotNetCoreX86Args}}
         workingDirectory: '$(Build.SourcesDirectory)\csharp'
         displayName: 'Run End to End Test (C#) .Net Core x86'
 
@@ -84,14 +87,14 @@ jobs:
 
   - script: |
      @echo "Running Runtest.bat"
-     test\Microsoft.ML.OnnxRuntime.EndToEndTests\runtest.bat $(Build.BinariesDirectory)\nuget-artifact net461 x64 $(NuGetPackageVersionNumber)
+     ${{ variables.RunTestScript }} ${{ variables.DotNetFrameworkX64Args}}
     workingDirectory: '$(Build.SourcesDirectory)\csharp'
     displayName: 'Run End to End Test (C#) .NetFramework x64'
 
   - ${{ if ne(parameters['Skipx86Tests'], 'true') }}:
       - script: |
          @echo "Running Runtest.bat"
-         test\Microsoft.ML.OnnxRuntime.EndToEndTests\runtest.bat $(Build.BinariesDirectory)\nuget-artifact net461 x86 $(NuGetPackageVersionNumber)
+         ${{ variables.RunTestScript }} ${{ variables.DotNetFrameworkX86Args}}
         workingDirectory: '$(Build.SourcesDirectory)\csharp'
         displayName: 'Run End to End Test (C#) .NetFramework x86'
         enabled: false
