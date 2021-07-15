@@ -46,10 +46,10 @@ If you build it by yourself, you must append the "--build_shared_lib" flag to yo
 3. compile the sample
 
 ```
-g++ -o run_squeezenet squeezenet_cpp_app.cpp -I ../../../include/onnxruntime/core/session/ -I /opt/intel/openvino_2021.3.394/opencv/include/ -I /opt/intel/openvino_2021.3.394/opencv/lib/ -L ./ -lonnxruntime_providers_openvino -lonnxruntime_providers_shared -lonnxruntime -L /opt/intel/openvino_2021.3.394/opencv/lib/ -lopencv_imgcodecs -lopencv_dnn -lopencv_core -lopencv_imgproc
+g++ -o run_squeezenet squeezenet_cpp_app.cpp -I ../../../include/onnxruntime/core/session/ -I /opt/intel/openvino_2021.4.582/opencv/include/ -I /opt/intel/openvino_2021.4.582/opencv/lib/ -L ./ -lonnxruntime_providers_openvino -lonnxruntime_providers_shared -lonnxruntime -L /opt/intel/openvino_2021.4.582/opencv/lib/ -lopencv_imgcodecs -lopencv_dnn -lopencv_core -lopencv_imgproc
 ```
 
-Note: This build command is using the opencv location from OpenVINO 2021.3 Release Installation. You can use any version of OpenVINO and change the location path accordingly.
+Note: This build command is using the opencv location from OpenVINO 2021.4 Release Installation. You can use any version of OpenVINO and change the location path accordingly.
 
 4. Run the sample
 

@@ -55,7 +55,7 @@ Improved overall inferencing time, since this feature eliminates the preliminary
 
 There are two different methods of exercising this feature:
 
-#### option 1. Enabling via Runtime options using c++/python API's.
+#### <b>option 1. Enabling via Runtime options using c++/python API's.</b>
 
 This flow can be enabled by setting the runtime config option 'use_compiled_network' to True while using the c++/python API'S. This config option acts like a switch to on and off the feature.
 
@@ -63,7 +63,7 @@ The blobs are saved and loaded from a directory named 'ov_compiled_blobs' from t
 
 Refer to [Configuration Options](#configuration-options) for more information about using these runtime options.
 
-#### option 2. Importing the pre-compiled blobs directly from the path set by the user.
+#### <b>option 2. Importing the pre-compiled blobs directly from the path set by the user.</b>
 
 This flow enables users to import/load the pre-compiled blob directly if available readily. This option is enabled by explicitly setting the path to the blob using environment variables and setting the OV_USE_COMPILED_NETWORK flag to true.
 
@@ -78,6 +78,11 @@ For Windows:
 set OV_USE_COMPILED_NETWORK=1
 set OV_BLOB_PATH =<path to the blob>
 ```
+
+### Support for INT8 Quantized models
+
+Starting from the OpenVINO EP 2021.4 Release, int8 models will be supported on CPU and GPU.
+However, int8 support won't be available for VPU.
 
 ## Configuration Options
 
@@ -201,6 +206,7 @@ VPUs as well as Intel<sup>®</sup> Vision accelerator Design with Intel Movidiu
 | Cos | Yes | No | No |
 | Cosh | Yes | No | No |
 | DepthToSpace | Yes | Yes | Yes |
+| DequantizeLinear | Yes | Yes | No |
 | Div | Yes | Yes | Yes |
 | Dropout | Yes | Yes | Yes |
 | Elu | Yes | Yes | Yes |
@@ -232,11 +238,12 @@ VPUs as well as Intel<sup>®</sup> Vision accelerator Design with Intel Movidiu
 | Neg | Yes | Yes | Yes |
 | NonMaxSuppression | No | No | Yes |
 | NonZero | Yes | No | Yes |
-| Not | Yes | Yes | No |
+| Not | Yes | Yes | Yes |
 | OneHot | Yes | Yes | Yes |
 | Pad | Yes | Yes | Yes |
 | Pow | Yes | Yes | Yes |
 | PRelu | Yes | Yes | Yes |
+| QuantizeLinear | Yes | Yes | No |
 | Reciprocal | Yes | Yes | Yes |
 | ReduceLogSum | Yes | No | Yes |
 | ReduceMax | Yes | Yes | Yes |
@@ -318,18 +325,22 @@ Below topologies from ONNX open model zoo are fully supported on OpenVINO Execut
 | **MODEL NAME** | **CPU** | **GPU** | **VPU** | **FPGA** |
 | --- | --- | --- | --- | --- |
 | tiny_yolov2 | Yes | Yes | Yes | Yes* |
-| yolov3 | No | No | Yes | No* |
-| mask_rcnn | No | No | Yes | No* |
+| yolov3 | Yes | Yes | Yes | No* |
+| tiny_yolov3 | Yes | Yes | Yes | No* |
+| mask_rcnn | Yes | Yes | Yes | No* |
+| faster_rcnn | Yes | Yes | Yes | No* |
+| yolov5 | Yes | Yes | Yes | No* |
 
 ### Image Manipulation Networks
 
 | **MODEL NAME** | **CPU** | **GPU** | **VPU** | **FPGA** |
 | --- | --- | --- | --- | --- |
-| mosaic | Yes | No | No | No* |
-| candy | Yes | No | No | No* |
-| rain_princess | Yes | No | No | No* |
-| pointilism | Yes | No | No | No* |
-| udnie | Yes | No | No | No* |
+| mosaic | Yes | Yes | Yes | No* |
+| candy | Yes | Yes | Yes | No* |
+| cgan | Yes | Yes | Yes | No* |
+| rain_princess | Yes | yes | Yes | No* |
+| pointilism | Yes | Yes | Yes | No* |
+| udnie | Yes | Yes | Yes | No* |
 
 *FPGA only runs in HETERO mode wherein the layers that are not supported on FPGA fall back to OpenVINO CPU.
 
