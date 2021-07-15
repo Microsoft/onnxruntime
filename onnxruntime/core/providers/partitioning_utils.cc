@@ -3,97 +3,173 @@
 
 #include "core/providers/partitioning_utils.h"
 
+#include <algorithm>
+#include <deque>
+#include <iterator>
 #include <queue>
 
 #include "core/framework/compute_capability.h"
 #include "core/framework/execution_provider.h"
-#include "core/graph/model.h"
+#include "core/graph/graph_viewer.h"
+#include "core/providers/common.h"
 
 namespace onnxruntime {
 namespace utils {
 
 // internal helpers
 namespace {
-// Kahn's topological sort with awareness of whether a node should be in a supported or unsupported partition
-std::vector<const Node*> PartitionAwareTopoSort(const GraphViewer& graph_viewer,
-                                                const std::unordered_set<const Node*>& supported_nodes) {
-  std::queue<const Node*> supported_to_visit, unsupported_to_visit;
-  std::unordered_map<NodeIndex, size_t> in_degree;
-  std::vector<const Node*> topo_order;
+#ifndef NDEBUG
+std::string NodeDebugString(const Node& node) {
+  std::ostringstream oss;
+  oss << node.Index() << " '" << node.Name() << "'(" << node.OpType() << ")";
+  return oss.str();
+}
 
-  auto num_nodes = graph_viewer.NumberOfNodes();
-  topo_order.reserve(num_nodes);
-  in_degree.reserve(num_nodes);
+template <typename Container>
+std::string NodeGroupDebugString(const Container& group, bool show_all = false) {
+  static_assert(std::is_same_v<typename Container::value_type, const Node*>);
 
-  auto add_to_visit = [&](const Node& node) {
-    if (supported_nodes.count(&node)) {
-      supported_to_visit.push(&node);
-    } else {
-      unsupported_to_visit.push(&node);
+  if (group.empty()) {
+    return "<no nodes>";
+  }
+
+  std::ostringstream oss;
+  oss << "<" << group.size() << (group.size() == 1 ? " node> " : " nodes> ");
+  if (show_all) {
+    auto node_it = group.begin();
+    oss << NodeDebugString(**(node_it++));
+    while (node_it != group.end()) {
+      oss << ", " << NodeDebugString(**(node_it++));
+    }
+  } else {
+    const Node& start_node = *group.front();
+    const Node& end_node = *group.back();
+    oss << NodeDebugString(start_node) << " to " << NodeDebugString(end_node);
+  }
+
+  return oss.str();
+}
+#endif
+
+std::vector<std::vector<const Node*>> CreateSupportedPartitionNodeGroups(
+    const GraphViewer& graph_viewer,
+    const IsNodeSupportedFn& is_node_supported_fn,
+    const OnGroupClosedFn& on_group_closed_fn,
+    bool debug_output) {
+#ifdef NDEBUG
+  ORT_UNUSED_PARAMETER(debug_output);
+#endif
+
+  ORT_ENFORCE(is_node_supported_fn, "Node support test is required.");
+
+  std::vector<std::vector<const Node*>> supported_groups{};
+
+  // number of inputs from unprocessed nodes (in-degree) per node
+  std::unordered_map<NodeIndex, size_t> in_degree{};
+  // nodes that are ready to process
+  std::deque<const Node*> nodes_to_process{};
+  // nodes that will be processed when considering the next partition node group
+  std::deque<const Node*> nodes_to_process_with_next_group{};
+
+  // initialize in-degrees and find root nodes
+  for (const auto& node : graph_viewer.Nodes()) {
+    const auto node_input_edge_count = node.GetInputEdgesCount();
+    in_degree.insert({node.Index(), node_input_edge_count});
+    if (node_input_edge_count == 0) {
+      nodes_to_process.push_back(&node);
+    }
+  }
+
+  std::vector<const Node*> supported_group{};
+  // the partition node group's frontier is the aggregate of its nodes' output nodes
+  std::unordered_set<const Node*> supported_group_frontier{};
+
+  auto close_group = [&]() {
+    if (!supported_group.empty()) {
+#ifndef NDEBUG
+      if (debug_output) {
+        LOGS_DEFAULT(VERBOSE) << "New partition node group.\n"
+                              << "Unsupported nodes on group frontier: "
+                              << NodeGroupDebugString(nodes_to_process_with_next_group, true) << "\n"
+                              << "Nodes in group: " << NodeGroupDebugString(supported_group);
+      }
+#endif
+
+      // if no on_group_closed_fn callback was given, keep the partition
+      // otherwise, let the callback determine whether to keep it
+      const bool keep_partition = !on_group_closed_fn || on_group_closed_fn(supported_group);
+
+      if (keep_partition) {
+        supported_groups.emplace_back(std::move(supported_group));
+      } else {
+        LOGS_DEFAULT(VERBOSE) << "Discarded partition node group.";
+      }
+
+      supported_group.clear();
+      supported_group_frontier.clear();
     }
   };
 
-  // find root nodes
-  for (auto& node : graph_viewer.Nodes()) {
-    size_t input_edge_count = node.GetInputEdgesCount();
-    in_degree.insert({node.Index(), input_edge_count});
-    if (input_edge_count == 0) {
-      add_to_visit(node);
-    }
-  }
-
-  // prefer unsupported nodes first. this will increase the number of inputs potentially available to the first
-  // partition handled by this EP.
-  bool processing_supported_nodes = false;
-
-  while (!supported_to_visit.empty() || !unsupported_to_visit.empty()) {
-    const Node* current = nullptr;
-
-    // see if we need to flip
-    if ((processing_supported_nodes && supported_to_visit.empty()) ||
-        (!processing_supported_nodes && unsupported_to_visit.empty())) {
-      processing_supported_nodes = !processing_supported_nodes;
+  while (!nodes_to_process.empty() || !nodes_to_process_with_next_group.empty()) {
+    if (nodes_to_process.empty()) {
+      // we have processed all the nodes that we can while building this partition node group, start a new one
+      close_group();
+      nodes_to_process.swap(nodes_to_process_with_next_group);
       continue;
     }
 
-    // get next node from same partition
-    if (processing_supported_nodes) {
-      current = supported_to_visit.front();
-      supported_to_visit.pop();
-    } else {
-      current = unsupported_to_visit.front();
-      unsupported_to_visit.pop();
+    const Node& node = *nodes_to_process.front();
+    nodes_to_process.pop_front();
+
+    const bool is_node_supported = is_node_supported_fn(node);
+
+    if (!is_node_supported && Contains(supported_group_frontier, &node)) {
+      // an unsupported node on the frontier will be processed after the current partition node group
+      nodes_to_process_with_next_group.push_back(&node);
+      continue;
     }
 
-    // when in_degree is zero all the inputs to the node are available
-    for (auto node_it = current->OutputNodesBegin(), end = current->OutputNodesEnd(); node_it != end; ++node_it) {
-      in_degree[node_it->Index()]--;
+    if (is_node_supported) {
+      // add node to the partition node group
+      supported_group.push_back(&node);
 
-      if (in_degree[node_it->Index()] == 0) {
-        add_to_visit(*node_it);
-      }
+      // remove node from the frontier and add its outputs to the frontier
+      supported_group_frontier.erase(&node);
+
+      std::for_each(
+          node.OutputNodesBegin(), node.OutputNodesEnd(),
+          [&supported_group_frontier](const Node& output) {
+            supported_group_frontier.insert(&output);
+          });
     }
 
-    topo_order.push_back(&*current);
+    // adjust in-degrees of the node outputs and add any new nodes to process
+    std::for_each(
+        node.OutputNodesBegin(), node.OutputNodesEnd(),
+        [&](const Node& output) {
+          auto& output_node_in_degree = in_degree[output.Index()];
+          --output_node_in_degree;
+
+          if (output_node_in_degree == 0) {
+            nodes_to_process.push_back(&output);
+          }
+        });
   }
 
-  // check we didn't break something
-  ORT_ENFORCE(graph_viewer.NumberOfNodes() == static_cast<int>(topo_order.size()),
-              "Partition aware topological sort has produced invalid output.");
+  close_group();
 
-  return topo_order;
+  return supported_groups;
 }
+}  // namespace
 
 std::unordered_set<const Node*> CreateExcludedNodeSet(const GraphViewer& graph_viewer,
                                                       const std::unordered_set<std::string>& stop_ops) {
   std::unordered_set<const Node*> excluded_nodes;
-  const auto end_stop_ops = stop_ops.cend();
 
   for (const NodeIndex node_index : graph_viewer.GetNodesInTopologicalOrder()) {
     const Node& node = *graph_viewer.GetNode(node_index);
 
-    if (excluded_nodes.find(&node) == excluded_nodes.cend() &&
-        stop_ops.find(node.OpType()) != end_stop_ops) {
+    if (!Contains(excluded_nodes, &node) && Contains(stop_ops, node.OpType())) {
       excluded_nodes.insert(&node);
 
       // add all the downstream nodes
@@ -116,11 +192,9 @@ std::unordered_set<const Node*> CreateExcludedNodeSet(const GraphViewer& graph_v
   return excluded_nodes;
 }
 
-}  // namespace
-
 std::unique_ptr<ComputeCapability> MakeComputeCapability(const GraphViewer& graph_viewer,
                                                          const std::vector<const Node*>& group,
-                                                         const std::function<std::string()>& generate_metadef_name,
+                                                         const GenerateMetadefNameFn& generate_metadef_name,
                                                          const std::string& execution_provider_name) {
   std::unordered_set<const Node*> node_set;
   node_set.reserve(group.size());
@@ -142,8 +216,8 @@ std::unique_ptr<ComputeCapability> MakeComputeCapability(const GraphViewer& grap
 
     for (const auto* input : node->InputDefs()) {
       // if the node input was not produced by this subgraph, add it to the subgraph inputs.
-      if (node_outputs.count(input) == 0) {
-        if (subgraph_inputs.count(input) == 0) {
+      if (!Contains(node_outputs, input)) {
+        if (!Contains(subgraph_inputs, input)) {
           subgraph_inputs.insert(input);
           ordered_subgraph_inputs.push_back(input);
         }
@@ -154,7 +228,7 @@ std::unique_ptr<ComputeCapability> MakeComputeCapability(const GraphViewer& grap
     for (const auto* output_def : output_defs) {
       node_outputs.insert(output_def);
       // if output is overall graph output we need to produce it.
-      if (graph_outputs.count(output_def) != 0) {
+      if (Contains(graph_outputs, output_def)) {
         ordered_subgraph_outputs.push_back(output_def);
       }
     }
@@ -162,9 +236,9 @@ std::unique_ptr<ComputeCapability> MakeComputeCapability(const GraphViewer& grap
     // if output connects to a node not in this subgraph we need to add it
     // unless it was already added as an overall graph output,
     for (auto it = node->OutputEdgesBegin(), end = node->OutputEdgesEnd(); it != end; ++it) {
-      if (node_set.count(&it->GetNode()) == 0) {
+      if (!Contains(node_set, &it->GetNode())) {
         const auto* output_def = output_defs[it->GetSrcArgIndex()];
-        if (subgraph_outputs.count(output_def) == 0 && graph_outputs.count(output_def) == 0) {
+        if (!Contains(subgraph_outputs, output_def) && !Contains(graph_outputs, output_def)) {
           subgraph_outputs.insert(output_def);
           ordered_subgraph_outputs.push_back(output_def);
         }
@@ -194,143 +268,51 @@ std::unique_ptr<ComputeCapability> MakeComputeCapability(const GraphViewer& grap
 
 std::vector<std::unique_ptr<ComputeCapability>>
 CreateSupportedPartitions(const GraphViewer& graph_viewer,
-                          const std::unordered_set<const Node*>& supported_nodes,
-                          const std::unordered_set<std::string>& stop_ops,
-                          const std::function<std::string()>& generate_metadef_name,
+                          const IsNodeSupportedFn& is_node_supported_fn,
+                          const OnGroupClosedFn& on_partition_closed_fn,
+                          const GenerateMetadefNameFn& generate_metadef_name_fn,
                           const std::string& execution_provider_name,
                           bool debug_output) {
-  // find any nodes we need to exclude
-  std::unordered_set<const Node*> excluded_nodes = CreateExcludedNodeSet(graph_viewer, stop_ops);
+  const auto groups = CreateSupportedPartitionNodeGroups(graph_viewer,
+                                                         is_node_supported_fn,
+                                                         on_partition_closed_fn,
+                                                         debug_output);
 
-#ifndef NDEBUG
-  auto node_str = [](const Node& node) {
-    std::ostringstream oss;
-    oss << node.Index() << " '" << node.Name() << "'(" << node.OpType() << ")";
-    return oss.str();
-  };
+  std::vector<std::unique_ptr<ComputeCapability>> partitions{};
+  partitions.reserve(groups.size());
 
-  auto group_str = [&node_str](const std::vector<const Node*>& group) {
-    const Node& start_node = *group.front();
-    const Node& end_node = *group.back();
-    std::ostringstream oss;
-    oss << node_str(start_node) << " to " << node_str(end_node) << "\n";
-    return oss.str();
-  };
-#endif
+  std::transform(
+      groups.begin(), groups.end(),
+      std::back_inserter(partitions),
+      [&](const auto& supported_partition) {
+        return MakeComputeCapability(graph_viewer, supported_partition, generate_metadef_name_fn,
+                                     execution_provider_name);
+      });
 
-  // partition aware sort. this groups all the nodes we can and can't handle
-  const std::vector<const Node*> new_order = PartitionAwareTopoSort(graph_viewer, supported_nodes);
-
-  // create groups using the new sort order
-  auto cur_topo_node = new_order.cbegin();
-  auto end_topo_nodes = new_order.cend();
-
-  std::queue<const Node*> nodes_to_process;         // supported nodes to process
-  std::unordered_set<const Node*> processed_nodes;  // supported nodes we have processed
-  std::map<NodeIndex, std::vector<const Node*>> node_groups;
-  std::vector<const Node*> cur_group;
-
-  bool check_excluded_nodes = !excluded_nodes.empty();
-  const auto excluded_nodes_end = excluded_nodes.cend();
-
-  while (cur_topo_node != end_topo_nodes) {
-    const Node* node = *cur_topo_node;
-    ++cur_topo_node;
-
-    if (processed_nodes.find(node) != processed_nodes.cend()) {
-      continue;
-    }
-
-    if (check_excluded_nodes && excluded_nodes.find(node) != excluded_nodes_end) {
-      processed_nodes.insert(node);
-      continue;
-    }
-
-    bool supported = supported_nodes.count(node) != 0;
-    bool in_partition = !cur_group.empty();
-
-    // check if end of a partition.
-    if (in_partition && !supported) {
-#ifndef NDEBUG
-      if (debug_output) {
-        LOGS_DEFAULT(VERBOSE) << "New partition due to " << node_str(*node)
-                              << ". Nodes in old partition: " << cur_group.size() << "\n";
-        LOGS_DEFAULT(VERBOSE) << group_str(cur_group) << "\n";
-      }
-#else
-      ORT_UNUSED_PARAMETER(debug_output);
-#endif
-      node_groups.insert({cur_group.front()->Index(), std::move(cur_group)});
-    }
-
-    // add the node and any connected downstream nodes that we can handle if supported.
-    // if not mark as processed so we know its inputs are available
-    if (supported) {
-      nodes_to_process.push(node);
-    } else {
-      processed_nodes.insert(node);
-    }
-
-    while (!nodes_to_process.empty()) {
-      node = nodes_to_process.front();
-      nodes_to_process.pop();
-
-      if (processed_nodes.find(node) == processed_nodes.cend()) {
-        // add to partition if all inputs available
-        bool inputs_available = true;
-        for (auto cur = node->InputNodesBegin(), end = node->InputNodesEnd(); cur != end; ++cur) {
-          if (processed_nodes.find(&*cur) == processed_nodes.cend()) {
-            inputs_available = false;
-            break;
-          }
-        }
-
-        if (inputs_available) {
-          cur_group.push_back(node);
-          processed_nodes.insert(node);
-
-          for (auto cur = node->OutputNodesBegin(), end = node->OutputNodesEnd(); cur != end; ++cur) {
-            const Node& downstream_node = *cur;
-
-            // nodes will get added to the queue once per input from a supported node.
-            // we need this to happen as they can't be added to the group until all inputs are known to be available.
-            if (supported_nodes.count(&downstream_node) != 0) {
-              nodes_to_process.push(&downstream_node);
-            }
-          }
-        } else {
-          // we need all other nodes providing input to this node to have been processed
-          // before it can be added to cur_group.
-          //
-          // e.g. given A   B  with a topological order of A, B, C.
-          //             \  /
-          //              C
-          //
-          // When we process A we add C via the output edge to nodes_to_process. After we finish with A we look at C
-          // as the next node in nodes_to_process, but the input from B is missing.
-          // There are no more entries in nodes_to_process so we move to the next node in the topological order and
-          // process B. Again C is added to nodes_to_process via the output edge. After we finish with B we look at C
-          // again as the next node in nodes_to_process.
-          // Now all the inputs are available and C is added to the current group.
-        }
-      }
-    }
-  }
-
-  if (!cur_group.empty()) {
-    node_groups.insert({cur_group.front()->Index(), std::move(cur_group)});
-  }
-
-  // create ComputeCapability instances
-  std::vector<std::unique_ptr<ComputeCapability>> results;
-  results.reserve(node_groups.size());
-
-  for (const auto& idx_to_group : node_groups) {
-    results.push_back(
-        MakeComputeCapability(graph_viewer, idx_to_group.second, generate_metadef_name, execution_provider_name));
-  }
-
-  return results;
+  return partitions;
 }
+
+std::vector<std::unique_ptr<ComputeCapability>>
+CreateSupportedPartitions(const GraphViewer& graph_viewer,
+                          const std::unordered_set<const Node*>& supported_nodes,
+                          const std::unordered_set<std::string>& stop_ops,
+                          const GenerateMetadefNameFn& generate_metadef_name_fn,
+                          const std::string& execution_provider_name,
+                          bool debug_output) {
+  const auto excluded_nodes = CreateExcludedNodeSet(graph_viewer, stop_ops);
+  const bool check_excluded_nodes = !excluded_nodes.empty();
+
+  return CreateSupportedPartitions(
+      graph_viewer,
+      [&](const Node& node) -> bool {
+        const bool is_excluded = check_excluded_nodes && Contains(excluded_nodes, &node);
+        return !is_excluded && Contains(supported_nodes, &node);
+      },
+      {},
+      generate_metadef_name_fn,
+      execution_provider_name,
+      debug_output);
+}
+
 }  // namespace utils
 }  // namespace onnxruntime

@@ -367,13 +367,9 @@ void GetFlattenOutputShape(const Node& node, const Shape& input_shape, int32_t& 
   dim_2 = std::accumulate(input_shape.cbegin() + axis, input_shape.cend(), 1, std::multiplies<int32_t>());
 }
 
-bool IsValidSupportedNodesGroup(const std::vector<size_t>& supported_node_group, const GraphViewer& graph_viewer) {
-  if (supported_node_group.empty())
-    return false;
-
-  if (supported_node_group.size() == 1) {
-    const auto& node_indices = graph_viewer.GetNodesInTopologicalOrder();
-    const auto* node(graph_viewer.GetNode(node_indices[supported_node_group[0]]));
+bool IsValidSupportedNodeGroup(const std::vector<const Node*>& supported_node_partition) {
+  if (supported_node_partition.size() == 1) {
+    const auto* node = supported_node_partition[0];
     const auto& op = node->OpType();
     // It is not worth it to perform a single Reshape/Flatten/Identity operator
     // which is only copying the data in NNAPI
@@ -440,9 +436,9 @@ bool IsNodeSupported(const Node& node, const GraphViewer& graph_viewer, const Op
   return op_support_checker->IsOpSupported(graph_viewer.GetAllInitializedTensors(), node, params);
 }
 
-bool IsNodeSupportedInternal(const Node& node, const GraphViewer& graph_viewer,
-                             const OpSupportCheckParams& params,
-                             const std::unordered_set<std::string>& node_outputs_in_group) {
+bool IsNodeSupportedInGroup(const Node& node, const GraphViewer& graph_viewer,
+                            const OpSupportCheckParams& params,
+                            const std::unordered_set<std::string>& node_outputs_in_group) {
   if (!IsNodeSupported(node, graph_viewer, params))
     return false;
 
@@ -459,7 +455,7 @@ bool IsInputSupported(const NodeArg& input, const std::string& parent_name) {
   // We do not support input with no shape
   if (!shape_proto) {
     LOGS_DEFAULT(VERBOSE) << "Input [" << input_name << "] of [" << parent_name
-                          << "] has not shape";
+                          << "] has no shape";
     return false;
   }
 
@@ -472,61 +468,6 @@ bool IsInputSupported(const NodeArg& input, const std::string& parent_name) {
   }
 
   return true;
-}
-
-std::vector<std::vector<size_t>> GetSupportedNodes(const GraphViewer& graph_viewer, const OpSupportCheckParams& params) {
-  std::vector<std::vector<size_t>> supported_node_groups;
-  if (params.android_feature_level < ORT_NNAPI_MIN_API_LEVEL) {
-    LOGS_DEFAULT(WARNING) << "All ops will fallback to CPU EP, because system NNAPI feature level ["
-                          << params.android_feature_level
-                          << "] is lower than minimal supported NNAPI API feature level ["
-                          << ORT_NNAPI_MIN_API_LEVEL
-                          << "] of this build for NNAPI";
-    return supported_node_groups;
-  }
-
-  // Disable NNAPI if the graph has input with dynamic shape
-  for (const auto* input : graph_viewer.GetInputs()) {
-    if (!IsInputSupported(*input, "graph")) {
-      return supported_node_groups;
-    }
-  }
-
-  // This holds the supported node's topological index
-  std::vector<size_t> supported_node_group;
-  // This holds the NodeIndex of the nodes in the above group
-  std::unordered_set<std::string> node_outputs_in_group;
-  const auto& node_indices = graph_viewer.GetNodesInTopologicalOrder();
-  for (size_t i = 0; i < node_indices.size(); i++) {
-    const auto* node(graph_viewer.GetNode(node_indices[i]));
-    bool supported = IsNodeSupportedInternal(*node, graph_viewer, params, node_outputs_in_group);
-    LOGS_DEFAULT(VERBOSE) << "Operator type: [" << node->OpType()
-                          << "] index: [" << i
-                          << "] name: [" << node->Name()
-                          << "] supported: [" << supported
-                          << "]";
-    if (supported) {
-      supported_node_group.push_back(i);
-
-      // We want to put all the output names of nodes in the current group for easy query
-      // See IsInternalQuantizationSupported()
-      for (const auto* output : node->OutputDefs()) {
-        node_outputs_in_group.insert(output->Name());
-      }
-    } else {
-      if (IsValidSupportedNodesGroup(supported_node_group, graph_viewer)) {
-        supported_node_groups.push_back(supported_node_group);
-      }
-
-      supported_node_group.clear();
-      node_outputs_in_group.clear();
-    }
-  }
-
-  if (IsValidSupportedNodesGroup(supported_node_group, graph_viewer))
-    supported_node_groups.push_back(supported_node_group);
-
-  return supported_node_groups;
 }
 
 std::string Shape2String(const std::vector<uint32_t>& shape) {

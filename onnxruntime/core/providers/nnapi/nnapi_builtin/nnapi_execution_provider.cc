@@ -1,28 +1,36 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "nnapi_execution_provider.h"
+#include "core/providers/nnapi/nnapi_builtin/nnapi_execution_provider.h"
 
-#include "builders/helper.h"
-#include "builders/op_support_checker.h"
 #include "core/framework/allocatormgr.h"
 #include "core/framework/compute_capability.h"
 #include "core/graph/graph_viewer.h"
+#include "core/providers/common.h"
+#include "core/providers/nnapi/nnapi_builtin/builders/helper.h"
+#include "core/providers/nnapi/nnapi_builtin/builders/op_support_checker.h"
+#include "core/providers/nnapi/nnapi_builtin/nnapi_lib/nnapi_implementation.h"
+#include "core/providers/partitioning_utils.h"
 #include "core/session/onnxruntime_cxx_api.h"
-#include "nnapi_lib/nnapi_implementation.h"
 
 #ifdef __ANDROID__
-#include "model.h"
-#include "builders/model_builder.h"
+#include "core/providers/nnapi/nnapi_builtin/builders/model_builder.h"
+#include "core/providers/nnapi/nnapi_builtin/model.h"
 #endif
 
 namespace onnxruntime {
 
 constexpr const char* NNAPI = "Nnapi";
 
+constexpr std::array kDefaultPartitioningStopOps{
+    "NonMaxSuppression",
+};
+
 NnapiExecutionProvider::NnapiExecutionProvider(uint32_t nnapi_flags)
-    : IExecutionProvider{onnxruntime::kNnapiExecutionProvider},
-      nnapi_flags_(nnapi_flags) {
+    : IExecutionProvider{onnxruntime::kNnapiExecutionProvider, true},
+      nnapi_flags_(nnapi_flags),
+      // TODO make this configurable
+      partitioning_stop_ops_(kDefaultPartitioningStopOps.begin(), kDefaultPartitioningStopOps.end()) {
   AllocatorCreationInfo device_info(
       [](int) {
         return std::make_unique<CPUAllocator>(OrtMemoryInfo(NNAPI, OrtAllocatorType::OrtDeviceAllocator));
@@ -42,165 +50,104 @@ NnapiExecutionProvider::NnapiExecutionProvider(uint32_t nnapi_flags)
 NnapiExecutionProvider::~NnapiExecutionProvider() {}
 
 std::vector<std::unique_ptr<ComputeCapability>>
-NnapiExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_view,
+NnapiExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer,
                                       const std::vector<const KernelRegistry*>& /*kernel_registries*/) const {
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
   // TODO: Task 812756: NNAPI EP, add support for subgraph (If and Loop operators)
-  if (graph_view.IsSubgraph()) {
+  if (graph_viewer.IsSubgraph()) {
     return result;
-  }
-
-  std::unordered_set<std::string> all_node_inputs;
-  for (const auto& node : graph_view.Nodes()) {
-    for (auto* input : node.InputDefs()) {
-      all_node_inputs.insert(input->Name());
-    }
   }
 
   // We need to get the Android system API level to ensure the GetCapability giving the correct result
   // based on the system.
   // If we are actually running on Android system, we can get the API level by querying the system
   // However, since we also allow the NNAPI EP run GetCapability for model conversion on a non-Android system,
-  // since we cannot get the runtime system API level, we have to specify it using complie definition.
-  int32_t android_feature_level;
+  // since we cannot get the runtime system API level, we have to specify it using compile definition.
+  static const int32_t android_feature_level = []() {
 #ifdef __ANDROID__
-  const auto* _nnapi = NnApiImplementation();
-  android_feature_level = _nnapi->nnapi_runtime_feature_level;
+    const auto* nnapi = NnApiImplementation();
+    return nnapi->nnapi_runtime_feature_level;
 #else
-  android_feature_level = ORT_NNAPI_MAX_SUPPORTED_API_LEVEL;
+    return ORT_NNAPI_MAX_SUPPORTED_API_LEVEL;
 #endif
+  }();
 
-  nnapi::OpSupportCheckParams params{
+  const nnapi::OpSupportCheckParams params{
       android_feature_level,
       !!(nnapi_flags_ & NNAPI_FLAG_USE_NCHW),
   };
-  const auto supported_nodes_vector = GetSupportedNodes(graph_view, params);
 
-  size_t num_of_supported_nodes = 0;
-
-  // Find inputs, initializers and outputs for each supported subgraph
-  const std::vector<NodeIndex>& node_index = graph_view.GetNodesInTopologicalOrder();
-  const auto& graph_outputs = graph_view.GetOutputs();
-  for (const auto& group : supported_nodes_vector) {
-    if (group.empty())
-      continue;
-
-    num_of_supported_nodes += group.size();
-    LOGS_DEFAULT(VERBOSE) << "NnapiExecutionProvider::GetCapability, current supported node group size: "
-                          << group.size();
-
-    std::unordered_set<size_t> node_set;
-    node_set.reserve(group.size());
-    for (const auto& index : group) {
-      node_set.insert(node_index[index]);
-    }
-
-    std::unique_ptr<IndexedSubGraph> sub_graph = std::make_unique<IndexedSubGraph>();
-    // Find inputs and outputs of the subgraph
-    std::unordered_map<const NodeArg*, int> fused_inputs, fused_outputs, fused_outputs_to_add;
-    std::unordered_set<const NodeArg*> erased;
-    int input_order = 0;
-    int output_order = 0;
-
-    for (const auto& index : group) {
-      sub_graph->nodes.push_back(node_index[index]);
-      const auto* node = graph_view.GetNode(node_index[index]);
-
-      for (const auto* input : node->InputDefs()) {
-        const auto it = fused_outputs.find(input);
-        if (it != fused_outputs.end()) {
-          fused_outputs.erase(it);
-          erased.insert(input);
-        }
-        //only when input is neither in output list nor erased list, add the input to input list
-        else if (erased.find(input) == erased.end()) {
-          fused_inputs[input] = input_order++;
-        }
-      }
-
-      // For output searching, there is a special case:
-      // If certain output is used more than once,
-      // if the output is connected to nodes that don't belong to the subgraph, the output need to be added
-      // to the output list
-
-      std::unordered_set<const NodeArg*> processed_outputs;
-      for (auto it = node->OutputEdgesBegin(), end = node->OutputEdgesEnd(); it != end; ++it) {
-        const auto node_idx = it->GetNode().Index();
-        const auto* output = node->OutputDefs()[it->GetSrcArgIndex()];
-
-        if (node_set.find(node_idx) != node_set.end()) {
-          const auto iter = fused_inputs.find(output);
-          if (iter != fused_inputs.end()) {
-            fused_inputs.erase(iter);
-            erased.insert(output);
-          } else if (erased.find(output) == erased.end()) {
-            fused_outputs[output] = output_order++;
-          }
-        } else {
-          fused_outputs_to_add[output] = output_order++;
-        }
-
-        processed_outputs.insert(output);
-      }
-
-      for (const auto* output : node->OutputDefs()) {
-        if (processed_outputs.find(output) != processed_outputs.end())
-          continue;
-
-        const auto iter = fused_inputs.find(output);
-        if (iter != fused_inputs.end()) {
-          fused_inputs.erase(iter);
-          erased.insert(output);
-        }
-        // only when output is neither in input list nor erased list, add the output to output list
-        else if (erased.find(output) == erased.end() && output->Exists()) {
-          fused_outputs[output] = output_order++;
-        }
-      }
-    }
-
-    fused_outputs.insert(fused_outputs_to_add.begin(), fused_outputs_to_add.end());
-    // Sort inputs and outputs by the order they were added
-    std::multimap<int, const NodeArg*> inputs, outputs;
-
-    for (auto it = fused_inputs.begin(), end = fused_inputs.end(); it != end; ++it) {
-      inputs.insert(std::pair<int, const NodeArg*>(it->second, it->first));
-    }
-
-    for (auto it = fused_outputs.begin(), end = fused_outputs.end(); it != end; ++it) {
-      if (all_node_inputs.find(it->first->Name()) != all_node_inputs.end()) {
-        outputs.insert(std::pair<int, const NodeArg*>(it->second, it->first));
-      } else if (std::find(graph_outputs.begin(), graph_outputs.end(), it->first) != graph_outputs.end()) {
-        outputs.insert(std::pair<int, const NodeArg*>(it->second, it->first));
-      }
-    }
-
-    // Assign inputs and outputs to subgraph's meta_def
-    auto meta_def = std::make_unique<::onnxruntime::IndexedSubGraph::MetaDef>();
-    meta_def->name = "NNAPI_" + std::to_string(metadef_id_++);
-    meta_def->domain = kMSDomain;
-
-    for (const auto& input : inputs) {
-      meta_def->inputs.push_back(input.second->Name());
-    }
-
-    for (const auto& output : outputs) {
-      meta_def->outputs.push_back(output.second->Name());
-    }
-
-    // meta_def->status = ONNX_NAMESPACE::EXPERIMENTAL;
-    meta_def->since_version = 1;
-    sub_graph->SetMetaDef(std::move(meta_def));
-
-    result.push_back(std::make_unique<ComputeCapability>(std::move(sub_graph)));
+  if (params.android_feature_level < ORT_NNAPI_MIN_API_LEVEL) {
+    LOGS_DEFAULT(WARNING) << "All ops will fallback to CPU EP, because system NNAPI feature level ["
+                          << params.android_feature_level
+                          << "] is lower than minimal supported NNAPI API feature level ["
+                          << ORT_NNAPI_MIN_API_LEVEL
+                          << "] of this build for NNAPI";
+    return result;
   }
 
-  auto num_of_partitions = result.size();
+  // Disable NNAPI if the graph has any unsupported inputs
+  for (const auto* input : graph_viewer.GetInputs()) {
+    if (!nnapi::IsInputSupported(*input, "graph")) {
+      return result;
+    }
+  }
+
+  const auto excluded_nodes = utils::CreateExcludedNodeSet(graph_viewer, partitioning_stop_ops_);
+  const bool check_excluded_nodes = !excluded_nodes.empty();
+
+  std::unordered_set<std::string> node_outputs_in_current_group{};
+
+  const auto is_node_supported = [&](const Node& node) -> bool {
+    const bool excluded = check_excluded_nodes && Contains(excluded_nodes, &node);
+    const bool supported = !excluded &&
+                           nnapi::IsNodeSupportedInGroup(node, graph_viewer, params,
+                                                         node_outputs_in_current_group);
+    LOGS_DEFAULT(VERBOSE) << "Operator type: [" << node.OpType()
+                          << "] index: [" << node.Index()
+                          << "] name: [" << node.Name()
+                          << "] supported: [" << supported
+                          << "]";
+
+    if (supported) {
+      // We want to save all the output names of nodes in the current group for easy query
+      // See nnapi::IsNodeSupportedInGroup()
+      for (const auto* output : node.OutputDefs()) {
+        node_outputs_in_current_group.insert(output->Name());
+      }
+    }
+
+    return supported;
+  };
+
+  const auto on_group_closed = [&](const std::vector<const Node*>& group) -> bool {
+    // reset per-partition node group tracking
+    node_outputs_in_current_group.clear();
+    return nnapi::IsValidSupportedNodeGroup(group);
+  };
+
+  const auto gen_metadef_name = [&]() {
+    uint64_t model_hash;
+    int metadef_id = GenerateMetaDefId(graph_viewer, model_hash);
+    return MakeString(NNAPI, "_", model_hash, "_", metadef_id);
+  };
+
+  result = utils::CreateSupportedPartitions(graph_viewer, is_node_supported, on_group_closed,
+                                            gen_metadef_name, NNAPI);
+
+  const auto num_of_partitions = result.size();
+  const auto num_of_supported_nodes = std::transform_reduce(
+      result.begin(), result.end(),
+      size_t{0}, std::plus<>{},
+      [](const auto& partition) -> size_t {
+        return partition && partition->sub_graph ? partition->sub_graph->nodes.size() : 0;
+      });
+
   const auto summary_msg = MakeString(
       "NnapiExecutionProvider::GetCapability,",
       " number of partitions supported by NNAPI: ", num_of_partitions,
-      " number of nodes in the graph: ", graph_view.NumberOfNodes(),
+      " number of nodes in the graph: ", graph_viewer.NumberOfNodes(),
       " number of nodes supported by NNAPI: ", num_of_supported_nodes);
 
   // If the graph is partitioned in multiple subgraphs, and this may impact performance,

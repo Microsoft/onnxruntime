@@ -31,12 +31,11 @@ class NnapiExecutionProvider : public IExecutionProvider {
   uint32_t GetNNAPIFlags() const { return nnapi_flags_; }
 
  private:
-  // unique counter to name each fused kernel across the entire model
-  mutable int metadef_id_{0};
-
   // The bit flags which define bool options for NNAPI EP, bits are defined as
   // NNAPIFlags in include/onnxruntime/core/providers/nnapi/nnapi_provider_factory.h
   const uint32_t nnapi_flags_;
+
+  const std::unordered_set<std::string> partitioning_stop_ops_;
 
 #ifdef __ANDROID__
   std::unordered_map<std::string, std::unique_ptr<onnxruntime::nnapi::Model>> nnapi_models_;
