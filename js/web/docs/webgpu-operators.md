@@ -29,7 +29,7 @@ Do not modify directly.*
 | Ceil | ai.onnx(6-12,13+) |  |
 | Clip | ai.onnx(6-10,11,12,13+) |  |
 | Concat | ai.onnx(1-3,4-10,11-12,13+) |  |
-| Conv | ai.onnx(1-10,11+); com.ms.internal.nhwc(1-10,11+) | need perf optimization; conv3d is not supported; need implementing activation |
+| Conv | ai.onnx(1-10,11-21,22+); com.ms.internal.nhwc(1-10,11-21,22+) | need perf optimization; conv3d is not supported; need implementing activation |
 | ConvTranspose | ai.onnx(1-10,11+); com.ms.internal.nhwc(1-10,11+) | need perf optimization; need implementing activation |
 | Cos | ai.onnx(7+) |  |
 | Cosh | ai.onnx(9+) |  |

@@ -12,7 +12,7 @@ namespace js {
 ONNX_OPERATOR_KERNEL_EX(
     Conv,
     kMSInternalNHWCDomain,
-    11,
+    22,
     kJsExecutionProvider,
     (*KernelDefBuilder::Create()).TypeConstraint("T", JsepSupportedFloatTypes()),
     Conv<true>);
@@ -20,7 +20,22 @@ ONNX_OPERATOR_KERNEL_EX(
 ONNX_OPERATOR_KERNEL_EX(
     Conv,
     kOnnxDomain,
-    11,
+    22,
+    kJsExecutionProvider,
+    (*KernelDefBuilder::Create()).TypeConstraint("T", JsepSupportedFloatTypes()),
+    Conv<false>);
+
+ONNX_OPERATOR_VERSIONED_KERNEL_EX(
+    Conv,
+    kMSInternalNHWCDomain,
+    11, 21,
+    kJsExecutionProvider,
+    (*KernelDefBuilder::Create()).TypeConstraint("T", JsepSupportedFloatTypes()),
+    Conv<true>);
+ONNX_OPERATOR_VERSIONED_KERNEL_EX(
+    Conv,
+    kOnnxDomain,
+    11, 21,
     kJsExecutionProvider,
     (*KernelDefBuilder::Create()).TypeConstraint("T", JsepSupportedFloatTypes()),
     Conv<false>);
