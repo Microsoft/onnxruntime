@@ -445,10 +445,10 @@ void WebGpuContext::Initialize(const WebGpuContextConfig& config) {
                       "in DeviceDescriptor.requiredFeatures when it is created."
                     : "WebGPU: the internally created native device is missing the required "
                       "ImplicitDeviceSynchronization feature.");
+#endif
     if (DeviceHasFeature(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix)) {
       adapter_info_.nextInChain = &subgroup_matrix_configs_;
     }
-#endif
     ORT_ENFORCE(Device().GetAdapterInfo(&adapter_info_) == wgpu::Status::Success);
 #if defined(_WIN32) && defined(ENABLE_D3D12_FILE_LOADING)
     // Use the backend selected by Dawn rather than the requested backend. The
