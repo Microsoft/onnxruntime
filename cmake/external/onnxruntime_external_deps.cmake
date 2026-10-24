@@ -425,11 +425,16 @@ onnxruntime_fetchcontent_declare(
   # containing microsoft/GSL#1213 (commit 543d0dd).
   PATCH_COMMAND ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/gsl/1213.patch
   EXCLUDE_FROM_ALL
-  FIND_PACKAGE_ARGS 4.0 NAMES Microsoft.GSL
+  # Microsoft.GSL's version file only accepts the same major version, so no
+  # version is requested here and the minimum is checked below.
+  FIND_PACKAGE_ARGS NAMES Microsoft.GSL
 )
 set(GSL_TARGET "Microsoft.GSL::GSL")
 set(GSL_INCLUDE_DIR "$<TARGET_PROPERTY:${GSL_TARGET},INTERFACE_INCLUDE_DIRECTORIES>")
 onnxruntime_fetchcontent_makeavailable(GSL)
+if (GSL_FOUND AND GSL_VERSION VERSION_LESS 4.0)
+  message(FATAL_ERROR "Microsoft.GSL ${GSL_VERSION} was found, but 4.0 or newer is required")
+endif()
 
 if (NOT GSL_FOUND AND NOT onnxruntime_BUILD_SHARED_LIB)
   install(TARGETS GSL EXPORT ${PROJECT_NAME}Targets

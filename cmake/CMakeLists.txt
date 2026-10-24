@@ -2051,7 +2051,12 @@ else()
         find_dependency(cpuinfo)\n\
         find_dependency(protobuf)\n\
         find_dependency(Boost COMPONENTS mp11)\n\
-        find_dependency(Microsoft.GSL 4.0)\n\
+        find_dependency(Microsoft.GSL)\n\
+        if(Microsoft.GSL_VERSION VERSION_LESS 4.0)\n\
+        set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)\n\
+        set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE \"Microsoft.GSL \${Microsoft.GSL_VERSION} was found, but 4.0 or newer is required\")\n\
+        return()\n\
+        endif()\n\
         if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL \"Android\")\n\
         find_dependency(Iconv)\n\
         endif()\n\
