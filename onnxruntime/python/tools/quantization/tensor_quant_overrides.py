@@ -311,22 +311,22 @@ class TensorQuantOverridesHelper(MutableMapping):
             if "quant_type" in quant_overrides and quant_type != quant_overrides["quant_type"]:
                 return (
                     False,
-                    "Channel quantization types for tensor '{tensor_name}' do not match at index {index}.",
+                    f"Channel quantization types for tensor '{tensor_name}' do not match at index {index}.",
                 )
             if "axis" in quant_overrides and axis != quant_overrides["axis"] and norm_axis != quant_overrides["axis"]:
                 return (
                     False,
-                    "Channel axis for tensor '{tensor_name}' does not match at index {index}.",
+                    f"Channel axis for tensor '{tensor_name}' does not match at index {index}.",
                 )
             if "symmetric" in quant_overrides and symmetric != quant_overrides["symmetric"]:
                 return (
                     False,
-                    "Channel symmetric value for tensor '{tensor_name}' does not match at index {index}.",
+                    f"Channel symmetric value for tensor '{tensor_name}' does not match at index {index}.",
                 )
             if "reduce_range" in quant_overrides and reduce_range != quant_overrides["reduce_range"]:
                 return (
                     False,
-                    "Channel reduce_range value for tensor '{tensor_name}' does not match at index {index}.",
+                    f"Channel reduce_range value for tensor '{tensor_name}' does not match at index {index}.",
                 )
 
             # If override scale/zp, must do so for all channels.

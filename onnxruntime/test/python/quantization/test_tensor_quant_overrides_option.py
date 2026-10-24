@@ -662,6 +662,28 @@ class TestTensorQuantOverridesOption(unittest.TestCase):
 
         self.assertIn("option(s) [reduce_range] are invalid with 'scale' and 'zero_point'", str(context.exception))
 
+    def test_override_validation_per_channel_mismatch(self):
+        """
+        Test that per-channel overrides that disagree between channels produce an
+        error message with the tensor name and channel index actually filled in
+        (and not the literal, uninterpolated `{tensor_name}`/`{index}` placeholders).
+        """
+        with self.assertRaises(ValueError) as context:
+            self.perform_qdq_quantization(
+                "model_validation.onnx",
+                extra_options={
+                    "TensorQuantOverrides": {
+                        "WGT": [
+                            {"axis": 0, "symmetric": True},
+                            {"symmetric": False},
+                        ]
+                    }
+                },
+                per_channel=True,
+            )
+
+        self.assertIn("Channel symmetric value for tensor 'WGT' does not match at index 0.", str(context.exception))
+
     def test_get_qnn_qdq_config_sigmoid(self):
         """
         Test that the QNN-specific configs override the scale and zero-point of 16-bit Sigmoid.
