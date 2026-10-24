@@ -18,7 +18,7 @@ namespace onnxruntime::llm {
 namespace kernels {
 namespace moe_gemv {
 
-inline constexpr int64_t kMaxProfiledExpandedRows = 8;
+inline constexpr int64_t kMaxProfiledExpandedRows = 80;
 inline constexpr int64_t kMaxProfiledExpandedRowsForSmallProblemDim = 4;
 inline constexpr int64_t kMinProfiledProblemDim = 512;
 // Lowered from 704 to 512 so block-wise decode shapes (e.g. Qwen top_k=8,

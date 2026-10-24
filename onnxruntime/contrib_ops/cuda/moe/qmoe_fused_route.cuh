@@ -23,11 +23,11 @@ namespace cuda {
 // but entirely in registers. The top-k selection is exact on unique keys (score, lower index first), so the selection
 // algorithm cannot change the result: logits are fp16 / bf16 values, so the sortable 32-bit score has 13 zero low bits
 // and a 32-bit key (score | inverted index) orders exactly like the 64-bit key of the merge kernel.
-constexpr int kFusedRouteMaxRows = 4;
+constexpr int kFusedRouteMaxRows = 8;
 constexpr int kFusedRouteMaxK = 16;
 constexpr int kFusedRouteExperts = 512;  // the kernel is specialised for exactly 512 experts
-constexpr int kFusedRouteThreads = 128;
-static_assert(kFusedRouteMaxRows * kFusedRouteMaxK <= 64);
+constexpr int kFusedRouteThreads = 256;
+static_assert(kFusedRouteMaxRows * kFusedRouteMaxK <= 128);
 
 __device__ __forceinline__ uint32_t FusedRouteKey(float logit, int index, bool valid) {
   const uint32_t bits = logit == 0.0f ? 0u : __float_as_uint(logit);
@@ -74,7 +74,7 @@ __global__ void __launch_bounds__(kFusedRouteThreads) FusedSoftmaxTopKMapsKernel
   constexpr int kMaxSel = K > 0 ? K : kFusedRouteMaxK;
   const int k = K > 0 ? K : k_runtime;
   __shared__ int s_key[kFusedRouteMaxRows * kFusedRouteMaxK];
-  __shared__ int s_sorted[128];
+  __shared__ int s_sorted[256];
 
   const int warp = static_cast<int>(threadIdx.x) >> 5;
   const int lane = static_cast<int>(threadIdx.x) & 31;
@@ -175,7 +175,7 @@ __global__ void __launch_bounds__(kFusedRouteThreads) FusedSoftmaxTopKMapsKernel
       const int expert = 0x1FFF - static_cast<int>(selected & 0x1FFFu);
       topk_scales[static_cast<size_t>(warp) * k + lane] = normalize_scales ? (prob / denom) : prob;
       topk_indices[static_cast<size_t>(warp) * k + lane] = expert;
-      s_key[warp * k + lane] = (expert << 2) | warp;  // unique per (expert, token); sorts by expert, then token
+      s_key[warp * k + lane] = (expert << 3) | warp;  // unique per (expert, token); sorts by expert, then token
     }
   }
   const int num_pairs = num_rows * k;
@@ -189,9 +189,9 @@ __global__ void __launch_bounds__(kFusedRouteThreads) FusedSoftmaxTopKMapsKernel
     for (int q = 0; q < num_pairs; ++q) {
       rank += s_key[q] < key ? 1 : 0;
     }
-    const int token = key & 3;
+    const int token = key & 7;
     const int unpermuted_row = (p - token * k) * num_rows + token;
-    const int expert = key >> 2;
+    const int expert = key >> 3;
     permuted_row_to_unpermuted_row[rank] = unpermuted_row;
     unpermuted_row_to_permuted_row[unpermuted_row] = rank;
     permuted_expert[rank] = expert;
@@ -199,18 +199,18 @@ __global__ void __launch_bounds__(kFusedRouteThreads) FusedSoftmaxTopKMapsKernel
   }
   __syncthreads();
   // expert_first_token_offset[e] = number of pairs routed to an expert < e (e = 0..num_experts)
-  int count[5];
+  int count[3];
 #pragma unroll
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < 3; ++i) {
     const int e = static_cast<int>(threadIdx.x) + i * kFusedRouteThreads;
     count[i] = 0;
 #pragma unroll
-    for (int step = 64; step >= 1; step >>= 1) {
+    for (int step = 128; step >= 1; step >>= 1) {
       count[i] += s_sorted[count[i] + step - 1] < e ? step : 0;
     }
   }
 #pragma unroll
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < 3; ++i) {
     const int e = static_cast<int>(threadIdx.x) + i * kFusedRouteThreads;
     if (e <= num_experts) {
       expert_first_token_offset[e] = count[i];

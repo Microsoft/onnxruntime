@@ -652,6 +652,12 @@ void dispatcher(Params& params, cudaStream_t s) {
   // fp16 int4 SM80-interleaved kernel was measured, so other types and layouts keep CtaNLargeM.
   if constexpr (Details::kStepK == 32 && Details::kInterleave == 4 && !EnableZero && CtaNLargeM == 4 &&
                 std::is_same_v<typename Details::TypeDetailsA, FP16DetailsA>) {
+    if (params.m == 8 && params.n / (CtaNLargeM * Details::kInterleave) <= 320 &&
+        params.n % ((CtaNLargeM / 2) * Details::kInterleave) == 0) {
+      exec_kernel<Details, 8, CtaNLargeM / 2, 128, GroupSize, EnableActScale, EnableZero, EnableBias,
+                  ApplyAlphaInAdvance>(params, s);
+      return;
+    }
     int const sm_count = params.wave_aware && params.m == 8 ? GemvPickSmCount() : 0;
     int const pick = PickGemvCtaN(params.wave_aware, params.m, params.n, Details::kInterleave, CtaNLargeM,
                                   sm_count);

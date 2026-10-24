@@ -2978,6 +2978,217 @@ class TestQMoEIntPrePackSmoke(unittest.TestCase):
         )
 
 
+def _sm80_prepack_unsigned_codes(codes, bits):
+    """Lay out unsigned ``[N, K]`` codes in the SM80 CUTLASS mixed-GEMM layout for 2/4-bit weights.
+
+    The signed re-bias applied by the CUDA packer cancels with the kernel's unsigned decode, so the layout is
+    a row permutation, a sub-byte transpose, a column interleave and a pairwise element shuffle per 32-bit
+    word. Returns a uint8 array of shape ``[K, N / (8 / bits)]``.
+    """
+    n, k = codes.shape
+    pack = 8 // bits
+    tile = 128 // bits
+    permutation = [2 * g + 8 * j + t for g in range(4) for j in range(16 // bits) for t in range(2)]
+    row_idx = numpy.array([(r // tile) * tile + permutation[r % tile] for r in range(k)])
+    permuted = codes.T[row_idx]  # [K, N]
+
+    def pack_lsb(elements):
+        flat = elements.reshape(-1, pack).astype(numpy.uint32)
+        return sum(flat[:, i] << (bits * i) for i in range(pack)).astype(numpy.uint8)
+
+    def unpack_lsb(packed):
+        mask = (1 << bits) - 1
+        return numpy.stack([(packed >> (bits * i)) & mask for i in range(pack)], axis=-1).reshape(-1)
+
+    stream = pack_lsb(permuted.T.reshape(-1))  # sub-byte transpose: rows of N, K packed along the row
+    interleave = 16 // bits
+    rows_per_tile = 128 * 8 // 16
+    stream = (
+        stream.reshape(-1, interleave, k // rows_per_tile, rows_per_tile * bits // 8).transpose(0, 2, 1, 3).reshape(-1)
+    )
+    elements_per_word = 32 // bits
+    shuffle = list(range(0, elements_per_word, 2)) + list(range(1, elements_per_word, 2))
+    elements = unpack_lsb(stream).reshape(-1, elements_per_word)[:, shuffle].reshape(-1)
+    return pack_lsb(elements).reshape(k, n // pack)
+
+
+class TestQMoEOfflinePrepackedIntParity(unittest.TestCase):
+    """weights_prepacked=1 INT2 and mixed-width QMoE must match the PrePack-on-load (weights_prepacked=0) path.
+
+    The offline SM80 layout is generated here (the production packer only handles 4/8-bit), and the original
+    block-scale initializers are released by PrePack, so these runs also cover the cached-scale decode path.
+    """
+
+    hidden_size = 256
+    inter_size = 128
+    num_experts = 4
+
+    @staticmethod
+    def _random_projection(rng, num_experts, n, k, bits, block_size):
+        codes = rng.integers(0, 1 << bits, size=(num_experts, n, k), dtype=numpy.uint8)
+        scale_values = 0.004 * (1 + (numpy.arange(n * (k // block_size)) * 7 + 3) % 9)
+        scales = numpy.stack(
+            [numpy.roll(scale_values, 5 * e).reshape(n, k // block_size) for e in range(num_experts)]
+        ).astype(numpy.float16)
+        return codes, scales
+
+    @staticmethod
+    def _raw_bytes(codes, bits):
+        pack = 8 // bits
+        flat = codes.reshape(codes.shape[0], codes.shape[1], -1, pack).astype(numpy.uint32)
+        packed = sum(flat[..., i] << (bits * i) for i in range(pack))
+        return packed.astype(numpy.uint8)
+
+    def _build_session(self, fc1, fc2, bits, block_size, weights_prepacked, fc1_scales=None, fc2_scales=None):
+        fc1_codes, fc1_scale_values = fc1
+        fc2_codes, fc2_scale_values = fc2
+        fc1_bits, fc2_bits = bits
+        fc1_scale_values = fc1_scale_values if fc1_scales is None else fc1_scales
+        fc2_scale_values = fc2_scale_values if fc2_scales is None else fc2_scales
+        if weights_prepacked:
+            fc1_w = numpy.stack([_sm80_prepack_unsigned_codes(c, fc1_bits) for c in fc1_codes])
+            fc2_w = numpy.stack([_sm80_prepack_unsigned_codes(c, fc2_bits) for c in fc2_codes])
+        else:
+            fc1_w = self._raw_bytes(fc1_codes, fc1_bits)
+            fc2_w = self._raw_bytes(fc2_codes, fc2_bits)
+
+        qmoe = helper.make_node(
+            "QMoE",
+            inputs=["x", "router", "fc1_W", "fc1_S", "", "fc2_W", "fc2_S", ""],
+            outputs=["y"],
+            name="qmoe",
+            domain="com.microsoft",
+            k=2,
+            normalize_routing_weights=1,
+            activation_type="swiglu",
+            swiglu_fusion=1,
+            expert_weight_bits=fc1_bits,
+            fc1_expert_weight_bits=fc1_bits,
+            fc2_expert_weight_bits=fc2_bits,
+            fc3_expert_weight_bits=fc1_bits,
+            quant_type="int",
+            block_size=block_size,
+            weights_prepacked=weights_prepacked,
+        )
+        fp16 = TensorProto.FLOAT16
+        graph = helper.make_graph(
+            nodes=[qmoe],
+            name="qmoe_offline_prepacked",
+            inputs=[
+                helper.make_tensor_value_info("x", fp16, [None, self.hidden_size]),
+                helper.make_tensor_value_info("router", fp16, [None, self.num_experts]),
+            ],
+            outputs=[helper.make_tensor_value_info("y", fp16, [None, self.hidden_size])],
+            initializer=[
+                helper.make_tensor("fc1_W", TensorProto.UINT8, list(fc1_w.shape), fc1_w.tobytes(), raw=True),
+                helper.make_tensor("fc2_W", TensorProto.UINT8, list(fc2_w.shape), fc2_w.tobytes(), raw=True),
+                helper.make_tensor(
+                    "fc1_S",
+                    fp16,
+                    list(fc1_scale_values.shape),
+                    fc1_scale_values.astype(numpy.float16).tobytes(),
+                    raw=True,
+                ),
+                helper.make_tensor(
+                    "fc2_S",
+                    fp16,
+                    list(fc2_scale_values.shape),
+                    fc2_scale_values.astype(numpy.float16).tobytes(),
+                    raw=True,
+                ),
+            ],
+        )
+        model = helper.make_model(
+            graph, opset_imports=[helper.make_opsetid("", 20), helper.make_opsetid("com.microsoft", 1)]
+        )
+        model.ir_version = 10
+        options = onnxruntime.SessionOptions()
+        options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+        return onnxruntime.InferenceSession(
+            model.SerializeToString(), options, providers=[resolve_cuda_plugin_ep("CUDAExecutionProvider")]
+        )
+
+    def _reference(self, fc1, fc2, bits, block_size, x, router):
+        def dequantize(projection, width):
+            codes, scales = projection
+            blocks = numpy.repeat(scales.astype(numpy.float32), block_size, axis=-1)
+            weights = (codes.astype(numpy.float32) - (1 << (width - 1))) * blocks
+            return weights.astype(numpy.float16).astype(numpy.float32)
+
+        w1 = dequantize(fc1, bits[0])
+        w2 = dequantize(fc2, bits[1])
+        x32 = x.astype(numpy.float32)
+        logits = router.astype(numpy.float32)
+        out = numpy.zeros_like(x32)
+        for r in range(x32.shape[0]):
+            top = numpy.argsort(-logits[r], kind="stable")[:2]
+            weights = numpy.exp(logits[r][top] - logits[r][top].max())
+            weights /= weights.sum()
+            for expert, weight in zip(top, weights, strict=True):
+                fused = w1[expert] @ x32[r]
+                gate, up = fused[0::2], fused[1::2]
+                act = (gate / (1.0 + numpy.exp(-gate)) * up).astype(numpy.float16).astype(numpy.float32)
+                out[r] += weight * (w2[expert] @ act)
+        return out
+
+    def _make_case(self, bits, block_size):
+        rng = numpy.random.default_rng(2024 + bits[0] * 10 + bits[1] + block_size)
+        fc1 = self._random_projection(rng, self.num_experts, 2 * self.inter_size, self.hidden_size, bits[0], block_size)
+        fc2 = self._random_projection(rng, self.num_experts, self.hidden_size, self.inter_size, bits[1], block_size)
+        return fc1, fc2
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+    def test_offline_layout_matches_cuda_packer_for_int4(self):
+        from onnxruntime.quantization.cuda_quantizer import _pack_weights_for_cuda_mixed_gemm  # noqa: PLC0415
+
+        rng = numpy.random.default_rng(7)
+        codes = rng.integers(0, 16, size=(64, 128), dtype=numpy.uint8)
+        raw = self._raw_bytes(codes[None], 4)[0]
+        expected = _pack_weights_for_cuda_mixed_gemm(raw, 64, 128, 4, 80)
+        actual = _sm80_prepack_unsigned_codes(codes, 4)
+        numpy.testing.assert_array_equal(actual.reshape(-1), numpy.asarray(expected).view(numpy.uint8))
+
+    @parameterized.expand(
+        [
+            ("int2_block32", (2, 2), 32),
+            ("int2_block128", (2, 2), 128),
+            ("int2_int4_block64", (2, 4), 64),
+            ("int4_int2_block64", (4, 2), 64),
+        ]
+    )
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+    def test_prepacked_matches_runtime_prepack_and_reference(self, _name, bits, block_size):
+        fc1, fc2 = self._make_case(bits, block_size)
+        rng = numpy.random.default_rng(99)
+        raw_session = self._build_session(fc1, fc2, bits, block_size, 0)
+        packed_session = self._build_session(fc1, fc2, bits, block_size, 1)
+        for rows in (1, 96):  # GEMV decode and grouped-GEMM prefill
+            x = rng.standard_normal((rows, self.hidden_size)).astype(numpy.float16)
+            router = rng.standard_normal((rows, self.num_experts)).astype(numpy.float16)
+            expected = self._reference(fc1, fc2, bits, block_size, x, router)
+            raw_out = raw_session.run(None, {"x": x, "router": router})[0].astype(numpy.float32)
+            packed_out = packed_session.run(None, {"x": x, "router": router})[0].astype(numpy.float32)
+            self.assertFalse(numpy.isnan(packed_out).any())
+            numpy.testing.assert_allclose(packed_out, raw_out, rtol=1e-3, atol=1e-3, err_msg=f"rows={rows}")
+            numpy.testing.assert_allclose(packed_out, expected, rtol=0.05, atol=0.05, err_msg=f"rows={rows}")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+    def test_prepacked_rejects_malformed_scale_shapes(self):
+        bits, block_size = (2, 2), 32
+        fc1, fc2 = self._make_case(bits, block_size)
+        bad_fc1 = fc1[1][:, :, :1].copy()  # [E, N, 1] instead of [E, N, K / block_size]
+        bad_fc2 = fc2[1][:, :, :1].copy()
+        rng = numpy.random.default_rng(5)
+        x = rng.standard_normal((1, self.hidden_size)).astype(numpy.float16)
+        router = rng.standard_normal((1, self.num_experts)).astype(numpy.float16)
+        for name, kwargs in (("fc1", {"fc1_scales": bad_fc1}), ("fc2", {"fc2_scales": bad_fc2})):
+            with self.subTest(name):
+                with self.assertRaises(Exception) as ctx:
+                    session = self._build_session(fc1, fc2, bits, block_size, 1, **kwargs)
+                    session.run(None, {"x": x, "router": router})
+                self.assertIn(f"{name}_scales shape [E,N,K/block_size]", str(ctx.exception))
+
+
 class TestQMoECudaGraph(unittest.TestCase):
     """Regression test for QMoE under CUDA graph capture/replay.
 
