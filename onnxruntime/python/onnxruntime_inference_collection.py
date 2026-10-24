@@ -1380,7 +1380,9 @@ class OrtValue:
         device = OrtDevice.make(device_type, device_id, vendor_id)._get_c_device()
 
         # Integer for onnx element type (see https://onnx.ai/onnx/api/mapping.html).
-        # This is helpful for some data type (like TensorProto.BFLOAT16) that is not available in numpy.
+        # For bfloat16, callers can also pass ml_dtypes.bfloat16 as a numpy-style
+        # element_type; this integer path remains available for uses that don't
+        # want to depend on ml_dtypes at the Python level.
         if isinstance(element_type, int):
             return cls(
                 C.OrtValue.ortvalue_from_shape_and_onnx_type(

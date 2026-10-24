@@ -865,7 +865,10 @@ def save_build_and_package_info(package_name, version_number, cuda_version, qnn_
 save_build_and_package_info(package_name, version_number, cuda_version, qnn_version)
 
 # sympy is optional - only needed for symbolic shape inference
-# ml_dtypes is optional - needed for quantization utilities
+# ml_dtypes is a base runtime dependency (see requirements.txt) as it
+# supplies the numpy dtype used to marshal bfloat16 tensors through the
+# Python bindings. Retained as an alias in extras for backward compatibility
+# with users installing `onnxruntime[quantization]`.
 extras_require = {
     "symbolic": ["sympy"],
     "quantization": ["ml_dtypes"],

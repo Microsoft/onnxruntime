@@ -46,6 +46,32 @@ using namespace onnxruntime::logging;
 const char* PYTHON_ORTVALUE_OBJECT_NAME = "OrtValue";
 const char* PYTHON_ORTVALUE_NATIVE_OBJECT_ATTR = "_ortvalue";
 
+// Resolve the NumPy type_num for `ml_dtypes.bfloat16`. Cached across calls.
+// Returns -1 if the module is not importable or the dtype cannot be resolved.
+// NumPy has no native bfloat16, so we piggy-back on the widely-used `ml_dtypes`
+// extension type (same one JAX / TensorFlow / PyTorch NumPy interop use).
+int GetMlDtypesBfloat16TypeNum() {
+  static const int cached = []() -> int {
+    py::gil_scoped_acquire acquire;
+    try {
+      py::object ml_dtypes = py::module_::import("ml_dtypes");
+      py::object bfloat16_obj = ml_dtypes.attr("bfloat16");
+      PyArray_Descr* dtype = nullptr;
+      if (!PyArray_DescrConverter(bfloat16_obj.ptr(), &dtype) || dtype == nullptr) {
+        PyErr_Clear();
+        return -1;
+      }
+      int type_num = dtype->type_num;
+      Py_DECREF(dtype);
+      return type_num;
+    } catch (const py::error_already_set&) {
+      PyErr_Clear();
+      return -1;
+    }
+  }();
+  return cached;
+}
+
 static bool PyObjectCheck_NumpyArray(PyObject* o) {
   return (PyObject_HasAttrString(o, "__array_finalize__") != 0);
 }
@@ -78,9 +104,13 @@ std::vector<py::dtype> MakeTypes() {
 bool IsNumericDType(const py::dtype& dtype) {
   static const std::vector<py::dtype> numeric =
       MakeTypes<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t, float, double>();
-  return std::any_of(numeric.cbegin(), numeric.cend(), [&dtype](const py::dtype& dt) {
-    return dtype.is(dt);
-  });
+  if (std::any_of(numeric.cbegin(), numeric.cend(), [&dtype](const py::dtype& dt) {
+        return dtype.is(dt);
+      })) {
+    return true;
+  }
+  const int bf16 = GetMlDtypesBfloat16TypeNum();
+  return bf16 >= 0 && dtype.num() == bf16;
 }
 
 static TensorShape GetArrayShape(PyArrayObject* pyObject) {
@@ -467,11 +497,22 @@ int OnnxRuntimeTensorToNumpyType(const DataTypeImpl* tensor_type) {
   };
 
   const auto it = type_map.find(tensor_type);
-  if (it == type_map.end()) {
-    throw std::runtime_error("No corresponding Numpy type for Tensor Type. " + std::string(DataTypeImpl::ToString(tensor_type)));
-  } else {
+  if (it != type_map.end()) {
     return it->second;
   }
+  // BFloat16 has no native numpy dtype; if ml_dtypes is installed we surface
+  // its bfloat16 typenum. Not part of the static map because the value is
+  // resolved lazily at runtime.
+  if (tensor_type == DataTypeImpl::GetType<BFloat16>()) {
+    const int bf16 = GetMlDtypesBfloat16TypeNum();
+    if (bf16 >= 0) {
+      return bf16;
+    }
+    throw std::runtime_error(
+        "Cannot represent tensor(bfloat16) as a NumPy array: the 'ml_dtypes' "
+        "package is required (pip install ml_dtypes).");
+  }
+  throw std::runtime_error("No corresponding Numpy type for Tensor Type. " + std::string(DataTypeImpl::ToString(tensor_type)));
 }
 
 MLDataType NumpyTypeToOnnxRuntimeTensorType(int numpy_type) {
@@ -512,12 +553,17 @@ MLDataType NumpyTypeToOnnxRuntimeTensorType(int numpy_type) {
       {NPY_VOID, DataTypeImpl::GetType<std::string>()}};
 
   const auto it = type_map.find(numpy_type);
-  if (it == type_map.end()) {
-    throw std::runtime_error("Numpy_type " + std::to_string(numpy_type) +
-                             " can't be converted to MLDataType.");
-  } else {
+  if (it != type_map.end()) {
     return it->second;
   }
+  // Match against the runtime-registered `ml_dtypes.bfloat16` type_num (numpy
+  // has no native bfloat16, so it lives outside the static table).
+  const int bf16 = GetMlDtypesBfloat16TypeNum();
+  if (bf16 >= 0 && numpy_type == bf16) {
+    return DataTypeImpl::GetType<BFloat16>();
+  }
+  throw std::runtime_error("Numpy_type " + std::to_string(numpy_type) +
+                           " can't be converted to MLDataType.");
 }
 
 MLDataType OnnxTypeToOnnxRuntimeTensorType(int onnx_element_type) {
