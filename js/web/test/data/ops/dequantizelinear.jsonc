@@ -544,5 +544,110 @@
         ]
       }
     ]
+  },
+  {
+    "name": "dequantizelinear",
+    "operator": "DequantizeLinear",
+    "opset": { "domain": "", "version": 13 },
+    "attributes": [],
+    "cases": [
+      {
+        "name": "uint8 per-tensor no zero point, more than one vec4",
+        "inputs": [
+          {
+            "data": [10, 20, 30, 40, 50, 60, 70, 80],
+            "dims": [8],
+            "type": "uint8"
+          },
+          {
+            "data": [1.0],
+            "dims": [1],
+            "type": "float32"
+          },
+          {
+            "data": [0],
+            "dims": [1],
+            "type": "uint8"
+          }
+        ],
+        "outputs": [
+          {
+            "data": [10, 20, 30, 40, 50, 60, 70, 80],
+            "dims": [8],
+            "type": "float32"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "dequantizelinear",
+    "operator": "DequantizeLinear",
+    "opset": { "domain": "", "version": 13 },
+    "attributes": [],
+    "cases": [
+      {
+        "name": "uint8 per-tensor with zero point, values below the zero point",
+        "inputs": [
+          {
+            "data": [0, 64, 128, 255],
+            "dims": [4],
+            "type": "uint8"
+          },
+          {
+            "data": [0.5],
+            "dims": [1],
+            "type": "float32"
+          },
+          {
+            "data": [128],
+            "dims": [1],
+            "type": "uint8"
+          }
+        ],
+        "outputs": [
+          {
+            "data": [-64, -32, 0, 63.5],
+            "dims": [4],
+            "type": "float32"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "dequantizelinear",
+    "operator": "DequantizeLinear",
+    "opset": { "domain": "", "version": 13 },
+    "attributes": [],
+    "cases": [
+      {
+        "name": "uint8 2D per-tensor with zero point, more than one vec4",
+        "inputs": [
+          {
+            "data": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            "dims": [3, 4],
+            "type": "uint8"
+          },
+          {
+            "data": [0.25],
+            "dims": [1],
+            "type": "float32"
+          },
+          {
+            "data": [5],
+            "dims": [1],
+            "type": "uint8"
+          }
+        ],
+        "outputs": [
+          {
+            "data": [-1.25, -1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1, 1.25, 1.5],
+            "dims": [3, 4],
+            "type": "float32"
+          }
+        ]
+      }
+    ]
   }
 ]

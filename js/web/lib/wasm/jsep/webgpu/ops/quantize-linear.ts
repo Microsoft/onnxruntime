@@ -136,7 +136,10 @@ const createDequantizeLinearProgramInfo = (
           ${(() => {
             if (isPacked) {
               return `
-            let input = ${input.getByOffset('global_idx / 4')};
+            // Each packed u32 holds 4 elements. When the output is not vectorized, global_idx is a per-element
+            // index and the word offset is global_idx / 4. When it is vectorized, global_idx is already a vec4
+            // index and one word holds exactly one output vec4, so the word offset is global_idx itself.
+            let input = ${input.getByOffset(components === 1 ? 'global_idx / 4' : 'global_idx')};
             let x_vec = ${isSigned ? 'unpack4xI8(input)' : 'unpack4xU8(input)'};
             let x_value = ${components === 1 ? 'x_vec[global_idx % 4]' : 'x_vec'};`;
             } else {
@@ -203,11 +206,14 @@ const createDequantizeLinearProgramInfo = (
                 }
               }
             } else {
-              return `let zero_point_value = ${isPacked ? (isSigned ? 'i32' : 'u32') : input.type.value}(0);`;
+              return `let zero_point_value = ${scale.type.value}(0);`;
             }
           })()};
       // Compute and write output
-      ${output.setByOffset('global_idx', `${output.type.value}(x_value - zero_point_value) * scale_value`)};
+      ${output.setByOffset(
+        'global_idx',
+        `(${output.type.value}(x_value) - ${scale.type.value}(zero_point_value)) * scale_value`,
+      )};
       }`;
   };
   return {
