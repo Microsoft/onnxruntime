@@ -3,6 +3,7 @@
 
 #include "core/providers/webgpu/vendor/intel/math/subgroup_matrix_tiling_selector.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -15,9 +16,9 @@
 #include "core/providers/webgpu/math/subgroup_matrix_tiling.h"
 #include "core/providers/webgpu/vendor/intel/intel_device_info.h"
 
-// Pretuned tile + split-K table baked into the build; consulted before the
-// heuristic in SelectTiling.
-#include "core/providers/webgpu/vendor/intel/math/subgroup_matrix_matmul_tuned.inc"
+// Pretuned tile + split-K decision trees baked into the build; consulted before
+// the heuristic in SelectTiling. One tree per GPU architecture.
+#include "core/providers/webgpu/vendor/intel/math/subgroup_matrix_tiling_tree_xe3lpg.inc"
 
 namespace onnxruntime {
 namespace webgpu {
@@ -37,7 +38,7 @@ constexpr uint32_t kSplitKCandidates[] = {1, 2, 4, 8};
 constexpr uint32_t kMaxScratchElems = 16384;  // 32 KB
 
 // Hard constraints a tiling must satisfy to run correctly for this problem.
-// Used to reject a pretuned entry whose bucket does not fit the actual K.
+// Used to reject a pretuned prediction whose bucket does not fit the actual K.
 bool IsTilingValid(const SubgroupMatrixTiling& t, uint32_t K) {
   if (t.tile_m == 0 || t.tile_n == 0 ||
       t.tile_m % kSubgroupMatrixM != 0 || t.tile_n % kSubgroupMatrixN != 0) {
@@ -57,8 +58,8 @@ uint32_t EffectiveHwSubgroups(std::string_view arch) {
   return hw == 0 ? 256u : hw;
 }
 
-// Fallback tiling selection when no pretuned entry applies. The goal is to keep
-// the GPU busy without over-subscribing it: pick the tile whose independent
+// Fallback tiling selection when no pretuned prediction applies. The goal is to
+// keep the GPU busy without over-subscribing it: pick the tile whose independent
 // output-tile grid just fills the resident subgroups, preferring larger tiles
 // (more data reuse) among those that qualify, and only using smaller tiles when
 // nothing else would fill the machine. Split-K then adds cooperative subgroups
@@ -126,66 +127,26 @@ SubgroupMatrixTiling HeuristicTiling(std::string_view arch, uint32_t M, uint32_t
   return {tile_m, tile_n, split_k};
 }
 
-// Looks up a pretuned tiling for this problem in the baked-in table
-// (subgroup_matrix_matmul_tuned.inc). The table holds one sub-table per GPU
-// architecture; we match `arch`, then map each problem dimension to the smallest
-// grid value >= it (clamped to the largest bucket). Returns nullopt when the
-// arch is not covered or no entry matches.
-std::optional<SubgroupMatrixTiling> LookupPretunedTiling(std::string_view arch, uint32_t M, uint32_t N, uint32_t K) {
-  for (const auto& table : sgmm_tuned::kArchTables) {
-    if (table.arch != arch) {
-      continue;
-    }
-    auto bucket = [&table](uint32_t d) -> int {
-      int last = 0;
-      for (size_t i = 0; i < table.grid_count; ++i) {
-        if (table.grid[i] >= d) {
-          return static_cast<int>(i);
-        }
-        last = static_cast<int>(i);
-      }
-      return last;
-    };
-    const int mi = bucket(M);
-    const int ni = bucket(N);
-    const int ki = bucket(K);
-    for (size_t i = 0; i < table.entry_count; ++i) {
-      const auto& e = table.entries[i];
-      if (e.mi == mi && e.ni == ni && e.ki == ki) {
-        return SubgroupMatrixTiling{e.tile_m, e.tile_n, e.split_k};
-      }
-    }
-    break;  // arch matched but no entry for this problem; fall through to heuristic
+// Predicts a pretuned tiling for this problem from the baked-in decision tree
+// (subgroup_matrix_tiling_tree_*.inc). Each tree is arch-specific, so we dispatch
+// on `arch`. The tree is a performance oracle only: it never sees K's block
+// count and can propose split_k > K / 16, so the caller must still run
+// IsTilingValid. The tree accounts for batch in its predictions. Returns nullopt
+// when the arch has no tree.
+std::optional<SubgroupMatrixTiling> LookupPretunedTiling(std::string_view arch, uint32_t M, uint32_t N, uint32_t K,
+                                                         uint32_t batch) {
+  if (arch == std::string_view{"xe-3lpg"}) {
+    return xe3lpg::PredictSgmmTilingTree(M, N, K, batch);
   }
   return std::nullopt;
 }
 
-// Batch slices are dispatched on z as independent output-tile grids, so batch is
-// a pure occupancy multiplier. The pretuned table and heuristic pick tile shape
-// for a single (M, N, K) slice; once batch fills the machine, split-K's
-// cooperative subgroups are redundant. Retire split-K factors whose batch-scaled
-// occupancy would exceed ~2x hardware.
-void ClampSplitKForBatch(SubgroupMatrixTiling& t, uint32_t M, uint32_t N, uint32_t batch, uint32_t hw) {
-  auto tile_count = [](uint32_t dim, uint32_t tile) { return (dim + tile - 1) / tile; };
-  const uint32_t eff_tiles = batch * tile_count(M, t.tile_m) * tile_count(N, t.tile_n);
-  while (t.split_k > 1 && eff_tiles * t.split_k > 2 * hw) {
-    t.split_k /= 2;
-  }
-}
-
 // Chooses the tile + split-K tiling for the given problem: use the pretuned
-// table entry when one exists and fits, otherwise fall back to the heuristic.
-// batch is the number of z-dispatched slices; it scales occupancy (see
-// ClampSplitKForBatch) but not the per-slice tile shape.
+// decision tree prediction when one exists and fits, otherwise fall back to the
+// heuristic.
 SubgroupMatrixTiling SelectTiling(std::string_view arch, uint32_t M, uint32_t N, uint32_t K, uint32_t batch) {
-  if (const auto tuned = LookupPretunedTiling(arch, M, N, K); tuned && IsTilingValid(*tuned, K)) {
-    SubgroupMatrixTiling tiling = *tuned;
-    // The table is tuned per (M, N, K) at batch 1, so only revisit split-K when
-    // batch adds occupancy.
-    if (batch > 1) {
-      ClampSplitKForBatch(tiling, M, N, batch, EffectiveHwSubgroups(arch));
-    }
-    return tiling;
+  if (const auto tuned = LookupPretunedTiling(arch, M, N, K, batch); tuned && IsTilingValid(*tuned, K)) {
+    return *tuned;
   }
   return HeuristicTiling(arch, M, N, K, batch);
 }
@@ -198,8 +159,9 @@ SubgroupMatrixTilingSelector CreateSubgroupMatrixTilingSelector(
     return nullptr;
   }
   // Intel tiling policy consumed by the common 8x16x16 subgroup-matrix kernel:
-  // the tile shape and split-K factor from the pretuned table or the heuristic.
-  // The subgroup-matrix shape itself is fixed by the kernel and not selected here.
+  // the tile shape and split-K factor from the pretuned decision tree or the
+  // heuristic. The subgroup-matrix shape itself is fixed by the kernel and not
+  // selected here.
   return [](const ComputeContext& context, uint32_t M, uint32_t N,
             uint32_t K, uint32_t batch) -> std::optional<SubgroupMatrixTiling> {
     // Only K needs to align to the subgroup tiling; M and N partial tiles are

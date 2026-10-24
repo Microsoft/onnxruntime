@@ -595,14 +595,6 @@ TEST(MatMul_Large, DISABLED_BatchedB_4D) {
   RunBothTypes({2, 3, 32, 64}, {2, 3, 64, 96});
 }
 
-// Large batch with a small per-slice M x N grid: batch alone fills the machine,
-// so the selector should retire split-K (ClampSplitKForBatch). Correctness must
-// hold regardless of the chosen config.
-TEST(MatMul_Large, DISABLED_BatchedB_LargeBatchSmallTile) {
-  RunBothTypes({64, 16, 128}, {64, 128, 32});
-  RunBothTypes({128, 8, 256}, {128, 256, 16});
-}
-
 // Constant f16 weight with odd N. The Intel f16 subgroup-matrix load needs an
 // even B row stride, so a non-constant odd-N B falls back to the generic path. When
 // B is a constant initializer, the first Compute lazily pads it to an even stride
