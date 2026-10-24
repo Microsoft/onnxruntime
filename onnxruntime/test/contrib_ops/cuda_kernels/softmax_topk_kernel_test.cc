@@ -268,6 +268,148 @@ TEST(CUDA_EP_Unittest, SoftmaxTopK_RejectsKGreaterThanExperts) {
                OnnxRuntimeException);
 }
 
+template <typename T>
+void RunFusedRoutingMapsTest(int rows, int experts, int k, bool ties = false, bool nonfinite = false,
+                             const std::vector<float>* custom_values = nullptr) {
+  auto values = custom_values ? *custom_values : MakeLogits(rows, experts);
+  ASSERT_EQ(values.size(), static_cast<size_t>(rows) * experts);
+  if (ties) std::fill(values.begin(), values.end(), 0.0f);
+  if (nonfinite) {
+    std::fill(values.begin(), values.end(), -std::numeric_limits<float>::infinity());
+    if (rows == 2) values[experts] = std::numeric_limits<float>::infinity();
+  }
+  std::vector<T> logits(values.size());
+  std::transform(values.begin(), values.end(), logits.begin(), [](float v) { return FromFloat<T>(v); });
+  const int expanded = rows * k;
+  CudaBuffer d_logits(logits.size() * sizeof(T));
+  CudaBuffer d_scales(expanded * sizeof(float)), d_reference_scales(expanded * sizeof(float));
+  CudaBuffer d_indices(expanded * sizeof(int)), d_reference_indices(expanded * sizeof(int));
+  CudaBuffer d_r2s(expanded * sizeof(int)), d_s2r(expanded * sizeof(int));
+  CudaBuffer d_sorted(expanded * sizeof(int)), d_offsets((experts + 1) * sizeof(int64_t));
+  d_logits.CopyFromHost(logits.data());
+  cudaStream_t stream = nullptr;
+  CUDA_CALL_THROW(cudaStreamCreate(&stream));
+  contrib::cuda::LaunchSoftmaxTopK(d_logits.As<T>(), d_reference_scales.As<float>(),
+                                   d_reference_indices.As<int>(), rows, experts, k, true, stream);
+  CUDA_CALL_THROW(cudaStreamSynchronize(stream));
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t executable = nullptr;
+  CUDA_CALL_THROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+  const bool launched = contrib::cuda::TryLaunchSoftmaxTopKExpertMaps(
+      d_logits.As<T>(), d_scales.As<float>(), d_indices.As<int>(), d_r2s.As<int>(),
+      d_s2r.As<int>(), d_sorted.As<int>(), d_offsets.As<int64_t>(), rows, experts, k, true, stream);
+  CUDA_CALL_THROW(cudaStreamEndCapture(stream, &graph));
+  ASSERT_TRUE(launched);
+  size_t node_count = 0;
+  CUDA_CALL_THROW(cudaGraphGetNodes(graph, nullptr, &node_count));
+  EXPECT_EQ(node_count, 1u);
+  CUDA_CALL_THROW(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0));
+  std::vector<int> actual_indices(expanded), reference_indices(expanded);
+  std::vector<float> actual_scales(expanded), reference_scales(expanded);
+  std::vector<int> r2s(expanded), s2r(expanded), sorted(expanded);
+  std::vector<int64_t> offsets(experts + 1);
+  d_reference_indices.CopyToHost(reference_indices.data());
+  d_reference_scales.CopyToHost(reference_scales.data());
+  std::vector<int> order(expanded);
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+    return reference_indices[a] < reference_indices[b];
+  });
+  for (int replay = 0; replay < 3; ++replay) {
+    CUDA_CALL_THROW(cudaGraphLaunch(executable, stream));
+    CUDA_CALL_THROW(cudaStreamSynchronize(stream));
+    d_indices.CopyToHost(actual_indices.data());
+    d_scales.CopyToHost(actual_scales.data());
+    d_r2s.CopyToHost(r2s.data());
+    d_s2r.CopyToHost(s2r.data());
+    d_sorted.CopyToHost(sorted.data());
+    d_offsets.CopyToHost(offsets.data());
+    EXPECT_EQ(actual_indices, reference_indices);
+    for (int i = 0; i < expanded; ++i) {
+      EXPECT_NEAR(actual_scales[i], reference_scales[i], 2e-6f);
+      const int original = order[i];
+      const int source = original % k * rows + original / k;
+      EXPECT_EQ(r2s[i], source);
+      EXPECT_EQ(s2r[source], i);
+      EXPECT_EQ(sorted[i], reference_indices[original]);
+    }
+    for (int expert = 0; expert <= experts; ++expert) {
+      EXPECT_EQ(offsets[expert], std::count_if(reference_indices.begin(), reference_indices.end(),
+                                               [&](int selected) { return selected < expert; }));
+    }
+  }
+  CUDA_CALL_THROW(cudaGraphExecDestroy(executable));
+  CUDA_CALL_THROW(cudaGraphDestroy(graph));
+  CUDA_CALL_THROW(cudaStreamDestroy(stream));
+}
+
+TEST(CUDA_EP_Unittest, FusedSoftmaxTopKExpertMaps_NormalizedAndGraphReplay) {
+  for (int rows : {1, 2}) {
+    for (int experts : {1, 7, 32, 65, 256, 511, 512}) {
+      SCOPED_TRACE(::testing::Message() << "rows=" << rows << " experts=" << experts);
+      const int k = std::min(10, experts);
+      RunFusedRoutingMapsTest<float>(rows, experts, k);
+      RunFusedRoutingMapsTest<half>(rows, experts, k);
+      RunFusedRoutingMapsTest<__nv_bfloat16>(rows, experts, k);
+    }
+    RunFusedRoutingMapsTest<__nv_bfloat16>(rows, 512, 16, true);
+    RunFusedRoutingMapsTest<float>(rows, 80, 16, false, true);
+  }
+}
+
+TEST(CUDA_EP_Unittest, FusedSoftmaxTopKExpertMaps_UnsupportedUsesFallback) {
+  auto launch = [](int rows, int experts, int k, bool normalize) {
+    return contrib::cuda::TryLaunchSoftmaxTopKExpertMaps(
+        static_cast<const float*>(nullptr), nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, rows, experts, k, normalize, nullptr);
+  };
+  EXPECT_FALSE(launch(0, 512, 10, true));
+  EXPECT_FALSE(launch(3, 512, 10, true));
+  EXPECT_FALSE(launch(2, 513, 10, true));
+  EXPECT_FALSE(launch(2, 512, 17, true));
+  EXPECT_FALSE(launch(2, 8, 9, true));
+  EXPECT_FALSE(launch(2, 512, 0, true));
+  EXPECT_FALSE(launch(2, 512, 10, false));
+}
+
+TEST(CUDA_EP_Unittest, FusedSoftmaxTopKExpertMaps_WarpSelectSpecialized) {
+  for (int rows : {1, 2}) {
+    for (bool ties : {false, true}) {
+      RunFusedRoutingMapsTest<float>(rows, 512, 10, ties);
+      RunFusedRoutingMapsTest<half>(rows, 512, 10, ties);
+      RunFusedRoutingMapsTest<__nv_bfloat16>(rows, 512, 10, ties);
+    }
+    RunFusedRoutingMapsTest<float>(rows, 512, 10, false, true);
+  }
+}
+
+TEST(CUDA_EP_Unittest, FusedSoftmaxTopKExpertMaps_WarpSelectAdversarialKeys) {
+  for (int rows : {1, 2}) {
+    for (int pattern = 0; pattern < 4; ++pattern) {
+      SCOPED_TRACE(::testing::Message() << "rows=" << rows << " pattern=" << pattern);
+      auto values = MakeLogits(rows, 512);
+      for (int row = 0; row < rows; ++row) {
+        for (int expert = 0; expert < 512; ++expert) {
+          float& value = values[row * 512 + expert];
+          if (pattern == 0) {
+            value = expert % 32 == row ? 32.0f - expert / 32 : -32.0f;
+          } else if (pattern == 1) {
+            value = expert % 2 ? -0.0f : 0.0f;
+          } else if (pattern == 2) {
+            value = expert % 3 ? -std::numeric_limits<float>::infinity()
+                               : std::numeric_limits<float>::quiet_NaN();
+          } else {
+            value = (expert + row) % 7 == 0 ? 1000.0f : -1000.0f;
+          }
+        }
+      }
+      RunFusedRoutingMapsTest<float>(rows, 512, 10, false, false, &values);
+      RunFusedRoutingMapsTest<half>(rows, 512, 10, false, false, &values);
+      RunFusedRoutingMapsTest<__nv_bfloat16>(rows, 512, 10, false, false, &values);
+    }
+  }
+}
+
 }  // namespace
 }  // namespace test
 }  // namespace onnxruntime

@@ -365,6 +365,21 @@ Status PropagateDQForward(Graph& graph, gsl::span<const NodeIndex> node_indices,
       continue;
     }
 
+    if (dq_node.Domain() == kMSDomain) {
+      const auto* scale_type = dq_node.InputDefs()[QDQ::InputIndex::SCALE_ID]->TypeAsProto();
+      const auto* output_type = dq_node.OutputDefs()[0]->TypeAsProto();
+      const auto* input_type = dq_node.InputDefs()[QDQ::InputIndex::INPUT_ID]->TypeAsProto();
+      // The MS quantizer cannot invert FP8, BF16, or independently typed scale/output dequantization.
+      if (graph_utils::GetNodeAttribute(dq_node, "output_dtype") != nullptr ||
+          scale_type == nullptr || output_type == nullptr || input_type == nullptr ||
+          scale_type->tensor_type().elem_type() != output_type->tensor_type().elem_type() ||
+          (scale_type->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto::FLOAT &&
+           scale_type->tensor_type().elem_type() != ONNX_NAMESPACE::TensorProto::FLOAT16) ||
+          input_type->tensor_type().elem_type() == ONNX_NAMESPACE::TensorProto::FLOAT8E4M3FN) {
+        continue;
+      }
+    }
+
     bool dq_zero_point_exists = false;
     if (!QDQ::QOrDQNodeHasConstantScalarScaleAndZeroPoint(dq_node, GraphConstantInitializerGetter{graph},
                                                           dq_zero_point_exists)) {

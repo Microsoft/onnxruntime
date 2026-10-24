@@ -1,5 +1,21 @@
 # QMoE GEMV Profiling Experiments
 
+## Small-decode fused routing and optional warp selection
+
+The packed-INT and FP4 GEMV paths can fuse stable softmax/top-K routing with
+expert-map construction for one or two rows, avoiding separate routing/map
+launches. Unsupported configurations keep the existing routing and map builders.
+
+`ORT_MOE_ROUTING_WARP_SELECT=1` additionally specializes normalized routing
+with 512 experts and top-K=10. One warp per row holds 16 stable packed keys per
+lane, selects ten maxima, and preserves the sequential normalization order.
+A 128-thread block constructs the stable expert maps using the shared helper.
+Other configurations retain the fused sort or generic fallback.
+
+The warp-selection option defaults to `0` and accepts only `0` or `1`.
+Set it before the first invocation. Tests cover FP32/FP16/BF16, ties,
+infinities, expert-map stability, and CUDA graph replay.
+
 This file records QMoE INT4/INT8 GEMV profiling results so future kernel and dispatch changes can be compared against a stable baseline.
 
 > **Note**: These are **point-in-time** measurements captured on the specific GPU, driver, CUDA

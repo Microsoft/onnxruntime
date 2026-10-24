@@ -1028,6 +1028,12 @@ set(all_tests
 )
 
 set(onnxruntime_test_providers_runtime_dependencies)
+if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS AND onnxruntime_USE_FP4_QMOE AND
+    NOT onnxruntime_DISABLE_CONTRIB_OPS)
+  set_property(SOURCE "${TEST_SRC_DIR}/contrib_ops/cuda_kernels/qmoe_fp8_compaction_test.cc"
+    APPEND PROPERTY COMPILE_DEFINITIONS ORT_TEST_NVFP4_GEMV)
+endif()
+
 if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS AND NOT onnxruntime_BUILD_CUDA_EP_AS_PLUGIN)
   if (NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
     set(onnxruntime_test_cuda_kernels_src_patterns "${TEST_SRC_DIR}/contrib_ops/cuda_kernels/*.cc")

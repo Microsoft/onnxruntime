@@ -1562,9 +1562,9 @@ This version of the operator has been available since version 1 of the 'com.micr
 
 ### <a name="com.microsoft.DequantizeLinear"></a><a name="com.microsoft.dequantizelinear">**com.microsoft.DequantizeLinear**</a>
 
-  The linear dequantization operator. It consumes a quantized data, a scale, a zero point and computes the full precision data.
-  The dequantization formula is y = (x - x_zero_point) * x_scale.
-  Scale and zero point must have same shape. They must be either scalar (per tensor) or 1-D tensor (per 'axis').
+  The linear dequantization operator. It consumes quantized data, a scale, and an optional zero point.
+  The dequantization formula is y = (x - x_zero_point) * x_scale. Scale and zero point are scalar
+  or per-axis vectors. FP8 E4M3FN inputs can be dequantized directly to BF16 with FP32 scales.
 
 #### Version
 
@@ -1575,6 +1575,8 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dl>
 <dt><tt>axis</tt> : int</dt>
 <dd>The axis along which same quantization parameters are applied. It's optional.If it's not specified, it means per-tensor quantization and input 'x_scale' and 'x_zero_point' must be scalars.If it's specified, it means per 'axis' quantization and input 'x_scale' and 'x_zero_point' must be 1-D tensors.</dd>
+<dt><tt>output_dtype</tt> : int</dt>
+<dd>Optional output element type. When omitted, the scale element type determines the output type.</dd>
 </dl>
 
 #### Inputs (2 - 3)
@@ -1582,7 +1584,7 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dl>
 <dt><tt>x</tt> : T1</dt>
 <dd>N-D quantized Input tensor to be de-quantized.</dd>
-<dt><tt>x_scale</tt> : T2</dt>
+<dt><tt>x_scale</tt> : TS</dt>
 <dd>Scale for input 'x'. It can be a scalar, which means a per-tensor/layer dequantization, or a 1-D tensor for per-axis dequantization.</dd>
 <dt><tt>x_zero_point</tt> (optional) : T1</dt>
 <dd>Zero point for input 'x'. Shape must match x_scale. It's optional. Zero point is 0 when it's not specified.</dd>
@@ -1598,10 +1600,12 @@ This version of the operator has been available since version 1 of the 'com.micr
 #### Type Constraints
 
 <dl>
-<dt><tt>T1</tt> : tensor(int8), tensor(uint8), tensor(int16), tensor(uint16), tensor(int32), tensor(int4), tensor(uint4)</dt>
-<dd>Constrain 'x' and 'x_zero_point' to 8-bit integer tensors, 16-bit integer tensors, or 32-bit signed integer tensors.</dd>
-<dt><tt>T2</tt> : tensor(float16), tensor(float)</dt>
-<dd>Constrain 'y', 'x_scale' to float tensors.</dd>
+<dt><tt>T1</tt> : tensor(int8), tensor(uint8), tensor(int16), tensor(uint16), tensor(int32), tensor(int4), tensor(uint4), tensor(float8e4m3fn)</dt>
+<dd>Constrain 'x' and 'x_zero_point' to 8-bit integer tensors, 16-bit integer tensors, 32-bit signed integer tensors, or FP8 E4M3FN tensors.</dd>
+<dt><tt>T2</tt> : tensor(float16), tensor(float), tensor(bfloat16)</dt>
+<dd>Constrain the output element type.</dd>
+<dt><tt>TS</tt> : tensor(float16), tensor(float), tensor(bfloat16)</dt>
+<dd>Constrain the scale element type.</dd>
 </dl>
 
 
@@ -3999,7 +4003,9 @@ This version of the operator has been available since version 1 of the 'com.micr
   precision (weight-only W8A16).
   
   The operator multiplies the activation by the transpose of B_scaled and adds the optional bias.
-  The output has shape [..., N] and the same element type as A.
+  The output has shape [..., N] and the same element type as A. When split_sizes is provided,
+  return up to eight consecutive last-dimension partitions instead, equivalent to Split(Y, split_sizes).
+  The partition widths must be positive and sum to N.
 
 #### Version
 
@@ -4010,6 +4016,8 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dl>
 <dt><tt>block_size</tt> : int</dt>
 <dd>Number of consecutive K values that share one weight scale. Default 128.</dd>
+<dt><tt>split_sizes</tt> : list of ints</dt>
+<dd>Optional last-dimension output widths (one to eight positive sizes).</dd>
 </dl>
 
 #### Inputs (3 - 5)
@@ -4027,11 +4035,11 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>Optional bias of shape [N].</dd>
 </dl>
 
-#### Outputs
+#### Outputs (1 - &#8734;)
 
 <dl>
-<dt><tt>Y</tt> : T</dt>
-<dd>Output of shape [..., N] in the activation type.</dd>
+<dt><tt>Y</tt> (variadic) : T</dt>
+<dd>Output(s) of shape [..., N] or [..., split_sizes[i]] in the activation type.</dd>
 </dl>
 
 #### Type Constraints

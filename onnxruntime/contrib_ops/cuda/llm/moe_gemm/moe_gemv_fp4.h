@@ -129,6 +129,15 @@ void launch_moe_gemv_fp4_symmetric(
 // must directly follow the fused-SwiGLU launch below on the same stream and may only read that kernel's output after
 // its own griddepcontrol.wait (see MoeGemvFp4DecodeKernel).
 
+// Native K-packed NVFP4 FC2 with top-k reduction; false leaves unsupported shapes to the caller.
+// The caller must use single-EP/single-TP routing. Each expert result is rounded to T before reduction.
+template <typename T>
+bool try_launch_moe_gemv_nvfp4_fused_finalize(
+    const T* act, const uint8_t* weight, const uint8_t* block_scales, const float* global_scales,
+    const T* bias, T* out, const int* unpermuted_row_to_permuted_row,
+    const int* permuted_row_to_expert, const float* routing_scales, int num_experts,
+    int num_rows, int experts_per_token, int n, int k, cudaStream_t stream);
+
 // Launches the MXFP4 MoE GEMV and fuses interleaved SwiGLU activation.
 //   weight/scales/bias use raw FC1 output width n = 2 * inter_size
 //   out is post-activation [expanded_num_rows, inter_size]

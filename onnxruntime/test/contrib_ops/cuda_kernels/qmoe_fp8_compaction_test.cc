@@ -11,6 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "contrib_ops/cuda/moe/qmoe_kernels.h"
+#ifdef ORT_TEST_NVFP4_GEMV
+#include "contrib_ops/cuda/llm/moe_gemm/moe_gemv_fp4.h"
+#endif
 #include "core/providers/cuda/cuda_common.h"
 #include "core/platform/env_var_utils.h"
 
@@ -23,6 +26,19 @@ namespace test {
 namespace {
 
 namespace qmoe = contrib::cuda;
+#if defined(ORT_TEST_NVFP4_GEMV) || (defined(ENABLE_FP4) && defined(USE_FP4_QMOE))
+bool SupportsSm80OrLater() {
+  int device = 0;
+  cudaDeviceProp properties{};
+  CUDA_CALL_THROW(cudaGetDevice(&device));
+  CUDA_CALL_THROW(cudaGetDeviceProperties(&properties, device));
+  return properties.major >= 8;
+}
+#endif
+
+#ifdef ORT_TEST_NVFP4_GEMV
+namespace gemv = llm::kernels::moe_gemv;
+#endif
 
 struct CudaBuffer {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(CudaBuffer);
@@ -52,6 +68,248 @@ struct CudaBuffer {
   void* data = nullptr;
   size_t bytes;
 };
+
+#ifdef ORT_TEST_NVFP4_GEMV
+template <typename T>
+void TestRoutingMaps(int rows, int experts, int k, bool normalize, bool tied) {
+  std::vector<T> logits(rows * experts);
+  for (int i = 0; i < rows * experts; ++i) {
+    logits[i] = T(tied ? 0.0f : float((i * 73 + i / experts * 11) % 101 - 50) / 16.0f);
+  }
+  const int expanded = rows * k;
+  CudaBuffer input(logits.size() * sizeof(T));
+  CudaBuffer scales(expanded * sizeof(float)), indices(expanded * sizeof(int));
+  CudaBuffer r2u(expanded * sizeof(int)), u2r(expanded * sizeof(int)), sorted(expanded * sizeof(int));
+  CudaBuffer offsets((experts + 1) * sizeof(int64_t));
+  input.Upload(logits.data());
+  qmoe::LaunchSoftmaxTopK(input.As<T>(), scales.As<float>(), indices.As<int>(),
+                          rows, experts, k, normalize, nullptr);
+  ASSERT_TRUE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      indices.As<int>(), r2u.As<int>(), u2r.As<int>(), sorted.As<int>(),
+      offsets.As<int64_t>(), rows, experts, k, nullptr));
+  std::vector<int> expected_indices(expanded), actual_r2u(expanded),
+      actual_u2r(expanded), actual_sorted(expanded);
+  std::vector<int64_t> actual_offsets(experts + 1);
+  indices.Download(expected_indices.data());
+  r2u.Download(actual_r2u.data());
+  u2r.Download(actual_u2r.data());
+  sorted.Download(actual_sorted.data());
+  offsets.Download(actual_offsets.data());
+  std::vector<int> order(expanded);
+  for (int i = 0; i < expanded; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+    return expected_indices[a] < expected_indices[b];
+  });
+  for (int rank = 0; rank < expanded; ++rank) {
+    const int original = order[rank];
+    const int source = (original % k) * rows + original / k;
+    EXPECT_EQ(actual_r2u[rank], source);
+    EXPECT_EQ(actual_u2r[source], rank);
+    EXPECT_EQ(actual_sorted[rank], expected_indices[original]);
+  }
+  for (int expert = 0; expert <= experts; ++expert) {
+    EXPECT_EQ(actual_offsets[expert],
+              std::count_if(expected_indices.begin(), expected_indices.end(),
+                            [&](int selected) { return selected < expert; }));
+  }
+}
+
+TEST(CUDA_EP_Unittest, QMoENvfp4SmallDecodeMapsPreserveStableOrder) {
+  for (int rows : {1, 2}) {
+    for (int experts : {16, 257, 512}) {
+      for (int k : {1, 10, 16}) {
+        for (bool normalize : {false, true}) {
+          for (bool tied : {false, true}) {
+            TestRoutingMaps<half>(rows, experts, k, normalize, tied);
+            TestRoutingMaps<__nv_bfloat16>(rows, experts, k, normalize, tied);
+          }
+        }
+      }
+    }
+  }
+  EXPECT_FALSE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      nullptr, nullptr, nullptr, nullptr, nullptr, 3, 512, 10, nullptr));
+  EXPECT_FALSE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      nullptr, nullptr, nullptr, nullptr, nullptr, 2, 513, 10, nullptr));
+  EXPECT_FALSE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      nullptr, nullptr, nullptr, nullptr, nullptr, 0, 512, 10, nullptr));
+  EXPECT_FALSE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      nullptr, nullptr, nullptr, nullptr, nullptr, 2, 512, 17, nullptr));
+  EXPECT_FALSE(qmoe::TryLaunchSmallDecodeExpertMaps(
+      nullptr, nullptr, nullptr, nullptr, nullptr, 2, 8, 10, nullptr));
+}
+
+template <typename T>
+void TestNvfp4KPackedGateUp(int k, bool use_bias, bool varied_scales = false, int n = 48) {
+  if (!SupportsSm80OrLater()) {
+    GTEST_SKIP() << "NVFP4 K-packed gate/up requires SM80 or newer";
+  }
+  constexpr int experts = 3;
+  constexpr int rows = 4;
+  constexpr std::array<int, rows> routes{2, 0, 2, 1};
+  constexpr std::array<int, rows> source_rows{1, 0, 0, 1};
+  constexpr std::array<float, experts> globals{0.25f, 0.125f, 0.5f};
+  constexpr std::array<float, 8> magnitudes{0, 0.5f, 1, 1.5f, 2, 3, 4, 6};
+  std::vector<T> activations(2 * k), bias(experts * n);
+  std::vector<uint8_t> weights(experts * n * k / 2), scales(experts * n * k / 16);
+  for (size_t i = 0; i < activations.size(); ++i) {
+    activations[i] = T(float(int(i % 11) - 5) / 64.0f);
+  }
+  for (size_t i = 0; i < weights.size(); ++i) weights[i] = static_cast<uint8_t>(i * 37 + 19);
+  for (size_t i = 0; i < scales.size(); ++i) {
+    scales[i] = varied_scales ? static_cast<uint8_t>(i % 127) : (i % 2 ? 0x38 : 0x30);
+  }
+  for (size_t i = 0; i < bias.size(); ++i) bias[i] = T(float(int(i % 7) - 3) / 16.0f);
+  CudaBuffer a(activations.size() * sizeof(T)), w(weights.size()), s(scales.size());
+  CudaBuffer g(sizeof(globals)), b(bias.size() * sizeof(T)), r(sizeof(routes)), sources(sizeof(source_rows));
+  CudaBuffer output(rows * n / 2 * sizeof(T));
+  a.Upload(activations.data());
+  w.Upload(weights.data());
+  s.Upload(scales.data());
+  g.Upload(globals.data());
+  b.Upload(bias.data());
+  r.Upload(routes.data());
+  sources.Upload(source_rows.data());
+  llm::kernels::cutlass_kernels::ActivationParams activation;
+  activation.alpha = 1.0f;
+  activation.beta = 0.25f;
+  activation.limit = 7.0f;
+  gemv::launch_moe_gemv_fp4_symmetric_interleaved_swiglu<T>(
+      a.As<T>(), w.As<uint8_t>(), nullptr, s.As<uint8_t>(), g.As<float>(),
+      use_bias ? b.As<T>() : nullptr, output.As<T>(), nullptr, r.As<int>(),
+      experts, rows, n / 2, k, 16, 90, activation, gemv::MoeGemvConfig::kDefault,
+      false, true, sources.As<int>(), 2, nullptr, true);
+  CUDA_CALL_THROW(cudaGetLastError());
+  std::vector<T> actual(rows * n / 2);
+  output.Download(actual.data());
+  for (int row = 0; row < rows; ++row) {
+    for (int col = 0; col < n; col += 2) {
+      float sums[2]{};
+      for (int pair = 0; pair < 2; ++pair) {
+        const int column = col + pair;
+        for (int d = 0; d < k; ++d) {
+          const uint8_t packed = weights[(routes[row] * n + column) * (k / 2) + d / 2];
+          const int code = (d % 2 ? packed >> 4 : packed) & 15;
+          const uint8_t scale_code = scales[(routes[row] * n + column) * (k / 16) + d / 16];
+          const int exponent = scale_code >> 3;
+          const int mantissa = scale_code & 7;
+          const float block_scale = exponent == 0 ? std::ldexp(float(mantissa), -9)
+                                                  : std::ldexp(1.0f + mantissa * 0.125f, exponent - 7);
+          const float rounded_scale = static_cast<float>(T(block_scale * globals[routes[row]]));
+          const float weight = static_cast<float>(T(magnitudes[code & 7] * (code & 8 ? -1 : 1) * rounded_scale));
+          sums[pair] += weight * static_cast<float>(activations[source_rows[row] * k + d]);
+        }
+        if (use_bias) sums[pair] += static_cast<float>(bias[routes[row] * n + column]);
+      }
+      const float gate = std::min(sums[0], activation.limit);
+      const float up = std::clamp(sums[1], -activation.limit, activation.limit) + activation.beta;
+      const float expected = static_cast<float>(T(gate / (1.0f + std::exp(-gate)) * up));
+      EXPECT_NEAR(static_cast<float>(actual[row * n / 2 + col / 2]), expected,
+                  0.001f + std::abs(expected) * 0.01f)
+          << "row=" << row << ", column=" << col << ", K=" << k << ", bias=" << use_bias;
+    }
+  }
+}
+
+TEST(CUDA_EP_Unittest, QMoENvfp4KPackedGateUpTiling) {
+  for (int k : {144, 2560}) {
+    for (bool use_bias : {false, true}) {
+      TestNvfp4KPackedGateUp<half>(k, use_bias);
+      TestNvfp4KPackedGateUp<__nv_bfloat16>(k, use_bias);
+    }
+  }
+}
+
+TEST(CUDA_EP_Unittest, QMoENvfp4KPackedGateUpScaleRange) {
+  TestNvfp4KPackedGateUp<half>(2560, true, true);
+  TestNvfp4KPackedGateUp<__nv_bfloat16>(2560, true, true);
+}
+
+TEST(CUDA_EP_Unittest, QMoENvfp4KPackedGateUpPartialTiles) {
+  for (int n : {2, 10}) {
+    for (int k : {16, 272}) {
+      for (bool use_bias : {false, true}) {
+        TestNvfp4KPackedGateUp<half>(k, use_bias, false, n);
+        TestNvfp4KPackedGateUp<__nv_bfloat16>(k, use_bias, false, n);
+      }
+    }
+  }
+}
+
+template <typename T>
+void TestNvfp4FusedFinalize(int num_rows, int topk, int k, bool use_bias) {
+  if (!SupportsSm80OrLater()) {
+    GTEST_SKIP() << "NVFP4 fused finalization requires SM80 or newer";
+  }
+  constexpr int n = 50, experts = 3;
+  const int expanded = num_rows * topk;
+  std::vector<T> activations(expanded * k), biases(experts * n);
+  std::vector<uint8_t> weights(experts * n * k / 2), scales(experts * n * k / 16, 0x30);
+  std::vector<float> globals{0.3f, 0.17f, 0.51f}, routing(expanded);
+  std::vector<int> mapping(expanded), expert_ids(expanded);
+  for (size_t i = 0; i < activations.size(); ++i) activations[i] = T(float(int(i % 11) - 5) / 64.0f);
+  for (size_t i = 0; i < weights.size(); ++i) weights[i] = static_cast<uint8_t>(i * 37 + 19);
+  for (size_t i = 0; i < biases.size(); ++i) biases[i] = T(float(int(i % 7) - 3) / 16.0f);
+  for (int i = 0; i < expanded; ++i) {
+    mapping[i] = (i * 7) % expanded;
+    expert_ids[i] = i % experts;
+    routing[i] = float(i % topk + 1) / float(topk * (topk + 1) / 2);
+  }
+  if (topk > 1) mapping[expanded - 1] = -1;
+  if (expanded > 1) expert_ids[expanded / 2] = experts;
+  CudaBuffer a(activations.size() * sizeof(T)), w(weights.size()), s(scales.size());
+  CudaBuffer g(globals.size() * sizeof(float)), b(biases.size() * sizeof(T));
+  CudaBuffer m(mapping.size() * sizeof(int)), e(expert_ids.size() * sizeof(int)), r(routing.size() * sizeof(float));
+  CudaBuffer reference(expanded * n * sizeof(T)), output(num_rows * n * sizeof(T));
+  a.Upload(activations.data());
+  w.Upload(weights.data());
+  s.Upload(scales.data());
+  g.Upload(globals.data());
+  b.Upload(biases.data());
+  m.Upload(mapping.data());
+  e.Upload(expert_ids.data());
+  r.Upload(routing.data());
+  gemv::launch_moe_gemv_fp4_symmetric<T>(
+      a.As<T>(), w.As<uint8_t>(), nullptr, s.As<uint8_t>(), g.As<float>(),
+      use_bias ? b.As<T>() : nullptr, reference.As<T>(), nullptr, e.As<int>(),
+      experts, expanded, n, k, 16, 90, gemv::MoeGemvConfig::kDefault, false, true, nullptr, true);
+  ASSERT_TRUE(gemv::try_launch_moe_gemv_nvfp4_fused_finalize<T>(
+      a.As<T>(), w.As<uint8_t>(), s.As<uint8_t>(), g.As<float>(),
+      use_bias ? b.As<T>() : nullptr, output.As<T>(), m.As<int>(), e.As<int>(), r.As<float>(),
+      experts, num_rows, topk, n, k, nullptr));
+  CUDA_CALL_THROW(cudaGetLastError());
+  std::vector<T> reference_values(expanded * n), actual(num_rows * n);
+  reference.Download(reference_values.data());
+  output.Download(actual.data());
+  for (int row = 0; row < num_rows; ++row) {
+    for (int col = 0; col < n; ++col) {
+      float sum = 0.0f;
+      for (int rank = 0; rank < topk; ++rank) {
+        const int permuted = mapping[rank * num_rows + row];
+        if (permuted >= 0 && expert_ids[permuted] < experts) {
+          sum += routing[row * topk + rank] * static_cast<float>(reference_values[permuted * n + col]);
+        }
+      }
+      const float expected = static_cast<float>(T(sum));
+      EXPECT_NEAR(static_cast<float>(actual[row * n + col]), expected, 1e-5f + std::abs(expected) * 0.01f)
+          << "row=" << row << ", col=" << col << ", topk=" << topk << ", bias=" << use_bias;
+    }
+  }
+}
+
+TEST(CUDA_EP_Unittest, QMoENvfp4FusedFinalizePreservesRoutingAndRounding) {
+  for (int rows : {1, 2}) {
+    for (int topk : {1, 4, 10, 16}) {
+      for (int k : {144, 640}) {
+        for (bool use_bias : {false, true}) {
+          TestNvfp4FusedFinalize<half>(rows, topk, k, use_bias);
+          TestNvfp4FusedFinalize<__nv_bfloat16>(rows, topk, k, use_bias);
+        }
+      }
+    }
+  }
+}
+#endif
 
 TEST(CUDA_EP_Unittest, QMoEFp8CompactExpertsPreservesRoutesAndClearsUnusedSlots) {
   constexpr int num_experts = 512;
@@ -175,16 +433,6 @@ TEST(CUDA_EP_Unittest, QMoEFp8DequantizesOnlySelectedExpertsAndGathersBias) {
                                         : std::ldexp(1.0f + static_cast<float>(mantissa) / 8.0f, exponent - 7);
   return code & 128 ? -magnitude : magnitude;
 }
-
-#if defined(ENABLE_FP4) && defined(USE_FP4_QMOE)
-bool SupportsFp8Gemv() {
-  int device = 0;
-  cudaDeviceProp properties{};
-  CUDA_CALL_THROW(cudaGetDevice(&device));
-  CUDA_CALL_THROW(cudaGetDeviceProperties(&properties, device));
-  return properties.major >= 8;
-}
-#endif
 
 template <typename T, typename S>
 void TestFp8GemvCodeDecoding(int scale_type, int block_size, int k, int fusion, bool graph) {
@@ -426,7 +674,7 @@ void TestNvfp4GemvScaleCodeConfigurations() {
 }
 
 TEST(CUDA_EP_Unittest, QMoENvfp4GemvAllScaleCodesPreserveScaledValuesAndNaNs) {
-  if (!SupportsFp8Gemv()) {
+  if (!SupportsSm80OrLater()) {
     GTEST_SKIP() << "NVFP4 GEMV requires SM80+.";
   }
   TestNvfp4GemvScaleCodeConfigurations();
@@ -436,7 +684,7 @@ TEST(CUDA_EP_Unittest, QMoENvfp4GemvNativeScale) {
   if (!ParseEnvironmentVariableWithDefault<bool>("ORT_NVFP4_GEMV_NATIVE_SCALE", false)) {
     GTEST_SKIP() << "Native-scale coverage runs in its flag-enabled CTest process.";
   }
-  if (!SupportsFp8Gemv() || !onnxruntime::llm::kernels::moe_gemv::Fp4MoeGemvSupportsNativeScale()) {
+  if (!SupportsSm80OrLater() || !onnxruntime::llm::kernels::moe_gemv::Fp4MoeGemvSupportsNativeScale()) {
     GTEST_SKIP() << "Native E4M3 scale conversion requires FP8-enabled kernels compiled for SM90+.";
   }
   TestNvfp4GemvScaleCodeConfigurations();

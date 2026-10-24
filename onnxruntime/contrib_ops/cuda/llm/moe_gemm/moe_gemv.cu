@@ -944,7 +944,12 @@ bool is_moe_gemv_shape_supported(int sm, int64_t expanded_num_rows, int64_t n, i
   if (group_size > 0 && k % group_size != 0) {
     return false;
   }
-  if (expanded_num_rows <= 0 || expanded_num_rows > kMaxProfiledExpandedRows) {
+  const int64_t max_expanded_rows =
+      weight_bits == 2 &&
+              onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_INT2_LARGE_EXPERTS", 1) == 1
+          ? 20
+          : kMaxProfiledExpandedRows;
+  if (expanded_num_rows <= 0 || expanded_num_rows > max_expanded_rows) {
     return false;
   }
   if (n < kMinProfiledProblemDim || k < kMinProfiledProblemDim) {

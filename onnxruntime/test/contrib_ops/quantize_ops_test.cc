@@ -4,10 +4,62 @@
 #include "gtest/gtest.h"
 #include "test/common/tensor_op_test_utils.h"
 #include "test/providers/provider_test_utils.h"
+#include "test/unittest_util/graph_transform_test_builder.h"
+#include "test/util/include/asserts.h"
 #include "test/util/include/default_providers.h"
+#include "test/util/include/inference_session_wrapper.h"
+#include "test/util/include/test_environment.h"
+
+#include <sstream>
 
 namespace onnxruntime {
 namespace test {
+
+TEST(DequantizeLinearOpTest, CpuScaleTypeConstraints) {
+  for (int scale_type : {ONNX_NAMESPACE::TensorProto::FLOAT, ONNX_NAMESPACE::TensorProto::FLOAT16,
+                         ONNX_NAMESPACE::TensorProto::BFLOAT16}) {
+    std::unordered_map<std::string, int> versions{{kOnnxDomain, 19}, {kMSDomain, 1}};
+    Model model("DequantizeLinearCpuScales", false, ModelMetaData(), PathString(),
+                IOnnxRuntimeOpSchemaRegistryList(), versions, {}, DefaultLoggingManager().DefaultLogger());
+    auto& graph = model.MainGraph();
+    ModelTestBuilder builder(graph);
+    auto* input = builder.MakeInput<int8_t>({2}, {-2, 4});
+    NodeArg* scale;
+    if (scale_type == ONNX_NAMESPACE::TensorProto::FLOAT) {
+      scale = builder.MakeScalarInitializer<float>(0.5f);
+    } else if (scale_type == ONNX_NAMESPACE::TensorProto::FLOAT16) {
+      scale = builder.MakeScalarInitializer<MLFloat16>(MLFloat16(0.5f));
+    } else {
+      scale = builder.MakeScalarInitializer<BFloat16>(BFloat16(0.5f));
+    }
+    builder.AddNode("DequantizeLinear", {input, scale}, {builder.MakeOutput()}, kMSDomain)
+        .AddAttribute("output_dtype", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto::FLOAT));
+    builder.SetGraphOutputs();
+    ASSERT_STATUS_OK(graph.Resolve());
+    std::string serialized;
+    ASSERT_TRUE(model.ToProto().SerializeToString(&serialized));
+    SessionOptions options;
+    options.graph_optimization_level = TransformerLevel::Default;
+    InferenceSessionWrapper session(options, GetEnvironment());
+    ASSERT_STATUS_OK(session.RegisterExecutionProvider(DefaultCpuExecutionProvider()));
+    std::istringstream stream(serialized);
+    ASSERT_STATUS_OK(session.Load(stream));
+    const auto status = session.Initialize();
+    if (scale_type == ONNX_NAMESPACE::TensorProto::BFLOAT16) {
+      EXPECT_EQ(status.Code(), common::NOT_IMPLEMENTED) << status.ErrorMessage();
+      EXPECT_NE(status.ErrorMessage().find("DequantizeLinear"), std::string::npos);
+    } else {
+      ASSERT_STATUS_OK(status);
+      std::vector<OrtValue> fetches;
+      ASSERT_STATUS_OK(session.Run(RunOptions{}, builder.feeds_, builder.output_names_, &fetches));
+      ASSERT_EQ(fetches.size(), 1u);
+      const auto actual = fetches[0].Get<Tensor>().DataAsSpan<float>();
+      ASSERT_EQ(actual.size(), 2u);
+      EXPECT_EQ(actual[0], -1.0f);
+      EXPECT_EQ(actual[1], 2.0f);
+    }
+  }
+}
 
 // scalar zero & scale with uint8
 void TestDequantizeLinearPerTensorFloatUint8(bool use_initializer_except_x) {

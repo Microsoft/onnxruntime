@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 #include "core/providers/cuda/cuda_kernel.h"
 
@@ -31,9 +32,34 @@ class MatMulBlockQuantizedFp8Weight final : public onnxruntime::cuda::CudaKernel
   Status ComputeImpl(OpKernelContext* context) const;
 
   int64_t block_size_;
+  std::vector<int64_t> split_sizes_;
   size_t max_dequant_scratch_bytes_;
   bool enable_deep_gemm_;
+  bool shared_expert_;
+  std::vector<int64_t> prefill_weight_offsets_;
 };
+
+struct Fp8GemvOutputSplit {
+  static constexpr int kMaxOutputs = 8;
+  void* outputs[kMaxOutputs]{};
+  int widths[kMaxOutputs]{};
+  int count = 0;
+};
+
+struct Fp8SharedExpertEpilogue {
+  const float* row_gates = nullptr;
+  const void* residual = nullptr;
+};
+
+Status LaunchMatMulFp8SharedExpert(void* y, const void* a, const void* weight,
+                                   const float* scales, int m, int n, int k, int block_size,
+                                   const Fp8SharedExpertEpilogue& epilogue,
+                                   const cudaDeviceProp& device_prop, cudaStream_t stream);
+Status LaunchFp8SharedExpertEpilogue(void* y, const Fp8SharedExpertEpilogue& epilogue,
+                                     int m, int n, cudaStream_t stream);
+
+bool MatMulBlockScaledFp8GemvSupportsSplitOutput(int m, int k, int block_size,
+                                                 const cudaDeviceProp& device_prop);
 
 #if defined(USE_DEEP_GEMM)
 Status LaunchPrepareMatMulFp8DeepGemm(void* a_quant, float* a_scales, const void* a,
@@ -57,7 +83,8 @@ Status LaunchDequantizeBlockScaledFp8(void* b_dequant,
                                       int k,
                                       int block_size,
                                       bool is_bf16,
-                                      cudaStream_t stream);
+                                      cudaStream_t stream,
+                                      bool transpose = false);
 
 // Adds a per-column bias of shape [N] to a [M, N] row-major output in place.
 Status LaunchAddBiasBlockScaledFp8(void* y,
@@ -83,6 +110,8 @@ Status LaunchQuantizeDequantizeActivationFp8(void* a_out,
 // directly (no [N, K] dequant buffer). a is [M, K] activation (FP16/BF16), b_fp8 is [N, K]
 // FP8 E4M3, weight_scale is [N, ceil(K/block_size)] fp32, bias is an optional [N] vector (may be
 // null). Output y is [M, N] in the activation type. Requires k % 16 == 0 and block_size % 16 == 0.
+// A nonempty split descriptor routes tensor-core stores into consecutive column partitions;
+// callers must check MatMulBlockScaledFp8GemvSupportsSplitOutput before using that mode.
 // device_prop selects the tensor-core (mma.m16n8k16) variant, which needs SM80+.
 // act_scale is an optional device fp32 scalar; when non-null the kernel applies the W8A8
 // activation quantize/dequantize inline, bit-identically to LaunchQuantizeDequantizeActivationFp8,
@@ -100,7 +129,8 @@ Status LaunchMatMulBlockScaledFp8Gemv(void* y,
                                       int block_size,
                                       bool is_bf16,
                                       const cudaDeviceProp& device_prop,
-                                      cudaStream_t stream);
+                                      cudaStream_t stream,
+                                      const Fp8GemvOutputSplit& split = {});
 
 // Largest M selected for GEMV dispatch. The tensor-core default is conservative because the
 // crossover with dequantize + cuBLAS depends on the matrix shape; ORT_FP8_GEMV_MAX_M can raise the

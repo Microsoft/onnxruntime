@@ -4,6 +4,7 @@
 #include "contrib_ops/cuda/llm/moe_gemm/moe_gemv_fp4.h"
 
 #include <cuda_fp16.h>
+#include <cuda_fp8.h>
 #include <type_traits>
 
 // Shared INT/FP4 profiled-shape thresholds.
@@ -141,7 +142,7 @@ using Fp4KernelDetailsInterleaved =
 // (interleave_without_bias), i.e. exactly the layout the SM80 grouped GEMM consumes. Selecting
 // this variant lets the decode GEMV read the *same* pre-packed buffer the SM80 prefill uses, so
 // the MXFP4 expert weights are stored once instead of twice (~9 GiB saved for gpt-oss-20b).
-// Each word is un-permuted with a few register ops before the shared packed decode.
+// The un-permutation is a compile-time index remap, so it is free at runtime.
 template <typename T>
 using Fp4KernelDetailsSm80Pair =
     fiv::KernelDetails<typename Fp4ADetails<T>::Type, fiv::Fp4DetailsW, fiv::ColumnMajorInterleaved, true,
@@ -360,24 +361,33 @@ __global__ void MoeGemvFp4RawNPackedKernel(
 #endif
 }
 
-template <typename T, bool FusedSwiGlu, bool EnableBias, int KLanes = 8, bool ReuseExpertRows = false, bool NativeScale = false>
+template <typename T, bool FusedSwiGlu, bool EnableBias, int KLanes = 8,
+          bool ReuseExpertRows = false, bool NativeScale = false, bool FusedFinalize = false>
 __global__ void MoeGemvFp4RawKPackedKernel(
     const T* act, const uint8_t* weight, const uint8_t* block_scales, const float* global_scales,
     const T* bias, T* out,
     const int64_t* expert_first_token_offset, const int* permuted_row_to_expert, int num_experts,
     int64_t weight_expert_stride, int64_t scale_expert_stride, int output_columns, int reduction_size,
     cutlass_kernels::ActivationParams activation_params,
-    const int* permuted_row_to_source_row, int num_rows) {
+    const int* permuted_row_to_source_row, int num_rows,
+    const int* unpermuted_row_to_permuted_row = nullptr, const float* routing_scales = nullptr,
+    int experts_per_token = 0) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   constexpr int kKLanes = KLanes;
   constexpr int kBlockSize = 16;
-  constexpr int kColsPerBlock = 128 / kKLanes;
+  constexpr int kColsPerBlock = FusedFinalize ? 8 : 128 / kKLanes;
+  constexpr int kReductionUnroll = FusedSwiGlu ? 4 : 1;
   static_assert(kKLanes == 4 || kKLanes == 8);
   constexpr unsigned kFullMask = 0xffffffffu;
   using PackedT = std::conditional_t<std::is_same_v<T, half>, half2, __nv_bfloat162>;
 
-  const int row = static_cast<int>(blockIdx.x);
-  int expert = permuted_row_to_expert != nullptr ? permuted_row_to_expert[row] : 0;
+  const int row = FusedFinalize
+                      ? unpermuted_row_to_permuted_row[threadIdx.y * num_rows + blockIdx.x]
+                      : static_cast<int>(blockIdx.x);
+  int expert = row >= 0 && permuted_row_to_expert != nullptr ? permuted_row_to_expert[row] : -1;
+  if constexpr (!FusedFinalize) {
+    if (permuted_row_to_expert == nullptr) expert = 0;
+  }
 #pragma unroll 1
   for (int expert_index = 0; expert_index < num_experts && permuted_row_to_expert == nullptr; ++expert_index) {
     if (row >= static_cast<int>(expert_first_token_offset[expert_index + 1])) {
@@ -386,8 +396,10 @@ __global__ void MoeGemvFp4RawKPackedKernel(
     }
     break;
   }
-  if (expert < 0 || expert >= num_experts) {
-    return;
+  const bool valid_expert = expert >= 0 && expert < num_experts;
+  if (!valid_expert) {
+    if constexpr (!FusedFinalize) return;
+    expert = 0;
   }
 
   const int column = static_cast<int>(blockIdx.y) * kColsPerBlock + threadIdx.x / kKLanes;
@@ -403,7 +415,9 @@ __global__ void MoeGemvFp4RawKPackedKernel(
     }
   }
   const int k_lane = threadIdx.x % kKLanes;
-  const int source_row = permuted_row_to_source_row ? permuted_row_to_source_row[row] % num_rows : row;
+  const int source_row = valid_expert
+                             ? (permuted_row_to_source_row ? permuted_row_to_source_row[row] % num_rows : row)
+                             : 0;
   const T* row_act = act + static_cast<int64_t>(source_row) * reduction_size;
   const int second_source_row = second_row
                                     ? (permuted_row_to_source_row ? permuted_row_to_source_row[row + 1] % num_rows : row + 1)
@@ -415,8 +429,9 @@ __global__ void MoeGemvFp4RawKPackedKernel(
   const T* expert_bias = EnableBias ? bias + static_cast<int64_t>(expert) * output_columns : nullptr;
 
   float accumulators[ReuseExpertRows ? 2 : 1][2] = {};
+#pragma unroll(kReductionUnroll)
   for (int reduction_column = k_lane * kBlockSize;
-       column < output_columns && reduction_column < reduction_size;
+       valid_expert && column < output_columns && reduction_column < reduction_size;
        reduction_column += kKLanes * kBlockSize) {
     uint2 packed = *reinterpret_cast<const uint2*>(
         expert_weight + static_cast<int64_t>(column) * (reduction_size / 2) + reduction_column / 2);
@@ -457,10 +472,36 @@ __global__ void MoeGemvFp4RawKPackedKernel(
   for (int offset = kKLanes / 2; offset > 0; offset /= 2) {
     accumulator += __shfl_xor_sync(kFullMask, accumulator, offset, kKLanes);
   }
-  const float paired_accumulator = __shfl_xor_sync(kFullMask, accumulator, kKLanes);
-  if (k_lane == 0 && column < output_columns && column % 2 == 0) {
-    StoreMoeGemvFp4Pair<T, FusedSwiGlu, EnableBias>(
-        accumulator, paired_accumulator, expert_bias, out, row, column, output_columns, expert, activation_params);
+  if constexpr (FusedFinalize) {
+    __shared__ float expert_results[16][kColsPerBlock];
+    __shared__ bool expert_valid[16];
+    if (threadIdx.x == 0) expert_valid[threadIdx.y] = valid_expert;
+    if (k_lane == 0) {
+      if constexpr (EnableBias) {
+        if (valid_expert && column < output_columns) accumulator += static_cast<float>(expert_bias[column]);
+      }
+      const T rounded = static_cast<T>(accumulator);
+      expert_results[threadIdx.y][threadIdx.x / kKLanes] = static_cast<float>(rounded);
+    }
+    __syncthreads();
+    if (threadIdx.y == 0 && threadIdx.x < kColsPerBlock) {
+      const int output_column = static_cast<int>(blockIdx.y) * kColsPerBlock + threadIdx.x;
+      if (output_column < output_columns) {
+        float sum = 0.0f;
+        for (int route = 0; route < experts_per_token; ++route) {
+          if (expert_valid[route]) {
+            sum += routing_scales[blockIdx.x * experts_per_token + route] * expert_results[route][threadIdx.x];
+          }
+        }
+        out[static_cast<int64_t>(blockIdx.x) * output_columns + output_column] = static_cast<T>(sum);
+      }
+    }
+  } else {
+    const float paired_accumulator = __shfl_xor_sync(kFullMask, accumulator, kKLanes);
+    if (k_lane == 0 && column < output_columns && column % 2 == 0) {
+      StoreMoeGemvFp4Pair<T, FusedSwiGlu, EnableBias>(
+          accumulator, paired_accumulator, expert_bias, out, row, column, output_columns, expert, activation_params);
+    }
   }
   if constexpr (ReuseExpertRows) {
     if (second_row) {
@@ -901,6 +942,43 @@ __global__ void __launch_bounds__(Warps * 32, MinBlocks) MoeGemvFp4DecodeKernel(
 #endif
 }
 
+template <typename T>
+bool try_launch_moe_gemv_nvfp4_fused_finalize(
+    const T* act, const uint8_t* weight, const uint8_t* block_scales, const float* global_scales,
+    const T* bias, T* out, const int* unpermuted_row_to_permuted_row,
+    const int* permuted_row_to_expert, const float* routing_scales, int num_experts,
+    int num_rows, int experts_per_token, int n, int k, cudaStream_t stream) {
+  if (num_rows < 1 || num_rows > 2 || experts_per_token < 1 || experts_per_token > 16 ||
+      n <= 0 || n % 2 != 0 || k <= 0 || k % 16 != 0) {
+    return false;
+  }
+  const dim3 grid(static_cast<unsigned>(num_rows), static_cast<unsigned>((n + 7) / 8));
+  const dim3 block(64, static_cast<unsigned>(experts_per_token));
+  const int64_t weight_stride = static_cast<int64_t>(n) * k / 2;
+  const int64_t scale_stride = static_cast<int64_t>(n) * (k / 16);
+  const cutlass_kernels::ActivationParams activation;
+  if (bias != nullptr) {
+    MoeGemvFp4RawKPackedKernel<T, false, true, 8, false, false, true><<<grid, block, 0, stream>>>(
+        act, weight, block_scales, global_scales, bias, out, nullptr, permuted_row_to_expert,
+        num_experts, weight_stride, scale_stride, n, k, activation, nullptr, num_rows,
+        unpermuted_row_to_permuted_row, routing_scales, experts_per_token);
+  } else {
+    MoeGemvFp4RawKPackedKernel<T, false, false, 8, false, false, true><<<grid, block, 0, stream>>>(
+        act, weight, block_scales, global_scales, bias, out, nullptr, permuted_row_to_expert,
+        num_experts, weight_stride, scale_stride, n, k, activation, nullptr, num_rows,
+        unpermuted_row_to_permuted_row, routing_scales, experts_per_token);
+  }
+  CUDA_CALL_THROW(cudaGetLastError());
+  return true;
+}
+
+template bool try_launch_moe_gemv_nvfp4_fused_finalize<half>(
+    const half*, const uint8_t*, const uint8_t*, const float*, const half*, half*,
+    const int*, const int*, const float*, int, int, int, int, int, cudaStream_t);
+template bool try_launch_moe_gemv_nvfp4_fused_finalize<__nv_bfloat16>(
+    const __nv_bfloat16*, const uint8_t*, const uint8_t*, const float*, const __nv_bfloat16*, __nv_bfloat16*,
+    const int*, const int*, const float*, int, int, int, int, int, cudaStream_t);
+
 // Opt-out for the programmatic dependent launch of FC2 (env ORT_FP4_GEMV_PDL=0).
 static bool Fp4MoeGemvUsePdl() {
   static const bool enabled = onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_FP4_GEMV_PDL", 1) != 0;
@@ -955,10 +1033,11 @@ void LaunchMoeGemvFp4RawNPacked(
     *decode_kernel_launched = false;
   }
   constexpr int kThreads = 128;
-  constexpr int kColsPerBlock = 16;
+  constexpr int kColsPerBlock = FusedSwiGlu ? 8 : 16;
   const int64_t weight_expert_stride = n * k / 2;
   const int64_t scale_expert_stride = n * (k / 16);
-  const dim3 grid(static_cast<unsigned>(expanded_num_rows), static_cast<unsigned>((n + kColsPerBlock - 1) / kColsPerBlock));
+  const int columns_per_block = weights_row_major ? kColsPerBlock : 16;
+  const dim3 grid(static_cast<unsigned>(expanded_num_rows), static_cast<unsigned>((n + columns_per_block - 1) / columns_per_block));
   if (weights_row_major) {
     static const bool enable_expert_reuse =
         onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_NVFP4_FC1_EXPERT_REUSE", 0) == 1;

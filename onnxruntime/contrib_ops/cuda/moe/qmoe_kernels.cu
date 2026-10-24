@@ -224,6 +224,210 @@ __global__ void SoftmaxTopKMergeKernel(const T* logits, float* topk_scales, int*
   }
 }
 
+__device__ __forceinline__ void BuildSmallDecodeExpertMaps(
+    const int* selected, int* row_to_source, int* source_to_row, int* sorted_experts,
+    int64_t* expert_offsets, int rows, int experts, int k) {
+  const int expanded = rows * k;
+  if (threadIdx.x < expanded) {
+    const int original = threadIdx.x;
+    const int expert = selected[original];
+    int rank = 0;
+    for (int i = 0; i < expanded; ++i) {
+      rank += selected[i] < expert || (selected[i] == expert && i < original);
+    }
+    const int source = (original % k) * rows + original / k;
+    row_to_source[rank] = source;
+    source_to_row[source] = rank;
+    sorted_experts[rank] = expert;
+  }
+  for (int expert = threadIdx.x; expert <= experts; expert += blockDim.x) {
+    int count = 0;
+    for (int i = 0; i < expanded; ++i) count += selected[i] < expert;
+    expert_offsets[expert] = count;
+  }
+}
+
+// Two independent 128-thread sorts share a CTA so expert-map construction needs
+// no second launch. The full-CTA barrier keeps both merge-sort groups in lockstep.
+class DecodeRoutingMergeSort
+    : public cub::BlockMergeSortStrategy<uint64_t, cub::NullType, 128, 4, DecodeRoutingMergeSort> {
+  using Base = cub::BlockMergeSortStrategy<uint64_t, cub::NullType, 128, 4, DecodeRoutingMergeSort>;
+
+ public:
+  __device__ explicit DecodeRoutingMergeSort(Base::TempStorage& storage, int tid) : Base(storage, tid) {}
+  __device__ void SyncImplementation() const { __syncthreads(); }
+};
+
+template <typename T>
+__global__ void FusedSoftmaxTopKExpertMapsKernel(
+    const T* logits, float* scales, int* indices, int* row_to_source,
+    int* source_to_row, int* sorted_experts, int64_t* expert_offsets,
+    int rows, int experts, int k) {
+  const int row = threadIdx.x / 128;
+  const int local = threadIdx.x % 128;
+  __shared__ DecodeRoutingMergeSort::TempStorage temp[2];
+  __shared__ float maxima[2];
+  __shared__ float probabilities[2][16];
+  __shared__ int selected[32];
+  uint64_t keys[4];
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    const int expert = local * 4 + j;
+    const bool valid = row < rows && expert < experts;
+    const float value = valid ? static_cast<float>(logits[row * experts + expert])
+                              : onnxruntime::cuda::topk::kNegativeInfinity;
+    keys[j] = onnxruntime::cuda::topk::PackStableSortKey(value, valid ? expert : INT_MAX);
+  }
+  DecodeRoutingMergeSort(temp[row], local).Sort(keys, onnxruntime::cuda::topk::Greater<uint64_t>());
+  if (local == 0) maxima[row] = onnxruntime::cuda::topk::UnpackStableSortScore(keys[0]);
+  __syncthreads();
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    const int rank = local * 4 + j;
+    if (row < rows && rank < k) {
+      const int expert = onnxruntime::cuda::topk::UnpackStableSortIndex(keys[j]);
+      indices[row * k + rank] = expert;
+      selected[row * k + rank] = expert;
+      const float value = expf(onnxruntime::cuda::topk::UnpackStableSortScore(keys[j]) - maxima[row]);
+      probabilities[row][rank] = isfinite(value) ? value : 0.0f;
+    }
+  }
+  __syncthreads();
+  // For normalized routing the full softmax denominator cancels. With at
+  // least one finite maximum, the selected exponential sum is >= 1.
+  if (local == 0 && row < rows) {
+    float sum = 0.0f;
+    for (int rank = 0; rank < k; ++rank) sum += probabilities[row][rank];
+    const float denom = TopKNormalizeDenom(true, sum);
+    for (int rank = 0; rank < k; ++rank) scales[row * k + rank] = probabilities[row][rank] / denom;
+  }
+  BuildSmallDecodeExpertMaps(selected, row_to_source, source_to_row, sorted_experts,
+                             expert_offsets, rows, experts, k);
+}
+
+template <typename T, bool HardwareReduce = false>
+__global__ void WarpSelectSoftmaxTopKExpertMapsKernel(
+    const T* logits, float* scales, int* indices, int* row_to_source,
+    int* source_to_row, int* sorted_experts, int64_t* expert_offsets, int rows) {
+  constexpr int kExperts = 512;
+  constexpr int k = 10;
+  const int row = threadIdx.x / 32;
+  const int lane = threadIdx.x % 32;
+  __shared__ int selected[2 * k];
+  if (row < rows) {
+    uint64_t keys[16];
+#pragma unroll
+    for (int i = 0; i < 16; ++i) {
+      const int expert = lane + i * 32;
+      keys[i] = onnxruntime::cuda::topk::PackStableSortKey(
+          static_cast<float>(logits[row * kExperts + expert]), expert);
+    }
+    float probabilities[k];
+    float maximum = 0.0f;
+    for (int rank = 0; rank < k; ++rank) {
+      uint64_t best = keys[0];
+#pragma unroll
+      for (int i = 1; i < 16; ++i) best = best > keys[i] ? best : keys[i];
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+      if constexpr (HardwareReduce) {
+        // Reduce the packed key lexicographically, retaining stable expert-index ties.
+        const unsigned score = static_cast<unsigned>(best >> 32);
+        const unsigned maximum_score = __reduce_max_sync(0xffffffff, score);
+        const unsigned index = __reduce_max_sync(
+            0xffffffff, score == maximum_score ? static_cast<unsigned>(best) : 0u);
+        best = (static_cast<uint64_t>(maximum_score) << 32) | index;
+      } else
+#endif
+      {
+#pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+          const uint64_t other = __shfl_xor_sync(0xffffffff, static_cast<unsigned long long>(best), offset);
+          best = best > other ? best : other;
+        }
+      }
+#pragma unroll
+      for (int i = 0; i < 16; ++i) {
+        if (keys[i] == best) keys[i] = onnxruntime::cuda::topk::kPaddingSortKey;
+      }
+      if (lane == 0) {
+        const float score = onnxruntime::cuda::topk::UnpackStableSortScore(best);
+        if (rank == 0) maximum = score;
+        const float value = expf(score - maximum);
+        probabilities[rank] = isfinite(value) ? value : 0.0f;
+        const int expert = onnxruntime::cuda::topk::UnpackStableSortIndex(best);
+        selected[row * k + rank] = expert;
+        indices[row * k + rank] = expert;
+      }
+    }
+    if (lane == 0) {
+      float sum = 0.0f;
+      for (int rank = 0; rank < k; ++rank) sum += probabilities[rank];
+      const float denom = TopKNormalizeDenom(true, sum);
+      for (int rank = 0; rank < k; ++rank) scales[row * k + rank] = probabilities[rank] / denom;
+    }
+  }
+  __syncthreads();
+  BuildSmallDecodeExpertMaps(selected, row_to_source, source_to_row, sorted_experts,
+                             expert_offsets, rows, kExperts, k);
+}
+
+template <typename T>
+bool TryLaunchSoftmaxTopKExpertMaps(
+    const T* logits, float* scales, int* indices, int* row_to_source,
+    int* source_to_row, int* sorted_experts, int64_t* expert_offsets,
+    int rows, int experts, int k, bool normalize, cudaStream_t stream) {
+  if (!normalize || rows < 1 || rows > 2 || experts < 1 || experts > 512 ||
+      k < 1 || k > 16 || k > experts) {
+    return false;
+  }
+  static const int warp_select =
+      ParseEnvironmentVariableWithDefault<int>("ORT_MOE_ROUTING_WARP_SELECT", 0);
+  ORT_ENFORCE(warp_select >= 0 && warp_select <= 2,
+              "ORT_MOE_ROUTING_WARP_SELECT must be 0, 1 or 2.");
+  if (warp_select == 2 && experts == 512 && k == 10) {
+    WarpSelectSoftmaxTopKExpertMapsKernel<T, true><<<1, 128, 0, stream>>>(
+        logits, scales, indices, row_to_source, source_to_row, sorted_experts, expert_offsets, rows);
+  } else if (warp_select == 1 && experts == 512 && k == 10) {
+    WarpSelectSoftmaxTopKExpertMapsKernel<<<1, 128, 0, stream>>>(
+        logits, scales, indices, row_to_source, source_to_row, sorted_experts, expert_offsets, rows);
+  } else {
+    FusedSoftmaxTopKExpertMapsKernel<<<1, 256, 0, stream>>>(
+        logits, scales, indices, row_to_source, source_to_row, sorted_experts,
+        expert_offsets, rows, experts, k);
+  }
+  CUDA_CALL_THROW(cudaGetLastError());
+  return true;
+}
+
+#define INSTANTIATE_FUSED_ROUTING_MAPS(T)                                \
+  template bool TryLaunchSoftmaxTopKExpertMaps<T>(                       \
+      const T*, float*, int*, int*, int*, int*, int64_t*, int, int, int, \
+      bool, cudaStream_t);
+INSTANTIATE_FUSED_ROUTING_MAPS(float)
+INSTANTIATE_FUSED_ROUTING_MAPS(half)
+INSTANTIATE_FUSED_ROUTING_MAPS(__nv_bfloat16)
+#undef INSTANTIATE_FUSED_ROUTING_MAPS
+
+__global__ void SmallDecodeExpertMapsKernel(
+    const int* indices, int* row_to_source, int* source_to_row, int* sorted_experts,
+    int64_t* expert_offsets, int rows, int experts, int k) {
+  __shared__ int selected[32];
+  if (threadIdx.x < rows * k) selected[threadIdx.x] = indices[threadIdx.x];
+  __syncthreads();
+  BuildSmallDecodeExpertMaps(selected, row_to_source, source_to_row, sorted_experts,
+                             expert_offsets, rows, experts, k);
+}
+
+bool TryLaunchSmallDecodeExpertMaps(
+    const int* indices, int* row_to_source, int* source_to_row, int* sorted_experts,
+    int64_t* expert_offsets, int rows, int experts, int k, cudaStream_t stream) {
+  if (rows < 1 || rows > 2 || experts < 1 || experts > 512 || k < 1 || k > 16 || k > experts) return false;
+  SmallDecodeExpertMapsKernel<<<1, 128, 0, stream>>>(
+      indices, row_to_source, source_to_row, sorted_experts, expert_offsets, rows, experts, k);
+  CUDA_CALL_THROW(cudaGetLastError());
+  return true;
+}
+
 // Warp-bitonic softmax + top-k for num_experts <= 32. Each warp handles one
 // row, with lane `l` owning expert `l`. The whole softmax reduction and the
 // sort are done with warp shuffles (no shared memory). This is the fastest path

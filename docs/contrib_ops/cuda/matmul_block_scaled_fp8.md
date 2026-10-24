@@ -342,3 +342,42 @@ Python load locations before Python benchmarks (or reinstall the wheel):
 cp "$ORT_BUILD/libonnxruntime_providers_cuda.so" \
   "$ORT_BUILD/onnxruntime/capi/libonnxruntime_providers_cuda.so"
 ```
+
+### Shared-expert fusion (opt-in)
+
+With `shared_expert=1`, `A` is the BF16 up branch. Four appended BF16 inputs
+are required: index 9 `shared_silu_gate` (same shape as `A`), index 10
+`shared_gate_activation` (same leading dimensions, arbitrary positive last
+width `H`), index 11 `shared_gate_weight` (`[H, 1]`), and index 12
+`shared_residual` (same shape as `Y`). Indices 6-8 remain reserved for original
+prefill weights; they must be absent in shared-expert mode. Bias, activation
+quantization, split outputs and prefill-weight overrides are not supported
+with this mode. Ordinary invocations retain their existing semantics.
+
+The operation preserves the unfused BF16 rounding boundaries:
+
+```
+prepared = bf16(A * bf16(shared_silu_gate * sigmoid_bf16(shared_silu_gate)))
+down = bf16(prepared @ dequant(B).T)
+gate = sigmoid_bf16(bf16(shared_gate_activation @ shared_gate_weight))
+Y = bf16(bf16(down * gate) + shared_residual)
+```
+
+`sigmoid_bf16` uses BF16 intermediates, including the negative-input
+subtraction, matching `SigmoidGateMul(sigmoid_in_fp32=0)`. The projected
+gate uses the same 256-thread CUB reduction as that operator. Input 5
+`prefill_numerics` still selects the original FP8 projection numerical path.
+
+One preparation kernel computes both SiLU/up and projected row gates. On SM90,
+eligible one/two-row tensor-core GEMV invocations reuse the original MMA body
+and absorb the gate/residual epilogue into its stores (two total launches
+instead of three). Other architectures, disabled MMA, larger M, small or
+unaligned K and dense-prefill paths retain the existing projection
+dispatch and run a separate epilogue. No weights are transformed by the fusion.
+The focused native tests compare bit-exactly against the three original CUDA
+operators, including dense-prefill and generic fallbacks.
+
+
+Optional CPU input 5 selects dense-prefill numerics. Optional inputs 6-8 and `prefill_weight_offsets` preserve the original projection weights/layout when a packed decode projection differs. They are mutually exclusive with shared-expert mode.
+
+Shared-expert preparation depends on the projected-gate helpers from companion PR #33470.

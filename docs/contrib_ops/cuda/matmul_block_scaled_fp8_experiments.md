@@ -1,5 +1,20 @@
 # MatMulBlockQuantizedFp8Weight - CUDA Experiments
 
+## Opt-in two-row per-column specialization
+
+`ORT_FP8_GEMV_PER_COLUMN_S2=1` specializes the existing MMA GEMV body for
+two-row weight-only projections with one scale per output column
+(`block_size == K`, no activation scale, and no pinned-residency dispatch).
+It removes per-block scale indexing and activation-QDQ bookkeeping while
+retaining the MMA accumulation, K-split reduction, optional bias, and split
+outputs. Unsupported shapes and activation-QDQ inputs retain existing dispatch.
+The default is `0`; other integer values are rejected. Set the option before
+the first applicable invocation.
+
+FP16 and BF16 exact-output tests cover K=320/640/2560/6144, partial output
+tiles, bias, and both normal and split outputs. Performance results from
+experimental packages do not qualify model accuracy or arbitrary shapes.
+
 This document records CUDA performance experiments for
 **MatMulBlockQuantizedFp8Weight** (`com.microsoft::MatMulBlockQuantizedFp8Weight`).
 It includes retained optimizations and their measured effect so future tuning

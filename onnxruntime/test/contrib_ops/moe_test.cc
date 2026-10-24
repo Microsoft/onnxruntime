@@ -2029,7 +2029,9 @@ static void RunQMoEMixedWidthCudaIdentityTest(int64_t fc1_bits, int64_t fc2_bits
                                               bool expect_scratch_failure = true,
                                               bool use_initializers = false,
                                               int64_t num_rows = 1,
-                                              int64_t row_tile_size = 0) {
+                                              int64_t row_tile_size = 0,
+                                              int64_t weights_prepacked = 0,
+                                              const char* expected_error = "") {
   constexpr int64_t num_experts = 1;
 
   auto make_identity = [block_size](int64_t bits, int64_t rows, int64_t columns,
@@ -2094,7 +2096,7 @@ static void RunQMoEMixedWidthCudaIdentityTest(int64_t fc1_bits, int64_t fc2_bits
   if (fc2_bits != expert_bits) {
     tester.AddAttribute<int64_t>("fc2_expert_weight_bits", fc2_bits);
   }
-  tester.AddAttribute<int64_t>("weights_prepacked", 0);
+  tester.AddAttribute<int64_t>("weights_prepacked", weights_prepacked);
   tester.AddAttribute<int64_t>("block_size", block_size);
   if (use_bf16) {
     tester.AddInput<BFloat16>("input", {num_rows, hidden_size}, ToBFloat16(input));
@@ -2157,10 +2159,14 @@ static void RunQMoEMixedWidthCudaIdentityTest(int64_t fc1_bits, int64_t fc2_bits
     ASSERT_STATUS_OK(session_options.config_options.AddConfigEntry(
         "ep.cuda.qmoe_row_tile_size", std::to_string(row_tile_size).c_str()));
   }
+  const bool scratch_failure = max_scratch_bytes > 0 && expect_scratch_failure;
+  const bool expect_failure = expected_error[0] != '\0' || scratch_failure;
+  const char* failure_message = expected_error[0] != '\0'
+                                    ? expected_error
+                                    : (scratch_failure ? "exceeding the configured limit" : "");
   tester.Run(session_options,
-             max_scratch_bytes > 0 && expect_scratch_failure ? OpTester::ExpectResult::kExpectFailure
-                                                             : OpTester::ExpectResult::kExpectSuccess,
-             max_scratch_bytes > 0 && expect_scratch_failure ? "exceeding the configured limit" : "",
+             expect_failure ? OpTester::ExpectResult::kExpectFailure : OpTester::ExpectResult::kExpectSuccess,
+             failure_message,
              {}, nullptr, &execution_providers);
 }
 
@@ -2238,14 +2244,22 @@ TEST(MoETest, QMoETest_Int2CudaPackedDecodeBlock128) {
       /*expect_scratch_failure=*/false, /*use_initializers=*/true);
 }
 
+TEST(MoETest, QMoETest_Int2CudaPrepackedRejectsRawFallback) {
+  if (!HasCudaEnvironment(800)) {
+    GTEST_SKIP() << "CUDA device with compute capability 8.0 or newer is required.";
+  }
+  // No fused SwiGLU: the packed paths must reject before interpreting any weight bytes.
+  RunQMoEMixedWidthCudaIdentityTest(
+      2, 2, 0, false, false, false, 64, 64, 64, false, true, 1, 0, 1,
+      "Prepacked INT2 requires a supported packed GEMV or grouped-GEMM configuration");
+}
+
 // Runs the same multi-row, multi-expert, k=2 INT2 SwiGLU model once with the packed GEMV
 // path selected and once with it disabled (forcing the already-validated dense fallback from
 // #32743), so a stride/permutation/top-k bug in the new packed pipeline shows up as a numeric
 // mismatch instead of only a shape or gate mismatch.
-static std::vector<float> RunQMoEPackedIntGemvParityCase(bool disable_packed_gemv) {
-  constexpr int64_t num_rows = 4;
-  constexpr int64_t num_experts = 4;
-  constexpr int64_t k = 2;
+static std::vector<float> RunQMoEPackedIntGemvParityCase(
+    bool disable_packed_gemv, int64_t num_rows = 4, int64_t num_experts = 4, int64_t k = 2) {
   constexpr int64_t hidden_size = 512;
   constexpr int64_t inter_size = 512;
   constexpr int64_t block_size = 64;
@@ -2264,16 +2278,16 @@ static std::vector<float> RunQMoEPackedIntGemvParityCase(bool disable_packed_gem
     value = static_cast<float>(next_rand() % 17) * 0.05f - 0.4f;
   }
 
-  // Give each row a distinct preferred expert pair so k=2 top-k selection and the resulting
-  // expert permutation differ across rows.
-  constexpr int64_t preferred_pairs[num_rows][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+  // Favor high-numbered experts too, exercising the full expert-map range.
   std::vector<float> router_probs(static_cast<size_t>(num_rows * num_experts));
   for (int64_t row = 0; row < num_rows; ++row) {
     for (int64_t e = 0; e < num_experts; ++e) {
       router_probs[static_cast<size_t>(row * num_experts + e)] = 0.1f * static_cast<float>(e);
     }
-    router_probs[static_cast<size_t>(row * num_experts + preferred_pairs[row][0])] = 3.0f;
-    router_probs[static_cast<size_t>(row * num_experts + preferred_pairs[row][1])] = 2.0f;
+    for (int64_t rank = 0; rank < k; ++rank) {
+      const int64_t expert = (num_experts - 1 - row - rank + num_experts) % num_experts;
+      router_probs[static_cast<size_t>(row * num_experts + expert)] = 100.0f - static_cast<float>(rank);
+    }
   }
 
   // Each expert's weight is a "shifted identity": row r picks out input column
@@ -2357,6 +2371,7 @@ static std::vector<float> RunQMoEPackedIntGemvParityCase(bool disable_packed_gem
   EnvVarMap env_overrides;
   if (disable_packed_gemv) {
     env_overrides["ORT_DISABLE_MOE_GEMV"] = "1";
+    env_overrides["ORT_ENABLE_QMOE_INT2_PREFILL"] = "0";
   }
   ScopedEnvironmentVariables scoped_env_vars{env_overrides};
 
@@ -2381,6 +2396,21 @@ TEST(MoETest, QMoETest_Int2CudaPackedDecodeMultiRowExpertParity) {
   ASSERT_EQ(packed_output.size(), dense_output.size());
   for (size_t i = 0; i < packed_output.size(); ++i) {
     EXPECT_NEAR(packed_output[i], dense_output[i], 0.02f) << "mismatch at index " << i;
+  }
+}
+
+TEST(MoETest, QMoETest_Int2Cuda512ExpertsTop10Parity) {
+  if (!HasCudaEnvironment(800)) {
+    GTEST_SKIP() << "CUDA device with compute capability 8.0 or newer is required.";
+  }
+  for (const int64_t rows : {1, 2, 3, 32}) {
+    SCOPED_TRACE(rows);
+    const auto packed = RunQMoEPackedIntGemvParityCase(false, rows, 512, 10);
+    const auto dense = RunQMoEPackedIntGemvParityCase(true, rows, 512, 10);
+    ASSERT_EQ(packed.size(), dense.size());
+    for (size_t i = 0; i < packed.size(); ++i) {
+      EXPECT_NEAR(packed[i], dense[i], 0.02f) << "mismatch at index " << i;
+    }
   }
 }
 
@@ -2620,8 +2650,8 @@ template <typename ElementType>
 static void RunQMoEPackedPrefillRoutingTest(int64_t num_rows, int64_t hidden_size, int64_t inter_size,
                                             int64_t top_k, bool skewed, bool scale_initializers = true,
                                             int64_t row_tile_size = 0, int64_t block_size = 64,
-                                            int64_t fc1_bits = 2, int64_t fc2_bits = 4) {
-  constexpr int64_t num_experts = 8;
+                                            int64_t fc1_bits = 2, int64_t fc2_bits = 4,
+                                            int64_t num_experts = 8) {
   constexpr float alpha = 1.5f;
   constexpr float beta = 0.125f;
   constexpr float limit = 0.5f;
@@ -2634,7 +2664,7 @@ static void RunQMoEPackedPrefillRoutingTest(int64_t num_rows, int64_t hidden_siz
     return 0.125f * static_cast<float>(expert + 1) +
            0.015625f * static_cast<float>(column % 5) + 0.03125f * static_cast<float>(block);
   };
-  const auto make_weights = [](int64_t rows, int64_t columns, int64_t bits, bool interleaved) {
+  const auto make_weights = [num_experts](int64_t rows, int64_t columns, int64_t bits, bool interleaved) {
     const int64_t pack_size = 8 / bits;
     const uint8_t zero = static_cast<uint8_t>(1u << (bits - 1));
     std::vector<uint8_t> weights(static_cast<size_t>(num_experts * rows * columns / pack_size), 0);
@@ -2762,6 +2792,7 @@ TEST(MoETest, QMoETest_MixedWidthCudaPackedPrefillRouting) {
   if (!HasCudaEnvironment(800)) {
     GTEST_SKIP() << "SM80 or later is required for packed INT2 prefill.";
   }
+
   ScopedEnvironmentVariables scoped_env_vars{
       {{"ORT_DISABLE_MOE_GEMV", "1"}, {"ORT_ENABLE_QMOE_INT2_PREFILL", "1"}}};
   for (int64_t top_k : {1, 2, 4}) {
@@ -2770,6 +2801,20 @@ TEST(MoETest, QMoETest_MixedWidthCudaPackedPrefillRouting) {
       RunQMoEPackedPrefillRoutingTest<MLFloat16>(33, 512, 256, top_k, skewed);
 #if defined(ENABLE_BF16)
       RunQMoEPackedPrefillRoutingTest<BFloat16>(257, 512, 256, top_k, skewed);
+#endif
+    }
+  }
+}
+
+TEST(MoETest, QMoETest_CudaColumnTiledFinalize) {
+  if (!HasCudaEnvironment(800)) {
+    GTEST_SKIP() << "SM80 or later is required for packed INT2 decode.";
+  }
+  for (int64_t rows : {1, 2}) {
+    for (int64_t hidden : {2560, 2624}) {
+      RunQMoEPackedPrefillRoutingTest<MLFloat16>(rows, hidden, 128, 10, false, true, 0, 64, 2, 4, 16);
+#if defined(ENABLE_BF16)
+      RunQMoEPackedPrefillRoutingTest<BFloat16>(rows, hidden, 128, 10, false, true, 0, 64, 2, 4, 16);
 #endif
     }
   }

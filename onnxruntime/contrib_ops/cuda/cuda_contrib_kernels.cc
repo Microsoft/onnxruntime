@@ -170,6 +170,9 @@ class CUDA_MS_OP_TYPED_CLASS_NAME(1, BFloat16, LinearAttention);
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, float, GatedDeltaNet);
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, MLFloat16, GatedDeltaNet);
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, BFloat16, GatedDeltaNet);
+#if !defined(DISABLE_FLOAT8_TYPES)
+class CUDA_MS_OP_TYPED_CLASS_NAME(1, Float8E4M3FN_BFloat16, DequantizeLinear);
+#endif
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, float, LinearAttentionGate);
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, MLFloat16, LinearAttentionGate);
 class CUDA_MS_OP_TYPED_CLASS_NAME(1, BFloat16, LinearAttentionGate);
@@ -537,6 +540,9 @@ Status RegisterCudaContribKernels(KernelRegistry& kernel_registry) {
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, float, GatedDeltaNet)>,
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, MLFloat16, GatedDeltaNet)>,
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, BFloat16, GatedDeltaNet)>,
+#if !defined(DISABLE_FLOAT8_TYPES)
+      BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, Float8E4M3FN_BFloat16, DequantizeLinear)>,
+#endif
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, float, LinearAttentionGate)>,
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, MLFloat16, LinearAttentionGate)>,
       BuildKernelCreateInfo<CUDA_MS_OP_TYPED_CLASS_NAME(1, BFloat16, LinearAttentionGate)>,

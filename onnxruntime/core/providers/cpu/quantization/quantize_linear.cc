@@ -274,6 +274,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     uint8_t,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<uint8_t>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<uint8_t>);
 
@@ -283,6 +284,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     int8_t,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<int8_t>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<int8_t>);
 
@@ -292,6 +294,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     uint16_t,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<uint16_t>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<uint16_t>);
 
@@ -301,6 +304,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     int16_t,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<int16_t>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<int16_t>);
 
@@ -310,6 +314,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     int32_t,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<int32_t>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<int32_t>);
 
@@ -319,6 +324,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     Int4x2,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<Int4x2>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<Int4x2>);
 
@@ -328,6 +334,7 @@ ONNX_CPU_OPERATOR_TYPED_MS_KERNEL(
     UInt4x2,
     KernelDefBuilder()
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<UInt4x2>())
+        .TypeConstraint("TS", {DataTypeImpl::GetTensorType<float>(), DataTypeImpl::GetTensorType<MLFloat16>()})
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<float>()),
     DequantizeLinear<UInt4x2>);
 

@@ -68,7 +68,7 @@ class QMoE final : public CudaKernel, public MoEBase {
   // ``[E, N, K / (8 / bits)]`` weight initializer; ``packed_buf`` receives a
   // GPU buffer in the kernel-expected ``[E, K, N / (8 / bits)]`` layout.
   void PrePackIntExpertWeights(const Tensor& tensor, cudaStream_t stream, AllocatorPtr alloc,
-                               IAllocatorUniquePtr<void>& packed_buf, bool& is_packed, int64_t weight_bits);
+                               std::shared_ptr<void>& packed_buf, bool& is_packed, int64_t weight_bits);
   int64_t expert_weight_bits_;
   int64_t fc1_expert_weight_bits_;
   int64_t fc2_expert_weight_bits_;
@@ -115,6 +115,7 @@ class QMoE final : public CudaKernel, public MoEBase {
   bool enable_kernel_debug_info_ = false;
   bool enable_int2_gemv_ = false;
   bool enable_int2_prefill_ = false;
+  bool enable_int2_large_experts_ = false;
   int64_t row_tile_size_ = qmoe::kDisabledRowTileSize;
   int64_t int_dequant_max_scratch_bytes_ = int64_t{1} << 30;
 
@@ -139,8 +140,8 @@ class QMoE final : public CudaKernel, public MoEBase {
   //   pre-prepack the weights offline using ``pack_weights_for_cuda_mixed_gemm``,
   //   which is asymmetric with how ``MatMulNBits`` is consumed and forces
   //   a CUDA-enabled ORT build for any offline quantization tooling.
-  IAllocatorUniquePtr<void> packed_fc1_weights_;
-  IAllocatorUniquePtr<void> packed_fc2_weights_;
+  std::shared_ptr<void> packed_fc1_weights_;
+  std::shared_ptr<void> packed_fc2_weights_;
   IAllocatorUniquePtr<void> packed_fc1_scales_;
   IAllocatorUniquePtr<void> packed_fc1_bias_;
   IAllocatorUniquePtr<void> packed_fc2_scales_;
