@@ -60,6 +60,17 @@
 #include <vector>
 
 namespace onnxruntime {
+namespace qnn {
+
+struct EpContextDataCallbacks {
+  OrtReadNamedBufferFunc read_func = nullptr;
+  void* read_state = nullptr;
+  OrtWriteNamedBufferFunc write_func = nullptr;
+  void* write_state = nullptr;
+};
+
+}  // namespace qnn
+
 #if BUILD_QNN_EP_STATIC_LIB
 using Node_EdgeEnd = Node::EdgeEnd;
 #endif

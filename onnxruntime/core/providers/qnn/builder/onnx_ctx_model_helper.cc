@@ -14,6 +14,20 @@
 
 namespace onnxruntime {
 namespace qnn {
+namespace {
+
+Status ConvertAndReleaseCallbackStatus(OrtStatus* status) {
+  Ort::Status callback_status{status};
+  if (callback_status.IsOK()) {
+    return Status::OK();
+  }
+
+  return Status(common::StatusCategory::ONNXRUNTIME,
+                static_cast<int>(callback_status.GetErrorCode()),
+                callback_status.GetErrorMessage());
+}
+
+}  // namespace
 
 bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer) {
   // It's an Onnx model with Qnn context cache binary if it has a node with EPContext type
@@ -86,7 +100,8 @@ Status GetEpContextFromMainNode(const onnxruntime::Node& main_context_node,
                                 const onnxruntime::PathString& ctx_onnx_model_path,
                                 QnnBackendManager* qnn_backend_manager,
                                 QnnModelLookupTable& qnn_models,
-                                int64_t max_spill_fill_size) {
+                                int64_t max_spill_fill_size,
+                                const EpContextDataCallbacks& callbacks) {
   ORT_RETURN_IF_NOT(EPCONTEXT_OP == main_context_node.OpType(), "Should only filter in the EPContext node.");
   NodeAttrHelper node_helper(main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
@@ -104,6 +119,32 @@ Status GetEpContextFromMainNode(const onnxruntime::Node& main_context_node,
   std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
   std::string external_qnn_ctx_binary_file_name = node_helper.Get(EP_CACHE_CONTEXT, "");
   ORT_RETURN_IF(external_qnn_ctx_binary_file_name.empty(), "The file path in ep_cache_context should not be empty.");
+
+  if (callbacks.read_func != nullptr) {
+    Ort::AllocatorWithDefaultOptions allocator;
+    void* context_buffer = nullptr;
+    size_t context_buffer_size = 0;
+    OrtStatus* callback_status = callbacks.read_func(callbacks.read_state,
+                                                     external_qnn_ctx_binary_file_name.c_str(),
+                                                     allocator,
+                                                     &context_buffer,
+                                                     &context_buffer_size);
+    std::unique_ptr<void, Ort::detail::AllocatedFree> context_buffer_guard{
+        context_buffer, Ort::detail::AllocatedFree{allocator}};
+    ORT_RETURN_IF_ERROR(ConvertAndReleaseCallbackStatus(callback_status));
+    if (context_buffer_size == 0) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "QNN EPContext read callback returned an empty payload.");
+    }
+    ORT_RETURN_IF(context_buffer == nullptr && context_buffer_size != 0,
+                  "EPContext read callback returned a null buffer for non-empty QNN context data.");
+    return qnn_backend_manager->LoadCachedQnnContextFromBuffer(static_cast<char*>(context_buffer),
+                                                               static_cast<uint64_t>(context_buffer_size),
+                                                               "",
+                                                               main_context_node.Name(),
+                                                               qnn_models,
+                                                               max_spill_fill_size);
+  }
 
   // Validate that the cache path does not escape the model directory.
   // Rejects absolute paths, ".." traversal, and symlink-based escapes.
@@ -190,10 +231,11 @@ Status LoadQnnCtxFromOnnxGraph(const onnxruntime::GraphViewer& graph_viewer,
                                QnnBackendManager* qnn_backend_manager,
                                QnnModelLookupTable& qnn_models,
                                const logging::Logger& logger,
-                               int64_t max_spill_fill_size) {
+                               int64_t max_spill_fill_size,
+                               const EpContextDataCallbacks& callbacks) {
   ORT_RETURN_IF(graph_viewer.NumberOfNodes() != 1, "One filtered graph should has only one EPContext node!");
   Status status = GetEpContextFromMainNode(*graph_viewer.Nodes().begin(), ctx_onnx_model_path, qnn_backend_manager,
-                                           qnn_models, max_spill_fill_size);
+                                           qnn_models, max_spill_fill_size, callbacks);
 
   // This is the protocol with customer that status with INVALID_GRAPH will be generated if failed to load context model
   if (!status.IsOK()) {
@@ -215,7 +257,8 @@ Status CreateEPContextNodes(Model* model,
                             uint64_t max_spill_fill_buffer_size,
                             const logging::Logger& logger,
                             bool share_ep_contexts,
-                            bool stop_share_ep_contexts) {
+                            bool stop_share_ep_contexts,
+                            const EpContextDataCallbacks& callbacks) {
   auto& graph = model->MainGraph();
 
   using namespace ONNX_NAMESPACE;
@@ -281,12 +324,19 @@ Status CreateEPContextNodes(Model* model,
         // Write the ctx.bin file for the case: 1. no share_ep_context enabled, write for every session
         // 2. share_ep_context enabled, only write for the last session which has stop_share_ep_contexts enabled
         if (!share_ep_contexts || (share_ep_contexts && stop_share_ep_contexts)) {
-          std::ofstream of_stream(context_bin_path.c_str(), std::ofstream::binary);
-          if (!of_stream) {
-            LOGS(logger, ERROR) << "Failed to open create context file.";
-            return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to open context cache file.");
+          if (callbacks.write_func != nullptr) {
+            ORT_RETURN_IF_ERROR(ConvertAndReleaseCallbackStatus(callbacks.write_func(callbacks.write_state,
+                                                                                     context_cache_name.c_str(),
+                                                                                     buffer,
+                                                                                     SafeInt<size_t>(buffer_size))));
+          } else {
+            std::ofstream of_stream(context_bin_path.c_str(), std::ofstream::binary);
+            if (!of_stream) {
+              LOGS(logger, ERROR) << "Failed to open create context file.";
+              return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to open context cache file.");
+            }
+            of_stream.write(reinterpret_cast<char*>(buffer), buffer_size);
           }
-          of_stream.write(reinterpret_cast<char*>(buffer), buffer_size);
         }
 
         ep_node.AddAttribute(EP_CACHE_CONTEXT, context_cache_name);

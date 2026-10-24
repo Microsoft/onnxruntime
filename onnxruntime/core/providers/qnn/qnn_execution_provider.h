@@ -22,7 +22,8 @@ namespace onnxruntime {
 // Logical device representation.
 class QNNExecutionProvider : public IExecutionProvider {
  public:
-  explicit QNNExecutionProvider(const ProviderOptions& provider_options_map, const ConfigOptions* config_options);
+  explicit QNNExecutionProvider(const ProviderOptions& provider_options_map, const ConfigOptions* config_options,
+                                qnn::EpContextDataCallbacks ep_context_data_callbacks = {});
   virtual ~QNNExecutionProvider();
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QNNExecutionProvider);
 
@@ -51,6 +52,11 @@ class QNNExecutionProvider : public IExecutionProvider {
                                                    DataLayout target_data_layout) const override;
 
   const InlinedVector<const Node*> GetEpContextNodes() const override;
+
+  Status GetEpContextDataCallbackSupport(uint32_t& supported_flags) const override {
+    supported_flags = OrtEpContextDataCallbackSupportFlags_READ | OrtEpContextDataCallbackSupportFlags_WRITE;
+    return Status::OK();
+  }
 
   Status OnRunStart(const onnxruntime::RunOptions& run_options) override;
 
@@ -109,6 +115,7 @@ class QNNExecutionProvider : public IExecutionProvider {
   std::string context_node_name_prefix_ = "";
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
+  qnn::EpContextDataCallbacks ep_context_data_callbacks_{};
   int32_t vtcm_size_in_mb_ = 0;
   bool enable_vtcm_backup_buffer_sharing_ = false;
   std::unique_ptr<onnxruntime::Model> qnn_ep_context_model_;

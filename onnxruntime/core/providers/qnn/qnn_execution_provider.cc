@@ -299,8 +299,10 @@ static std::unique_ptr<qnn::QnnSerializerConfig> ParseSerializerBackendOptions(c
 }
 
 QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_options_map,
-                                           const ConfigOptions* config_options)
-    : IExecutionProvider{onnxruntime::kQnnExecutionProvider} {
+                                           const ConfigOptions* config_options,
+                                           qnn::EpContextDataCallbacks ep_context_data_callbacks)
+    : IExecutionProvider{onnxruntime::kQnnExecutionProvider},
+      ep_context_data_callbacks_{ep_context_data_callbacks} {
   InitOrtCppApi();
   metadef_id_generator_ = Factory<ModelMetadefIdGenerator>::Create();
 
@@ -554,6 +556,13 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   if (qnn_context_embed_mode_ && enable_vtcm_backup_buffer_sharing_) {
     LOGS_DEFAULT(ERROR) << "[EP context generation:] VTCM backup buffer sharing enabled conflict with EP context embed mode. Inference will not work as expected!";
   }
+
+  const bool has_ep_context_data_callback = ep_context_data_callbacks_.read_func != nullptr ||
+                                            ep_context_data_callbacks_.write_func != nullptr;
+  ORT_ENFORCE(!(has_ep_context_data_callback && share_ep_contexts_),
+              "QNN shared EP contexts do not support EPContext data callbacks.");
+  ORT_ENFORCE(!(has_ep_context_data_callback && enable_vtcm_backup_buffer_sharing_),
+              "QNN VTCM backup buffer sharing does not support EPContext data callbacks.");
 
   // Add this option because this feature requires QnnSystem lib and it's no supported for Windows x86_64 platform
   enable_spill_fill_buffer_ = ParseBoolOption("enable_htp_spill_fill_buffer", false, provider_options_map);
@@ -1013,7 +1022,14 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (enable_vtcm_backup_buffer_sharing_ || enable_file_mapped_weights_) {
+  const bool callback_backed_context = is_qnn_ctx_model && ep_context_data_callbacks_.read_func != nullptr;
+  const bool effective_vtcm_backup_buffer_sharing = enable_vtcm_backup_buffer_sharing_ && !callback_backed_context;
+  const bool effective_file_mapped_weights = enable_file_mapped_weights_ && !callback_backed_context;
+  if (callback_backed_context && (enable_vtcm_backup_buffer_sharing_ || enable_file_mapped_weights_)) {
+    LOGS(logger, VERBOSE) << "Disabling path-based QNN EPContext loading optimizations because a read callback is set.";
+  }
+
+  if (effective_vtcm_backup_buffer_sharing || effective_file_mapped_weights) {
     std::unordered_set<const Node*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph_viewer, ep_ctx_nodes, logger);
 
@@ -1051,8 +1067,8 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   auto rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
                                                context_cache_enabled_ && enable_spill_fill_buffer_,
                                                share_ep_contexts_,
-                                               enable_vtcm_backup_buffer_sharing_,
-                                               enable_file_mapped_weights_,
+                                               effective_vtcm_backup_buffer_sharing,
+                                               effective_file_mapped_weights,
                                                rpcmem_library_,
                                                context_bin_map,
                                                enable_htp_extended_udma_mode_);
@@ -1382,7 +1398,8 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                                        qnn_backend_manager_.get(),
                                                        qnn_models,
                                                        logger,
-                                                       max_spill_fill_size));
+                                                       max_spill_fill_size,
+                                                       ep_context_data_callbacks_));
     }
 
     for (auto fused_node_and_graph : fused_nodes_and_graphs) {
@@ -1444,7 +1461,8 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                                   max_spill_fill_buffer_size,
                                                   logger,
                                                   share_ep_contexts_,
-                                                  stop_share_ep_contexts_));
+                                                  stop_share_ep_contexts_,
+                                                  ep_context_data_callbacks_));
 
     if (share_ep_contexts_ && !stop_share_ep_contexts_ &&
         nullptr == SharedContext::GetInstance().GetSharedQnnBackendManager()) {
