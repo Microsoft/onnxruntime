@@ -219,6 +219,15 @@ TEST(HyperConnectionLowRankMixTest, FusedMultipleKSlicesAndWeightChunks) {
   RunTest<MLFloat16>(1, 4, 2560, 320, false, true, kFp16Tol);
 }
 
+TEST(HyperConnectionLowRankMixTest, FusedDecodeShapeRank320) {
+  for (int rows : {1, 2, 4}) {
+    for (bool prologue : {false, true}) {
+      RunTest<BFloat16>(rows, 4, 2560, 320, prologue, true, kBf16Tol, 37);
+      RunTest<MLFloat16>(rows, 4, 2560, 320, prologue, true, kFp16Tol, 53);
+    }
+  }
+}
+
 TEST(HyperConnectionLowRankMixTest, UnfusedManyRows) {
   RunTest<MLFloat16>(9, 4, 16, 8, true, true, kFp16Tol);
   RunTest<MLFloat16>(9, 4, 16, 8, true, false, kFp16Tol);
