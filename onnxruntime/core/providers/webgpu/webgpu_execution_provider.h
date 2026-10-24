@@ -58,6 +58,7 @@ struct WebGpuExecutionProviderConfig {
   bool enable_graph_capture{false};          // graph capture feature is disabled by default
   webgpu::WeightLoadAccelerationMode weight_load_acceleration_mode{
       webgpu::WeightLoadAccelerationMode::Off};
+  bool enable_uma_weight_loading{true};
   bool enable_pix_capture{false};                // PIX capture is disabled by default
   bool enable_int64{false};                      // int64 ops are not enabled by default
   uint32_t multi_rotary_cache_concat_offset{0};  // offset for concatenated multi rotary cache (0 = disabled)
@@ -164,6 +165,7 @@ class WebGpuExecutionProvider : public IExecutionProvider {
 #if defined(_WIN32) && defined(ENABLE_D3D12_FILE_LOADING)
   webgpu::WeightLoadAccelerationMode weight_load_acceleration_mode_{
       webgpu::WeightLoadAccelerationMode::Off};
+  bool enable_uma_weight_loading_{true};
   std::shared_ptr<webgpu::D3D12ImportedBufferRegistry> accelerated_initializer_state_;
   AllocatorPtr accelerated_initializer_allocator_;
 #endif

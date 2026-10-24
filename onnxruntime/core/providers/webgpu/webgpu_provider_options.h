@@ -27,6 +27,10 @@ namespace options {
 constexpr const char* kPreferredLayout = "ep.webgpuexecutionprovider.preferredLayout";
 constexpr const char* kEnableGraphCapture = "ep.webgpuexecutionprovider.enableGraphCapture";
 constexpr const char* kWeightLoadAcceleration = "ep.webgpuexecutionprovider.weightLoadAcceleration";
+// Per-session native D3D12 weight-loading choice: "1" (default) permits UMA
+// final-buffer reads; "0" keeps the accelerated upload staging/copy path.
+// Has no effect when weightLoadAcceleration is off or on other backends.
+constexpr const char* kEnableUMAWeightLoading = "ep.webgpuexecutionprovider.enableUMAWeightLoading";
 // Number of generations of buffers to retain in the per-session pool for reuse
 // across captured-graph lifetimes. 0 disables pooling. Default 1 caches one
 // generator's worth of intermediate buffers.

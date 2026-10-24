@@ -1408,6 +1408,29 @@ TEST(WebGpuContextTest, WeightLoadAccelerationOffDoesNotRequireDeviceSupport) {
   ASSERT_NE(ep, nullptr);
 }
 
+TEST(WebGpuContextTest, UMAWeightLoadingRejectsInvalidValues) {
+  for (const char* value : {"", "true", "false", "2", "-1"}) {
+    auto options = CompileOnlyWeightLoadAccelerationOptions(kWeightLoadAcceleration_Off);
+    ASSERT_STATUS_OK(options.AddConfigEntry(kEnableUMAWeightLoading, value));
+    EXPECT_THROW(WebGpuProviderFactoryCreator::Create(options), OnnxRuntimeException) << value;
+  }
+}
+
+TEST(WebGpuContextTest, UMAWeightLoadingDoesNotEnableAcceleration) {
+  for (const char* value : {"0", "1"}) {
+    auto options = CompileOnlyWeightLoadAccelerationOptions(kWeightLoadAcceleration_Off);
+    ASSERT_STATUS_OK(options.AddConfigEntry(kEnableUMAWeightLoading, value));
+    auto ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+    ASSERT_NE(ep, nullptr);
+#if defined(__wasm__)
+    // WebAssembly retains its ordinary external-data loader.
+    EXPECT_NE(ep->GetExternalDataLoader(), nullptr);
+#else
+    EXPECT_EQ(ep->GetExternalDataLoader(), nullptr);
+#endif
+  }
+}
+
 TEST(WebGpuContextTest, PreferredWeightLoadAccelerationFallsBackWithoutDeviceSupport) {
   auto ep = WebGpuProviderFactoryCreator::Create(
                 CompileOnlyWeightLoadAccelerationOptions(
@@ -1629,6 +1652,7 @@ TEST(WebGpuContextTest, D3D12FileLoaderReusesUploadSlotAcrossChunks) {
   windows::d3d12::D3D12FileBufferLoader::Config config;
   config.upload_slot_count = 2;
   config.upload_slot_size = kSlotSize;
+  config.enable_uma = false;
   std::unique_ptr<windows::d3d12::D3D12FileBufferLoader> loader;
   ASSERT_STATUS_OK(windows::d3d12::D3D12FileBufferLoader::Create(
       context.WeightLoadingD3D12Device(), loader, config));
@@ -2038,6 +2062,61 @@ void RunD3D12AcceleratedExternalInitializerSessionTest(
   const auto* output_data = output.Data<float>();
   for (size_t index = 0; index < weights.size(); ++index) {
     EXPECT_FLOAT_EQ(output_data[index], input[index] + weights[index]);
+  }
+}
+
+TEST(WebGpuContextTest, D3D12UMAWeightLoadingIsPerSession) {
+  auto probe_provider = WebGpuProviderFactoryCreator::Create(
+                            WeightLoadAccelerationOptions(kWeightLoadAcceleration_Required))
+                            ->CreateProvider();
+  auto& context = webgpu::WebGpuContextFactory::GetContext(0);
+  const auto support_status = webgpu::CheckD3D12AcceleratedExternalWeightsSupport(context);
+  if (!support_status.IsOK()) {
+    GTEST_SKIP() << support_status.ErrorMessage();
+  }
+  auto* device = context.WeightLoadingD3D12Device();
+  std::unique_ptr<windows::d3d12::D3D12FileBufferLoader> probe_loader;
+  ASSERT_STATUS_OK(windows::d3d12::D3D12FileBufferLoader::Create(device, probe_loader));
+  const bool supports_uma = probe_loader->UsesUMA();
+  RecordProperty("adapter", std::string{context.AdapterInfo().description});
+  RecordProperty("backend", "D3D12");
+  RecordProperty("luid_low", std::to_string(device->GetAdapterLuid().LowPart));
+  RecordProperty("uma_supported", supports_uma ? "1" : "0");
+
+  TemporaryDirectory temp_dir{ORT_TSTR("webgpu_uma_weight_loading_option_test")};
+  const auto path = std::filesystem::path{temp_dir.Path()} / ORT_TSTR("weights.bin");
+  const std::array<uint32_t, 4> expected{1, 7, 11, 29};
+  constexpr size_t kOffset = 3;
+  {
+    std::ofstream stream{path, std::ios::binary | std::ios::trunc};
+    const std::array<char, kOffset> prefix{};
+    stream.write(prefix.data(), prefix.size());
+    stream.write(reinterpret_cast<const char*>(expected.data()), sizeof(expected));
+    ASSERT_TRUE(stream.good());
+  }
+  for (const char* mode : {kWeightLoadAcceleration_Preferred, kWeightLoadAcceleration_Required}) {
+    SCOPED_TRACE(mode);
+    for (const char* value : std::array<const char*, 4>{nullptr, "0", "1", "0"}) {
+      SCOPED_TRACE(value == nullptr ? "default" : value);
+      auto options = WeightLoadAccelerationOptions(mode);
+      if (value != nullptr) {
+        ASSERT_STATUS_OK(options.AddConfigEntry(kEnableUMAWeightLoading, value));
+      }
+      auto ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+      auto loader = ep->GetExternalDataLoader();
+      ASSERT_NE(loader, nullptr);
+      ASSERT_STATUS_OK(loader->BeginLoad());
+      ASSERT_STATUS_OK(loader->RegisterLoadCandidate(Env::Default(), path, "weights", kOffset, sizeof(expected)));
+      ASSERT_STATUS_OK(loader->CommitLoadCandidates([]() { return false; }));
+      // Check the actual path, so an ignored option cannot pass on data equality alone.
+      const auto& native_loader = static_cast<const webgpu::D3D12AcceleratedExternalDataLoader&>(*loader);
+      EXPECT_EQ(native_loader.UsesUMA(), supports_uma && (value == nullptr || std::string_view{value} == "1"));
+      const auto allocator = ep->CreatePreferredAllocators().front();
+      Tensor weights{DataTypeImpl::GetType<uint32_t>(), TensorShape({4}), nullptr, allocator};
+      ASSERT_STATUS_OK(loader->LoadTensor(Env::Default(), path, "weights", kOffset, sizeof(expected), allocator, weights));
+      EXPECT_EQ(ReadBufferWithExternalCommandEncoder<4>(context, reinterpret_cast<WGPUBuffer>(weights.MutableDataRaw())), expected);
+      EXPECT_EQ(context.WeightLoadingD3D12Device(), device);
+    }
   }
 }
 

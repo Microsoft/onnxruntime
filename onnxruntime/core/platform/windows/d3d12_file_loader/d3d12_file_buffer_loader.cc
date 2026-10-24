@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <future>
 #include <iomanip>
 #include <iterator>
@@ -18,6 +21,7 @@
 #include <wil/Resource.h>
 
 #include "core/common/common.h"
+#include "core/common/inlined_containers.h"
 
 namespace onnxruntime {
 namespace windows {
@@ -138,7 +142,7 @@ struct D3D12FileBufferLoader::AllocationResult {
 
 D3D12FileBufferLoader::D3D12FileBufferLoader(
     ID3D12Device* device, const Config& config) noexcept
-    : device_(device), config_(config) {
+    : device_(device), config_(config), destination_heap_properties_(HeapProperties(D3D12_HEAP_TYPE_DEFAULT)) {
 }
 
 D3D12FileBufferLoader::~D3D12FileBufferLoader() {
@@ -166,6 +170,40 @@ D3D12FileBufferLoader::~D3D12FileBufferLoader() {
   }
 }
 
+bool D3D12FileBufferLoader::TryInitializeUma() {
+  D3D12_FEATURE_DATA_ARCHITECTURE architecture{};
+  if (!config_.enable_uma ||
+      FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE,
+                                          &architecture, sizeof(architecture))) ||
+      !architecture.UMA) {
+    return false;
+  }
+
+  auto properties = device_->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_READBACK);
+  if (properties.CPUPageProperty != D3D12_CPU_PAGE_PROPERTY_WRITE_BACK ||
+      properties.MemoryPoolPreference != D3D12_MEMORY_POOL_L0) {
+    return false;
+  }
+
+  // Some UMA drivers may not support CPU-visible UAV buffers. Keep the upload
+  // pipeline available when creation or mapping of this resource type fails.
+  const auto description = BufferDescription(16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+  ComPtr<ID3D12Resource> probe;
+  if (FAILED(device_->CreateCommittedResource(
+          &properties, D3D12_HEAP_FLAG_NONE, &description,
+          D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&probe)))) {
+    return false;
+  }
+  void* mapped = nullptr;
+  const D3D12_RANGE no_access{0, 0};
+  if (FAILED(probe->Map(0, &no_access, &mapped))) {
+    return false;
+  }
+  probe->Unmap(0, &no_access);
+  destination_heap_properties_ = properties;
+  return true;
+}
+
 common::Status D3D12FileBufferLoader::Initialize() {
   if (device_ == nullptr) {
     return ORT_MAKE_STATUS(
@@ -191,6 +229,15 @@ common::Status D3D12FileBufferLoader::Initialize() {
     return ORT_MAKE_STATUS(
         ONNXRUNTIME, INVALID_ARGUMENT,
         "max_destination_heap_size must be a non-zero 64 KiB multiple no larger than 512 MiB.");
+  }
+
+  ORT_RETURN_IF(config_.uma_reader_count == 0 || config_.uma_reader_count > 16,
+                "uma_reader_count must be between 1 and 16.");
+  ORT_RETURN_IF(config_.uma_read_size == 0,
+                "uma_read_size must be non-zero.");
+  use_uma_ = TryInitializeUma();
+  if (use_uma_) {
+    return common::Status::OK();
   }
 
   D3D12_COMMAND_QUEUE_DESC queue_description{};
@@ -304,6 +351,10 @@ common::Status D3D12FileBufferLoader::LoadInternal(
     sizes.push_back(range.length);
   }
 
+  if (use_uma_) {
+    return LoadUma(ranges, sizes, result, cancellation);
+  }
+
   // Destination allocation can run while the CPU opens files and discovers
   // the sector alignment required for unbuffered reads.
   std::future<AllocationResult> allocation_future = std::async(
@@ -392,7 +443,8 @@ common::Status D3D12FileBufferLoader::LoadInternal(
 
 common::Status D3D12FileBufferLoader::AllocateDestinationGpuBuffers(
     const std::vector<uint64_t>& sizes,
-    BufferCollection& batch) {
+    BufferCollection& batch,
+    const std::function<common::Status(size_t, ID3D12Resource*)>& on_ready) {
   struct Placement {
     bool committed = false;
     size_t heap_index = 0;
@@ -452,7 +504,7 @@ common::Status D3D12FileBufferLoader::AllocateDestinationGpuBuffers(
   }
 
   batch.heaps.resize(heap_sizes.size());
-  for (size_t index = 0; index < heap_sizes.size(); ++index) {
+  auto allocate_heap = [&](size_t index) -> common::Status {
     uint64_t heap_size = 0;
     if (!TryAlignUp(
             heap_sizes[index], kBufferAlignment, heap_size) ||
@@ -465,30 +517,40 @@ common::Status D3D12FileBufferLoader::AllocateDestinationGpuBuffers(
     D3D12_HEAP_DESC heap_description{};
     heap_description.SizeInBytes = heap_size;
     heap_description.Properties =
-        HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+        destination_heap_properties_;
     heap_description.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
     const HRESULT hr = device_->CreateHeap(
         &heap_description, IID_PPV_ARGS(&batch.heaps[index]));
     if (FAILED(hr)) {
       return HResultError("ID3D12Device::CreateHeap", hr);
     }
+    return common::Status::OK();
+  };
+  // UMA publishes each mapped buffer while later heaps are still being allocated.
+  if (!on_ready) {
+    for (size_t index = 0; index < heap_sizes.size(); ++index) {
+      ORT_RETURN_IF_ERROR(allocate_heap(index));
+    }
   }
 
+  const auto initial_state = use_uma_ ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_COPY_DEST;
   batch.buffers.resize(sizes.size());
   for (size_t index = 0; index < placements.size(); ++index) {
     const auto& placement = placements[index];
     HRESULT hr = S_OK;
     if (placement.committed) {
-      const auto heap_properties = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
       hr = device_->CreateCommittedResource(
-          &heap_properties, D3D12_HEAP_FLAG_NONE, &placement.description,
-          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+          &destination_heap_properties_, D3D12_HEAP_FLAG_NONE, &placement.description,
+          initial_state, nullptr,
           IID_PPV_ARGS(&batch.buffers[index]));
     } else {
+      if (!batch.heaps[placement.heap_index]) {
+        ORT_RETURN_IF_ERROR(allocate_heap(placement.heap_index));
+      }
       hr = device_->CreatePlacedResource(
           batch.heaps[placement.heap_index].Get(),
           placement.offset, &placement.description,
-          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+          initial_state, nullptr,
           IID_PPV_ARGS(&batch.buffers[index]));
     }
     if (FAILED(hr)) {
@@ -498,8 +560,243 @@ common::Status D3D12FileBufferLoader::AllocateDestinationGpuBuffers(
               : "ID3D12Device::CreatePlacedResource",
           hr);
     }
+    if (on_ready) {
+      ORT_RETURN_IF_ERROR(on_ready(index, batch.buffers[index].Get()));
+    }
   }
 
+  return common::Status::OK();
+}
+
+common::Status D3D12FileBufferLoader::LoadUma(
+    const std::vector<BufferSource>& ranges,
+    const std::vector<uint64_t>& sizes,
+    BufferCollection& result,
+    const CancellationToken& cancellation) {
+  std::mutex cancellation_mutex;
+  auto is_canceled = [&]() {
+    std::lock_guard lock(cancellation_mutex);
+    return cancellation.IsCancellationRequested();
+  };
+  struct SourceFile {
+    wil::unique_hfile handle;
+    uint64_t size = 0;
+  };
+  std::map<std::wstring, SourceFile> files;
+  for (const auto& range : ranges) {
+    if (is_canceled()) {
+      return CancelledStatus();
+    }
+    auto [it, inserted] = files.try_emplace(range.path);
+    auto& file = it->second;
+    if (inserted) {
+      file.handle.reset(CreateFileW(
+          range.path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr));
+      if (!file.handle) {
+        return Win32FileError("CreateFileW(UMA)", range.path, GetLastError());
+      }
+      LARGE_INTEGER size{};
+      if (!GetFileSizeEx(file.handle.get(), &size)) {
+        return Win32FileError("GetFileSizeEx(UMA)", range.path, GetLastError());
+      }
+      ORT_RETURN_IF(size.QuadPart < 0, "Source file has a negative size.");
+      file.size = static_cast<uint64_t>(size.QuadPart);
+    }
+    ORT_RETURN_IF(range.offset > file.size || range.length > file.size - range.offset,
+                  "UMA source range exceeds file bounds.");
+  }
+
+  struct ReadJob {
+    HANDLE file;
+    uint64_t offset;
+    uint8_t* destination;
+    DWORD size;
+  };
+  BufferCollection batch;
+  InlinedVector<uint8_t*> mappings(ranges.size(), nullptr);
+  auto unmap_all = [&]() noexcept {
+    // The CPU writes must be visible before these resources are handed to Dawn,
+    // including on UMA devices which do not report CacheCoherentUMA.
+    MemoryBarrier();
+    for (size_t index = 0; index < mappings.size(); ++index) {
+      if (mappings[index]) {
+        const D3D12_RANGE written{0, static_cast<SIZE_T>(batch.buffers[index]->GetDesc().Width)};
+        batch.buffers[index]->Unmap(0, &written);
+        mappings[index] = nullptr;
+      }
+    }
+  };
+  auto unmap_guard = gsl::finally(unmap_all);
+  std::deque<ReadJob> jobs;
+  std::mutex jobs_mutex;
+  std::condition_variable jobs_ready;
+  bool producer_done = false;
+  std::atomic<bool> stop{false};
+  InlinedVector<std::future<common::Status>> workers;
+  workers.reserve(config_.uma_reader_count);
+  auto request_stop = [&]() noexcept {
+    {
+      std::lock_guard lock(jobs_mutex);
+      stop.store(true);
+    }
+    jobs_ready.notify_all();
+  };
+  // Declared after unmap_guard: join outstanding reads before unmapping or
+  // releasing resources on allocation, thread-launch, I/O and cancellation errors.
+  auto join_guard = gsl::finally([&]() noexcept {
+    request_stop();
+    for (auto& worker : workers) {
+      if (worker.valid()) {
+        worker.wait();
+      }
+    }
+  });
+
+  auto reader = [&]() -> common::Status {
+    wil::unique_handle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event) {
+      return Win32Error("CreateEventW(UMA read)", GetLastError());
+    }
+    for (;;) {
+      ReadJob job{};
+      {
+        std::unique_lock lock(jobs_mutex);
+        jobs_ready.wait(lock, [&] { return stop.load() || producer_done || !jobs.empty(); });
+        if (stop.load() || jobs.empty()) {
+          return common::Status::OK();
+        }
+        job = jobs.front();
+        jobs.pop_front();
+      }
+      jobs_ready.notify_all();
+      if (is_canceled()) {
+        return CancelledStatus();
+      }
+      OVERLAPPED overlapped{};
+      overlapped.Offset = static_cast<DWORD>(job.offset);
+      overlapped.OffsetHigh = static_cast<DWORD>(job.offset >> 32);
+      overlapped.hEvent = event.get();
+      if (!ResetEvent(event.get())) {
+        return Win32Error("ResetEvent(UMA read)", GetLastError());
+      }
+      DWORD count = 0;
+      if (!ReadFile(job.file, job.destination, job.size, &count, &overlapped) &&
+          GetLastError() != ERROR_IO_PENDING) {
+        return Win32Error("ReadFile(UMA)", GetLastError());
+      }
+      for (;;) {
+        if (GetOverlappedResultEx(job.file, &overlapped, &count,
+                                  kMaximumCancellationPollMilliseconds, FALSE)) {
+          break;
+        }
+        const auto error = GetLastError();
+        if (error != WAIT_TIMEOUT) {
+          return Win32Error("GetOverlappedResultEx(UMA)", error);
+        }
+        const bool canceled = is_canceled();
+        if (stop.load() || canceled) {
+          (void)CancelIoEx(job.file, &overlapped);
+          (void)GetOverlappedResult(job.file, &overlapped, &count, TRUE);
+          return canceled ? CancelledStatus() : common::Status::OK();
+        }
+      }
+      ORT_RETURN_IF(count != job.size, "Short UMA file read.");
+    }
+  };
+  for (uint32_t index = 0; index < config_.uma_reader_count; ++index) {
+    // Own the reader closure until the task finishes, including during exception cleanup.
+    workers.push_back(std::async(std::launch::async, [&, reader]() -> common::Status {
+      bool succeeded = false;
+      auto stop_on_failure = gsl::finally([&]() noexcept {
+        if (!succeeded) {
+          request_stop();
+        }
+      });
+      common::Status status;
+      ORT_TRY {
+        status = reader();
+      }
+      ORT_CATCH(const std::exception& ex) {
+        ORT_HANDLE_EXCEPTION([&]() {
+          status = ORT_MAKE_STATUS(ONNXRUNTIME, RUNTIME_EXCEPTION, "UMA reader failed: ", ex.what());
+        });
+      }
+      ORT_CATCH(...) {
+        status = ORT_MAKE_STATUS(ONNXRUNTIME, RUNTIME_EXCEPTION, "UMA reader failed with an unknown exception.");
+      }
+      succeeded = status.IsOK();
+      return status;
+    }));
+  }
+
+  auto publish = [&](size_t index, ID3D12Resource* resource) -> common::Status {
+    if (is_canceled()) {
+      return CancelledStatus();
+    }
+    // Stop allocation promptly; the failing worker's status is collected below.
+    if (stop.load()) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "UMA reader stopped.");
+    }
+    ORT_RETURN_IF(resource->GetDesc().Width > std::numeric_limits<SIZE_T>::max(),
+                  "UMA resource is too large to map in this process.");
+    const D3D12_RANGE no_reads{0, 0};
+    const auto hr = resource->Map(0, &no_reads, reinterpret_cast<void**>(&mappings[index]));
+    if (FAILED(hr)) {
+      return HResultError("ID3D12Resource::Map(UMA)", hr);
+    }
+    const auto& range = ranges[index];
+    const auto file = files.at(range.path).handle.get();
+    for (uint64_t offset = 0; offset < range.length;) {
+      if (is_canceled()) {
+        return CancelledStatus();
+      }
+      const auto size = static_cast<DWORD>(std::min<uint64_t>(config_.uma_read_size, range.length - offset));
+      {
+        std::unique_lock lock(jobs_mutex);
+        jobs_ready.wait(lock, [&] { return stop.load() || jobs.size() < 2 * config_.uma_reader_count; });
+        if (stop.load()) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "UMA reader stopped.");
+        }
+        jobs.push_back({file, range.offset + offset, mappings[index] + offset, size});
+      }
+      jobs_ready.notify_all();
+      offset += size;
+    }
+    return common::Status::OK();
+  };
+  const auto allocation_status = AllocateDestinationGpuBuffers(sizes, batch, publish);
+  if (!allocation_status.IsOK()) {
+    request_stop();
+  }
+  {
+    std::lock_guard lock(jobs_mutex);
+    producer_done = true;
+  }
+  jobs_ready.notify_all();
+  common::Status status;
+  for (auto& worker : workers) {
+    const auto worker_status = worker.get();
+    if (status.IsOK() && !worker_status.IsOK()) {
+      status = worker_status;
+    }
+  }
+  ORT_RETURN_IF_ERROR(status);
+  ORT_RETURN_IF_ERROR(allocation_status);
+  if (is_canceled()) {
+    return CancelledStatus();
+  }
+  // Preserve the upload path's padding convention. Workers have finished, so
+  // the leading payload bytes are safe to read even when a tensor spans jobs.
+  for (size_t index = 0; index < ranges.size(); ++index) {
+    const auto length = ranges[index].length;
+    const auto width = batch.buffers[index]->GetDesc().Width;
+    for (uint64_t offset = length; offset < width; ++offset) {
+      mappings[index][offset] = mappings[index][(offset - length) % length];
+    }
+  }
+  unmap_all();
+  result = std::move(batch);
   return common::Status::OK();
 }
 

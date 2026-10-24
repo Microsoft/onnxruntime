@@ -518,8 +518,10 @@ common::Status D3D12AcceleratedExternalDataLoader::EnsureFileLoader() const {
   if (file_to_buffer_loader_) {
     return common::Status::OK();
   }
+  D3D12FileBufferLoader::Config config;
+  config.enable_uma = enable_uma_weight_loading_;
   return D3D12FileBufferLoader::Create(
-      context_.WeightLoadingD3D12Device(), file_to_buffer_loader_);
+      context_.WeightLoadingD3D12Device(), file_to_buffer_loader_, config);
 }
 
 D3D12AcceleratedExternalDataLoader::
@@ -529,11 +531,13 @@ D3D12AcceleratedExternalDataLoader::
         std::shared_ptr<
             D3D12ImportedBufferRegistry>
             buffer_registry,
-        WeightLoadAccelerationMode mode)
+        WeightLoadAccelerationMode mode,
+        bool enable_uma_weight_loading)
     : context_{context},
       context_id_{context_id},
       buffer_registry_{std::move(buffer_registry)},
-      acceleration_mode_{mode} {
+      acceleration_mode_{mode},
+      enable_uma_weight_loading_{enable_uma_weight_loading} {
   ORT_ENFORCE(
       buffer_registry_ != nullptr,
       "D3D12 imported buffer registry is required.");
@@ -550,6 +554,10 @@ bool D3D12AcceleratedExternalDataLoader::CanLoad(
   return target_memory_info.device == WebGpuDevice(context_id_) &&
          target_memory_info.name == WEBGPU_BUFFER &&
          resolved_acceleration_enabled_;
+}
+
+bool D3D12AcceleratedExternalDataLoader::UsesUMA() const noexcept {
+  return file_to_buffer_loader_ != nullptr && file_to_buffer_loader_->UsesUMA();
 }
 
 bool D3D12AcceleratedExternalDataLoader::
@@ -757,7 +765,8 @@ D3D12AcceleratedExternalDataLoader::CommitLoadCandidates(
       << " ms, bytes=" << batch.total_bytes
       << ", tensors=" << batch.tensors.size()
       << ", loaded_ranges="
-      << load_metrics.loaded_ranges << ".";
+      << load_metrics.loaded_ranges
+      << ", destination=" << (UsesUMA() ? "UMA" : "upload") << ".";
   return common::Status::OK();
 }
 

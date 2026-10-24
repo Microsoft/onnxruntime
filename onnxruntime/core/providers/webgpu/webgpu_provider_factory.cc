@@ -129,6 +129,14 @@ WebGpuExecutionProviderConfig ParseEpConfig(
   webgpu_ep_config.weight_load_acceleration_mode =
       weight_load_acceleration_mode;
 
+  if (std::string enable_uma_weight_loading_str;
+      config_options.TryGetConfigEntry(kEnableUMAWeightLoading, enable_uma_weight_loading_str)) {
+    ORT_ENFORCE(enable_uma_weight_loading_str == "0" || enable_uma_weight_loading_str == "1",
+                "Invalid enableUMAWeightLoading value: ", enable_uma_weight_loading_str,
+                ". Must be \"0\" or \"1\".");
+    webgpu_ep_config.enable_uma_weight_loading = enable_uma_weight_loading_str == "1";
+  }
+
   if (std::string pool_generations_str;
       config_options.TryGetConfigEntry(kSessionBufferPoolGenerations, pool_generations_str)) {
     size_t pool_generations = 0;
@@ -226,6 +234,7 @@ WebGpuExecutionProviderConfig ParseEpConfig(
   LOGS_DEFAULT(VERBOSE) << "WebGPU EP graph capture enable: " << webgpu_ep_config.enable_graph_capture;
   LOGS_DEFAULT(VERBOSE) << "WebGPU EP weight load acceleration mode: "
                         << WeightLoadAccelerationModeName(webgpu_ep_config.weight_load_acceleration_mode);
+  LOGS_DEFAULT(VERBOSE) << "WebGPU EP enable UMA weight loading: " << webgpu_ep_config.enable_uma_weight_loading;
   LOGS_DEFAULT(VERBOSE) << "WebGPU EP force CPU node count: " << webgpu_ep_config.force_cpu_node_names.size();
   LOGS_DEFAULT(VERBOSE) << "WebGPU EP pix capture enable: " << webgpu_ep_config.enable_pix_capture;
   LOGS_DEFAULT(VERBOSE) << "WebGPU EP enable int64: " << webgpu_ep_config.enable_int64;

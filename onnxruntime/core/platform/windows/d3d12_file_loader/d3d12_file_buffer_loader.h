@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -25,6 +26,10 @@ class D3D12FileBufferLoader {
     uint32_t upload_slot_count = 12;
     uint64_t upload_slot_size = 16ull * 1024ull * 1024ull;
     uint64_t max_destination_heap_size = 512ull * 1024ull * 1024ull;
+    // Use CPU-visible final buffers when the device supports UMA write-back heaps.
+    bool enable_uma = true;
+    uint32_t uma_reader_count = 8;
+    uint32_t uma_read_size = 16u * 1024u * 1024u;
   };
 
   struct BufferSource {
@@ -34,6 +39,7 @@ class D3D12FileBufferLoader {
   };
 
   struct CancellationToken {
+    // Queries may run on UMA reader threads, but are serialized within a load.
     using IsCancellationRequestedFn = bool (*)(void* state) noexcept;
 
     IsCancellationRequestedFn is_cancellation_requested = nullptr;
@@ -68,6 +74,8 @@ class D3D12FileBufferLoader {
   D3D12FileBufferLoader(const D3D12FileBufferLoader&) = delete;
   D3D12FileBufferLoader& operator=(const D3D12FileBufferLoader&) = delete;
 
+  bool UsesUMA() const noexcept { return use_uma_; }
+
   // Each BufferSource describes a file range for one returned buffer.
   // The returned buffers correspond one-to-one with ranges and preserve input order.
   // Each buffer is in D3D12_RESOURCE_STATE_COMMON when this method succeeds.
@@ -91,13 +99,20 @@ class D3D12FileBufferLoader {
       const Config& config) noexcept;
 
   common::Status Initialize();
+  bool TryInitializeUma();
+  common::Status LoadUma(
+      const std::vector<BufferSource>& ranges,
+      const std::vector<uint64_t>& sizes,
+      BufferCollection& result,
+      const CancellationToken& cancellation);
   common::Status LoadInternal(
       const std::vector<BufferSource>& ranges,
       BufferCollection& result,
       const CancellationToken& cancellation);
   common::Status AllocateDestinationGpuBuffers(
       const std::vector<uint64_t>& sizes,
-      BufferCollection& batch);
+      BufferCollection& batch,
+      const std::function<common::Status(size_t, ID3D12Resource*)>& on_ready = {});
   common::Status CreateFileReadPlan(
       const std::vector<BufferSource>& ranges,
       const CancellationToken& cancellation,
@@ -145,6 +160,8 @@ class D3D12FileBufferLoader {
 
   Microsoft::WRL::ComPtr<ID3D12Device> device_;
   Config config_;
+  bool use_uma_ = false;
+  D3D12_HEAP_PROPERTIES destination_heap_properties_{};
   Microsoft::WRL::ComPtr<ID3D12CommandQueue> copy_queue_;
   Microsoft::WRL::ComPtr<ID3D12Fence> copy_fence_;
   wil::unique_handle copy_fence_complete_event_;

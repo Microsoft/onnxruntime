@@ -635,6 +635,7 @@ WebGpuExecutionProvider::WebGpuExecutionProvider(int context_id,
       forced_matmul_algorithm_{config.forced_matmul_algorithm},
 #if defined(_WIN32) && defined(ENABLE_D3D12_FILE_LOADING)
       weight_load_acceleration_mode_{config.weight_load_acceleration_mode},
+      enable_uma_weight_loading_{config.enable_uma_weight_loading},
 #endif
       recording_{std::make_unique<webgpu::CommandRecordingState>()},
       prepack_allocator_{CreateWebGpuAllocator(
@@ -828,7 +829,7 @@ std::unique_ptr<onnxruntime::IExternalDataLoader> WebGpuExecutionProvider::GetEx
 
   return std::make_unique<webgpu::D3D12AcceleratedExternalDataLoader>(
       context_, context_id_, accelerated_initializer_state_,
-      weight_load_acceleration_mode_);
+      weight_load_acceleration_mode_, enable_uma_weight_loading_);
 }
 #endif
 

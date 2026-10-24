@@ -48,9 +48,12 @@ class D3D12AcceleratedExternalDataLoader final : public IExternalDataLoader {
       WebGpuContext& context,
       int context_id,
       std::shared_ptr<D3D12ImportedBufferRegistry> buffer_registry,
-      WeightLoadAccelerationMode mode);
+      WeightLoadAccelerationMode mode,
+      bool enable_uma_weight_loading);
   ~D3D12AcceleratedExternalDataLoader() override;
 
+  // Actual path selected by the native loader after a batch has been loaded.
+  bool UsesUMA() const noexcept;
   bool CanLoad(const OrtMemoryInfo& target_memory_info) const override;
   bool SupportsDataType(int32_t tensor_data_type) const override;
   bool CreatesTensorForDevice(const OrtDevice& target_device) const override;
@@ -78,6 +81,7 @@ class D3D12AcceleratedExternalDataLoader final : public IExternalDataLoader {
   int context_id_;
   std::shared_ptr<D3D12ImportedBufferRegistry> buffer_registry_;
   WeightLoadAccelerationMode acceleration_mode_;
+  const bool enable_uma_weight_loading_;
   mutable std::once_flag device_support_resolution_once_;
   mutable common::Status device_support_resolution_status_;
   // Effective decision from mode and device support; cleared on fallback.
