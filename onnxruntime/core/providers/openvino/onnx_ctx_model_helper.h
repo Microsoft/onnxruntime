@@ -15,10 +15,15 @@
 namespace onnxruntime {
 namespace openvino_ep {
 
+Status ConvertAndReleaseCallbackStatus(OrtStatus* status);
+
 struct ModelBlobWrapper {
-  ModelBlobWrapper(std::unique_ptr<std::istream> stream, const ov::Tensor& tensor) : stream_(std::move(stream)), tensor_(tensor) {}
+  ModelBlobWrapper(std::unique_ptr<std::istream> stream, const ov::Tensor& tensor,
+                   std::filesystem::path model_path = {})
+      : stream_(std::move(stream)), tensor_(tensor), model_path_(std::move(model_path)) {}
   std::unique_ptr<std::istream> stream_;
   ov::Tensor tensor_;  // May be empty if model blob is provided as stream only.
+  std::filesystem::path model_path_;
 };
 
 // Utilities to handle EPContext node export and parsing of an EPContext node
@@ -41,7 +46,11 @@ class EPCtxHandler {
                                const std::string& graph_name,
                                const bool embed_mode,
                                std::string&& model_blob_str) const;
-  std::unique_ptr<ModelBlobWrapper> GetModelBlobStream(const std::filesystem::path& so_context_file_path, const GraphViewer& subgraph_view, const std::string& device_type) const;
+  std::unique_ptr<ModelBlobWrapper> GetModelBlobStream(const std::filesystem::path& so_context_file_path,
+                                                       const GraphViewer& subgraph_view,
+                                                       const std::string& device_type,
+                                                       SharedContext& shared_context,
+                                                       bool callback_backed) const;
   InlinedVector<const Node*> GetEPCtxNodes() const;
   bool CheckEPCacheContextAttribute(const GraphViewer& subgraph_view, const std::string& target_attr_extn) const;
   std::shared_ptr<SharedContext> Initialize(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes, const SessionContext& session_context);

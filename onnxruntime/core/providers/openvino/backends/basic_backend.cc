@@ -41,29 +41,21 @@ BasicBackend::BasicBackend(std::unique_ptr<ONNX_NAMESPACE::ModelProto>& model_pr
   if (subgraph_context_.is_ep_ctx_graph) {
     try {
       if (subgraph_context_.is_ep_ctx_ovir_encapsulated) {
-        // model_file_path will use so_context_file_path if the onnx_model_path_name is not available,
-        // especially in case of CreateSessionFormArray() where user must explicitly
-        // specify absolute path for so_context_file_path.
-        auto model_file_path = [this]() -> const std::filesystem::path& {
-          if (!session_context_.onnx_model_path_name.empty() &&
-              std::filesystem::exists(session_context_.onnx_model_path_name)) return session_context_.onnx_model_path_name;
-
-          ORT_ENFORCE(!session_context_.so_context_file_path.empty() &&
-                          std::filesystem::path(session_context_.so_context_file_path).is_absolute() &&
-                          std::filesystem::exists(session_context_.so_context_file_path),
+        ORT_ENFORCE(!model_stream->model_path_.empty(),
+                    log_tag + "OpenVINO IR path is unavailable for the EPContext model.");
+        if (session_context_.onnx_model_path_name.empty()) {
+          ORT_ENFORCE(model_stream->model_path_.is_absolute(),
                       log_tag +
-                          "Context file path must be non-empty & absolute, when using CreateSessionFormArray() API explicitly."
-                          " Please set a valid absolute path for ep.context_file_path in session options.");
-          // Return absolute context file path as input to ImportEPCtxOVIREncapsulation() function.
-          return session_context_.so_context_file_path;
-        };
+                          "Context file path must be absolute when using CreateSessionFromArray(). "
+                          "Please set a valid ep.context_file_path in session options.");
+        }
         // If the EPContext node with OVIR Encapsulation, then create
         // an executable network from EP_CACHE_CONTEXT using read_model() & compile_model()
         exe_network_ = OVCore::Get()->ImportEPCtxOVIREncapsulation(*model_stream->stream_,
                                                                    hw_target,
                                                                    device_config,
                                                                    enable_causallm,
-                                                                   model_file_path(),
+                                                                   model_stream->model_path_,
                                                                    session_context_);
       } else {
         // If the blob is held in an EPContext node, then skip FE+Compile

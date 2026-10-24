@@ -234,7 +234,7 @@ OVExeNetwork OVCore::ImportEPCtxOVIREncapsulation(std::istream& model_stream,
                                                   std::string& hw_target,
                                                   const ov::AnyMap& device_config,
                                                   bool enable_causallm,
-                                                  std::filesystem::path model_file_path,
+                                                  std::filesystem::path xml_file_path,
                                                   const SessionContext& session_context) {
   return OvExceptionBoundary<false>([&]() {
     OVExeNetwork exe;
@@ -242,7 +242,7 @@ OVExeNetwork OVCore::ImportEPCtxOVIREncapsulation(std::istream& model_stream,
     bool isXML = backend_utils::IsModelStreamXML(model_stream);
 
     // Helper function to check if file exists and is readable
-    const auto check_file_access = [&model_file_path](const std::filesystem::path& path) {
+    const auto check_file_access = [](const std::filesystem::path& path) {
       try {
         if (!std::filesystem::exists(path) || std::filesystem::is_empty(path)) {
           ORT_THROW(log_tag + "Required file missing or empty: " + path.string());
@@ -259,8 +259,6 @@ OVExeNetwork OVCore::ImportEPCtxOVIREncapsulation(std::istream& model_stream,
     if (isXML) {
       // If the model is XML, we need to load it with the XML content in read_model()
       // where weights from bin file is directly consumed
-      auto xml_file_path = model_file_path.parent_path() / (model_file_path.stem().string() + ".xml");
-
       check_file_access(xml_file_path);
 
       LOGS_DEFAULT(INFO) << log_tag << "Reading OVIR from XML file path: " << xml_file_path.string();
@@ -286,7 +284,7 @@ OVExeNetwork OVCore::ImportEPCtxOVIREncapsulation(std::istream& model_stream,
 #endif
     return exe;
   },
-                                    "Exception while Loading Network from OVIR model file: {}", model_file_path.string());
+                                    "Exception while Loading Network from OVIR model file: {}", xml_file_path.string());
 }
 
 void OVCore::SetCache(const std::string& cache_dir_path) {

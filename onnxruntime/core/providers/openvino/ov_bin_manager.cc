@@ -3,6 +3,7 @@
 
 #include "ov_bin_manager.h"
 #include "ov_shared_context.h"
+#include <limits>
 #include <nlohmann/json.hpp>
 #include "core/providers/shared_library/provider_api.h"  // for ORT_VERSION and kOpenVINOExecutionProvider
 
@@ -338,6 +339,23 @@ void BinManager::Deserialize(std::istream& stream, std::shared_ptr<SharedContext
 }
 
 void BinManager::DeserializeImpl(std::istream& stream, const std::shared_ptr<SharedContext>& shared_context) {
+  const auto stream_start = stream.tellg();
+  ORT_ENFORCE(stream_start >= std::streampos{0}, "Error: Failed to determine binary stream position.");
+  stream.seekg(0, std::ios::end);
+  const auto stream_end = stream.tellg();
+  ORT_ENFORCE(stream.good() && stream_end >= stream_start, "Error: Failed to determine binary stream size.");
+  const auto stream_size = static_cast<uint64_t>(static_cast<std::streamoff>(stream_end));
+  stream.seekg(stream_start);
+
+  const auto validate_range = [stream_size](uint64_t offset, uint64_t size) {
+    ORT_ENFORCE(offset <= stream_size && size <= stream_size - offset,
+                "Error: Binary data range exceeds stream size.");
+    ORT_ENFORCE(size <= std::numeric_limits<size_t>::max() &&
+                    size <= static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()),
+                "Error: Binary data size exceeds allocation or stream limits.");
+  };
+  validate_range(static_cast<uint64_t>(static_cast<std::streamoff>(stream_start)), sizeof(header_t));
+
   // Read and validate header
   header_t header{};
 
@@ -346,16 +364,18 @@ void BinManager::DeserializeImpl(std::istream& stream, const std::shared_ptr<Sha
   ORT_ENFORCE(header.magic == kMagicNumber, "Error: Invalid magic number. Expected: 0x", std::hex, kMagicNumber, " Got: 0x", header.magic);
   ORT_ENFORCE(header.version == to_underlying(BinVersion::current), "Error: Unsupported file version: ", header.version);
   ORT_ENFORCE(header.header_size == sizeof(header_t), "Error: Header size mismatch.");
+  validate_range(header.bson_start_offset, header.bson_size);
 
   // Seek to BSON metadata and read it
-  stream.seekg(header.bson_start_offset);
+  stream.seekg(static_cast<std::streamoff>(header.bson_start_offset));
   ORT_ENFORCE(stream.good(), "Error: Failed to seek to BSON metadata.");
 
   // Parse BSON
   nlohmann::json j;
   {
-    std::vector<uint8_t> bson_data(header.bson_size);
-    stream.read(reinterpret_cast<char*>(bson_data.data()), header.bson_size);
+    std::vector<uint8_t> bson_data(static_cast<size_t>(header.bson_size));
+    stream.read(reinterpret_cast<char*>(bson_data.data()), static_cast<std::streamsize>(header.bson_size));
+    ORT_ENFORCE(stream.good(), "Error: Failed to read BSON metadata.");
     j = nlohmann::json::from_bson(bson_data);
   }
 
@@ -403,13 +423,29 @@ void BinManager::DeserializeImpl(std::istream& stream, const std::shared_ptr<Sha
   const auto& blob_map = j[BSONFields::kBlobMetadata];
   ORT_ENFORCE(blob_map.is_object(), "Error: Blob metadata must be an object.");
 
+  const auto read_size = [](const nlohmann::json& entry, const char* field) {
+    const auto& value = entry.at(field);
+    ORT_ENFORCE(value.is_number_integer() &&
+                    (value.is_number_unsigned() || value.get<int64_t>() >= 0),
+                "Error: Binary metadata offsets and sizes must be non-negative integers.");
+    return value.get<uint64_t>();
+  };
+  // Validate every blob before any embedded blob allocation, including later map entries.
+  uint64_t remaining_blob_bytes = stream_size;
+  for (const auto& blob_entry : blob_map) {
+    const auto blob_size = read_size(blob_entry, BSONFields::kSize);
+    validate_range(read_size(blob_entry, BSONFields::kDataOffset), blob_size);
+    ORT_ENFORCE(blob_size <= remaining_blob_bytes, "Error: Total blob data size exceeds stream size.");
+    remaining_blob_bytes -= blob_size;
+  }
+
   // Determine if we're deserializing from an external file or embedded stream
   const bool has_external_file = !external_bin_path_.value_or("").empty();
 
   std::unique_lock lock(mutex_);
   for (const auto& [blob_name, blob_entry] : blob_map.items()) {
-    uint64_t blob_offset = blob_entry[BSONFields::kDataOffset].get<uint64_t>();
-    uint64_t blob_size = blob_entry[BSONFields::kSize].get<uint64_t>();
+    uint64_t blob_offset = read_size(blob_entry, BSONFields::kDataOffset);
+    uint64_t blob_size = read_size(blob_entry, BSONFields::kSize);
 
     BlobContainer container;
     container.serialized_info.file_offset = blob_offset;
@@ -419,11 +455,11 @@ void BinManager::DeserializeImpl(std::istream& stream, const std::shared_ptr<Sha
     if (!has_external_file) {
       // Seek to blob offset and read data into vector
       auto current_pos = stream.tellg();
-      stream.seekg(blob_offset);
+      stream.seekg(static_cast<std::streamoff>(blob_offset));
       ORT_ENFORCE(stream.good(), "Error: Failed to seek to blob data for ", blob_name);
 
-      container.data.resize(blob_size);
-      stream.read(reinterpret_cast<char*>(container.data.data()), blob_size);
+      container.data.resize(static_cast<size_t>(blob_size));
+      stream.read(reinterpret_cast<char*>(container.data.data()), static_cast<std::streamsize>(blob_size));
       ORT_ENFORCE(stream.good(), "Error: Failed to read blob data for ", blob_name);
 
       // Restore stream position

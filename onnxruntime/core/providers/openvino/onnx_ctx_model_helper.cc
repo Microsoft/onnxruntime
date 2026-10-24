@@ -2,16 +2,76 @@
 // Licensed under the MIT License
 
 #include <cctype>
-#include <string>
 #include <fstream>
+#include <limits>
+#include <memory>
+#include <string>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 
 #include "core/providers/openvino/onnx_ctx_model_helper.h"
 #include "core/providers/openvino/backend_utils.h"
+#include "core/providers/openvino/callback_buffer_stream.h"
+
+namespace {
+
+constexpr const char* kPathResolutionGuidance =
+    ". If session.model_external_initializers_file_folder_path is set, set ep.context_file_path to the "
+    "EPContext model path so relative ep_cache_context paths are resolved from the EPContext model directory.";
+
+onnxruntime::Status ValidateEpContextDataPath(const std::filesystem::path& model_path,
+                                              const std::filesystem::path& data_path) {
+  const auto status = onnxruntime::utils::ValidateExternalDataPath(model_path, data_path);
+  if (!status.IsOK()) {
+    return onnxruntime::Status(status.Category(), status.Code(), status.ErrorMessage() + kPathResolutionGuidance);
+  }
+  return onnxruntime::Status::OK();
+}
+
+using onnxruntime::openvino_ep::CallbackBufferIStream;
+using onnxruntime::openvino_ep::OrtAllocatorDeleter;
+
+onnxruntime::Status ReadEpContextData(OrtReadNamedBufferFunc read_func, void* read_state,
+                                      const std::string& name,
+                                      std::unique_ptr<CallbackBufferIStream>& stream) {
+  OrtAllocator* allocator = nullptr;
+  ORT_RETURN_IF_ERROR(onnxruntime::openvino_ep::ConvertAndReleaseCallbackStatus(
+      Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator)));
+  void* buffer = nullptr;
+  size_t buffer_size = 0;
+  OrtStatus* callback_status = read_func(read_state, name.c_str(), allocator, &buffer, &buffer_size);
+  std::unique_ptr<void, OrtAllocatorDeleter> buffer_guard{buffer, OrtAllocatorDeleter{allocator}};
+  ORT_RETURN_IF_ERROR(onnxruntime::openvino_ep::ConvertAndReleaseCallbackStatus(callback_status));
+  if (buffer_size == 0) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                           "OpenVINO EPContext read callback returned an empty payload.");
+  }
+  if (buffer_size > static_cast<uintmax_t>(std::numeric_limits<std::streamoff>::max())) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                           "OpenVINO EPContext read callback payload is too large to stream.");
+  }
+  ORT_RETURN_IF(buffer == nullptr,
+                "EPContext read callback returned a null buffer for non-empty OpenVINO context data.");
+  stream = std::make_unique<CallbackBufferIStream>(std::move(buffer_guard), buffer_size);
+  return onnxruntime::Status::OK();
+}
+
+}  // namespace
 
 namespace onnxruntime {
 namespace openvino_ep {
+
+Status ConvertAndReleaseCallbackStatus(OrtStatus* status) {
+  Ort::Status callback_status{status};
+  if (callback_status.IsOK()) {
+    return Status::OK();
+  }
+
+  return Status(common::StatusCategory::ONNXRUNTIME,
+                static_cast<int>(callback_status.GetErrorCode()),
+                callback_status.GetErrorMessage());
+}
 
 EPCtxHandler::EPCtxHandler(std::string ov_sdk_version, const logging::Logger& logger, std::shared_ptr<SharedContextManager> shared_context_manager)
     : openvino_sdk_version_(std::move(ov_sdk_version)), logger_(logger), shared_context_manager_(std::move(shared_context_manager)) {
@@ -94,7 +154,9 @@ Status EPCtxHandler::AddOVEPCtxNodeToGraph(const GraphViewer& graph_viewer,
   return Status::OK();
 }
 
-std::unique_ptr<ModelBlobWrapper> EPCtxHandler::GetModelBlobStream(const std::filesystem::path& so_context_file_path, const GraphViewer& graph_viewer, const std::string& device_type) const {
+std::unique_ptr<ModelBlobWrapper> EPCtxHandler::GetModelBlobStream(
+    const std::filesystem::path& so_context_file_path, const GraphViewer& graph_viewer,
+    const std::string& device_type, SharedContext& shared_context, bool callback_backed) const {
   auto first_index = *graph_viewer.GetNodesInTopologicalOrder().begin();
   auto node = graph_viewer.GetNode(first_index);
   ORT_ENFORCE(node != nullptr);
@@ -106,6 +168,18 @@ std::unique_ptr<ModelBlobWrapper> EPCtxHandler::GetModelBlobStream(const std::fi
   ORT_ENFORCE(attrs.count(EMBED_MODE) == 1);
   bool embed_mode = static_cast<bool>(attrs.at(EMBED_MODE).i());
 
+  if (!embed_mode && callback_backed) {
+    ORT_ENFORCE(attrs.count(PARTITION_NAME) == 1, "Expected partition name for native ep context node");
+    const auto& partition_name = attrs.at(PARTITION_NAME).s();
+    if (device_type.find("NPU") == std::string::npos) {
+      ORT_ENFORCE((attrs.count(EP_SDK_VER) == 1) && (attrs.at(EP_SDK_VER).s() == openvino_sdk_version_),
+                  "EPCtx blob was exported / is compatible with OpenVINO SDK version " + attrs.at(EP_SDK_VER).s() +
+                      ", but OpenVINO SDK version currently in use is " + openvino_sdk_version_);
+    }
+    return std::make_unique<ModelBlobWrapper>(shared_context.GetNativeBlobAsStream(partition_name),
+                                              shared_context.GetNativeBlob(partition_name));
+  }
+
   std::unique_ptr<std::istream> result;
   std::filesystem::path blob_filepath{};
   if (embed_mode) {
@@ -115,31 +189,21 @@ std::unique_ptr<ModelBlobWrapper> EPCtxHandler::GetModelBlobStream(const std::fi
     if (blob_filepath.empty() && !graph_viewer.ModelPath().empty()) {
       blob_filepath = graph_viewer.ModelPath();
     }
-    constexpr const char* path_resolution_guidance =
-        ". If session.model_external_initializers_file_folder_path is set, set ep.context_file_path to the "
-        "EPContext model path so relative ep_cache_context paths are resolved from the EPContext model directory.";
-    const auto validate_status =
-        utils::ValidateExternalDataPath(blob_filepath, std::filesystem::path(ep_cache_context));
-    if (!validate_status.IsOK()) {
-      ORT_THROW_IF_ERROR(Status(validate_status.Category(), validate_status.Code(),
-                                validate_status.ErrorMessage() + path_resolution_guidance));
-    }
+    ORT_THROW_IF_ERROR(ValidateEpContextDataPath(blob_filepath, std::filesystem::path(ep_cache_context)));
     blob_filepath = blob_filepath.parent_path() / ep_cache_context;
     ORT_ENFORCE(
         std::filesystem::exists(blob_filepath),
-        "External EP context file not found: ", blob_filepath.string(), path_resolution_guidance);
+        "External EP context file not found: ", blob_filepath.string(), kPathResolutionGuidance);
     result.reset((std::istream*)new std::ifstream(blob_filepath, std::ios_base::binary | std::ios_base::in));
   }
 
   bool isXML = backend_utils::IsModelStreamXML(*result);
-  std::filesystem::path native_blob_path{};
   if (!isXML) {
     ORT_ENFORCE(attrs.count(PARTITION_NAME) == 1, "Expected partition name for native ep context node");
     const auto& partition_name = attrs.at(PARTITION_NAME).s();
 
     // If the model stream is not an XML (i.e. precompiled blob), the OpenVINO SDK version that it was
     // exported with must match the version that is currently running.
-    native_blob_path = std::move(blob_filepath);
     // Skip SDK version check for NPU devices as they may use different SDK versions.
     if (device_type.find("NPU") == std::string::npos) {
       ORT_ENFORCE((attrs.count(EP_SDK_VER) == 1) && (attrs.at(EP_SDK_VER).s() == openvino_sdk_version_),
@@ -147,12 +211,18 @@ std::unique_ptr<ModelBlobWrapper> EPCtxHandler::GetModelBlobStream(const std::fi
                       ", but OpenVINO SDK version currently in use is " + openvino_sdk_version_);
     }
     result.reset();  // Release the stream as we will get the native blob from SharedContext
-    auto shared_context = shared_context_manager_->GetOrCreateSharedContext(native_blob_path);
-    return std::make_unique<ModelBlobWrapper>(shared_context->GetNativeBlobAsStream(partition_name), shared_context->GetNativeBlob(partition_name));
+    std::shared_ptr<SharedContext> filesystem_context;
+    SharedContext* native_blob_context = &shared_context;
+    if (!embed_mode && !callback_backed) {
+      filesystem_context = shared_context_manager_->GetOrCreateSharedContext(blob_filepath);
+      native_blob_context = filesystem_context.get();
+    }
+    return std::make_unique<ModelBlobWrapper>(native_blob_context->GetNativeBlobAsStream(partition_name),
+                                              native_blob_context->GetNativeBlob(partition_name));
   }
 
   LOGS_DEFAULT(VERBOSE) << "[OpenVINO EP] Read blob from EPContext Node";
-  return std::make_unique<ModelBlobWrapper>(std::move(result), ov::Tensor());
+  return std::make_unique<ModelBlobWrapper>(std::move(result), ov::Tensor(), std::move(blob_filepath));
 }
 
 bool EPCtxHandler::CheckForOVEPCtxNodeInGraph(const GraphViewer& graph_viewer) const {
@@ -204,7 +274,13 @@ bool EPCtxHandler::CheckEPCacheContextAttribute(const GraphViewer& graph_viewer,
   const auto& attrs = node->GetAttributes();
   auto it = attrs.find(EP_CACHE_CONTEXT);
   if (it != attrs.end()) {
-    return it->second().s().find(target_attr_extn) != std::string::npos;
+    auto context_filename = std::filesystem::path{it->second().s()}.filename().string();
+    auto target_filename = std::filesystem::path{target_attr_extn}.filename().string();
+    std::transform(context_filename.begin(), context_filename.end(), context_filename.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(target_filename.begin(), target_filename.end(), target_filename.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return context_filename == target_filename;
   }
   return false;
 }
@@ -213,6 +289,7 @@ std::shared_ptr<SharedContext> EPCtxHandler::Initialize(const std::vector<IExecu
   bool has_embed_nodes = false;
   bool has_non_embed_nodes = false;
   bool has_main_context = false;
+  std::unordered_set<std::string> loaded_callback_names;
 
   std::shared_ptr<SharedContext> shared_context{};
   for (const auto& fused_node_graph : fused_nodes) {
@@ -263,11 +340,30 @@ std::shared_ptr<SharedContext> EPCtxHandler::Initialize(const std::vector<IExecu
       const std::filesystem::path& validation_base_path = is_xml
                                                               ? session_context.GetModelPath()
                                                               : session_context.GetOutputModelPath();
-      ORT_THROW_IF_ERROR(utils::ValidateExternalDataPath(validation_base_path, cache_context_path));
-      const std::filesystem::path ep_context_path = validation_base_path.parent_path() / cache_context_path;
       if (!is_xml) {
-        shared_context = shared_context_manager_->GetOrCreateSharedContext(ep_context_path);
-        shared_context->Deserialize();
+        if (session_context.ep_context_data_read_func != nullptr) {
+          if (!shared_context) {
+            shared_context = std::make_shared<SharedContext>(std::filesystem::path{});
+          }
+          if (loaded_callback_names.insert(ep_cache_context).second) {
+            std::unique_ptr<CallbackBufferIStream> stream;
+            ORT_THROW_IF_ERROR(ReadEpContextData(session_context.ep_context_data_read_func,
+                                                 session_context.ep_context_data_read_state,
+                                                 ep_cache_context, stream));
+            shared_context->Deserialize(*stream);
+            ORT_ENFORCE(shared_context->GetMetadataCopy().empty(),
+                        "OpenVINO callback-backed EPContext does not support external shared weights.");
+          }
+        } else {
+          ORT_THROW_IF_ERROR(ValidateEpContextDataPath(validation_base_path, cache_context_path));
+          const std::filesystem::path ep_context_path = validation_base_path.parent_path() / cache_context_path;
+          shared_context = shared_context_manager_->GetOrCreateSharedContext(ep_context_path);
+          shared_context->Deserialize();
+        }
+      } else {
+        ORT_ENFORCE(session_context.ep_context_data_read_func == nullptr,
+                    "OpenVINO OVIR EPContext does not support EPContext data read callbacks.");
+        ORT_THROW_IF_ERROR(ValidateEpContextDataPath(validation_base_path, cache_context_path));
       }
     }
   }

@@ -52,8 +52,10 @@ BackendManager::BackendManager(SessionContext& session_context,
                                                               shared_context_(shared_context) {
   subgraph_context_.is_ep_ctx_graph = ep_ctx_handle_.CheckForOVEPCtxNodeInGraph(subgraph);
   // If the graph contains a OVIR wrapped node, we check if it has matching xml file name attribute
-  subgraph_context_.is_ep_ctx_ovir_encapsulated = ep_ctx_handle_.CheckEPCacheContextAttribute(subgraph,
-                                                                                              session_context_.onnx_model_path_name.filename().replace_extension("xml").string());
+  auto ovir_model_filename = session_context_.GetModelPath().filename();
+  ovir_model_filename.replace_extension("xml");
+  subgraph_context_.is_ep_ctx_ovir_encapsulated =
+      ep_ctx_handle_.CheckEPCacheContextAttribute(subgraph, ovir_model_filename.string());
 
   subgraph_context_.model_precision = [&](const GraphViewer& graph_viewer) {
     // return empty if graph has no inputs or if types are not one of FP32/FP16
@@ -102,9 +104,15 @@ BackendManager::BackendManager(SessionContext& session_context,
       ORT_THROW(exception_str);
     }
     if (subgraph_context_.is_ep_ctx_ovir_encapsulated) {
-      model_stream = ep_ctx_handle_.GetModelBlobStream(session_context_.onnx_model_path_name.replace_extension("xml").string(), subgraph, session_context_.device_type);
+      auto ovir_context_path = session_context_.GetModelPath();
+      ovir_context_path.replace_extension("xml");
+      model_stream = ep_ctx_handle_.GetModelBlobStream(
+          ovir_context_path, subgraph,
+          session_context_.device_type, shared_context_, false);
     } else {
-      model_stream = ep_ctx_handle_.GetModelBlobStream(session_context_.so_context_file_path, subgraph, session_context_.device_type);
+      model_stream = ep_ctx_handle_.GetModelBlobStream(
+          session_context_.so_context_file_path, subgraph, session_context_.device_type,
+          shared_context_, session_context_.ep_context_data_read_func != nullptr);
     }
 
   } else {

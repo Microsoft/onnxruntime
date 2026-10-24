@@ -64,6 +64,10 @@ OpenVINOExecutionProvider::OpenVINOExecutionProvider(const ProviderInfo& info)
       shared_context_manager_(SharedContextManager::Get()),
       ep_ctx_handle_{session_context_.openvino_sdk_version, *GetLogger(), shared_context_manager_} {
   InitProviderOrtApi();
+  const bool has_ep_context_data_callback = session_context_.ep_context_data_read_func != nullptr ||
+                                            session_context_.ep_context_data_write_func != nullptr;
+  ORT_ENFORCE(!(session_context_.so_share_ep_contexts && has_ep_context_data_callback),
+              "OpenVINO shared EP contexts do not support EPContext data callbacks.");
 #ifdef _WIN32
   session_id_ = global_session_counter_.fetch_add(1) + 1;
   // Trace all runtime options (includes both session and provider options)
@@ -195,7 +199,16 @@ common::Status OpenVINOExecutionProvider::Compile(
 
       // bit clunky ideally we should try to fold this into ep context handler
       if (!session_context_.so_context_embed_mode) {
-        shared_context_->Serialize();
+        if (session_context_.ep_context_data_write_func != nullptr) {
+          std::stringstream stream;
+          shared_context_->Serialize(stream);
+          std::string payload = std::move(stream).str();
+          const std::string name = PathToUTF8String(shared_context_->GetBinPath().filename().native());
+          ORT_RETURN_IF_ERROR(ConvertAndReleaseCallbackStatus(session_context_.ep_context_data_write_func(
+              session_context_.ep_context_data_write_state, name.c_str(), payload.data(), payload.size())));
+        } else {
+          shared_context_->Serialize();
+        }
         if (session_context_.so_stop_share_ep_contexts) {
           shared_context_manager_->ClearActiveSharedContext();
         }

@@ -569,6 +569,15 @@ Plugin EPs implement the `OrtEp` struct and access ORT functionality through `Or
 
 ### Adoption by EPs
 
+- **OpenVINO:** snapshots session callbacks and supports native external EPContext import and export. Embedded
+  contexts bypass the callbacks. Callback errors propagate without filesystem fallback, and import buffers are
+  released after deserialization. Native binary metadata and all blob ranges are checked against the supplied stream
+  length before allocating their storage. Total native-blob storage is also bounded by that length, preventing
+  overlapping entries from amplifying allocations. Each distinct external data name is read once per provider
+  initialization. Models containing multiple native EPContext nodes import each cached partition separately.
+  Callbacks are incompatible with shared EP contexts; callback-backed binaries with
+  external shared-weight metadata are rejected before inference. External OVIR (XML plus weights) remains a
+  filesystem-only format and is explicitly rejected when a read callback is registered.
 - **New EPs:** extract the `OrtEpContextConfig` in `CreateEp()` and store it (e.g. as a
   `Ort::EpContextConfig` member). During `Compile()`, read/write EPContext binaries
   through the config (directly via the getters, or via the reference helper, which handles the

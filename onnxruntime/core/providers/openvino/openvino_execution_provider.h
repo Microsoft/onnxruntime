@@ -74,6 +74,11 @@ class OpenVINOExecutionProvider : public IExecutionProvider {
 
   const InlinedVector<const Node*> GetEpContextNodes() const override;
 
+  Status GetEpContextDataCallbackSupport(uint32_t& supported_flags) const override {
+    supported_flags = OrtEpContextDataCallbackSupportFlags_READ | OrtEpContextDataCallbackSupportFlags_WRITE;
+    return Status::OK();
+  }
+
 #ifdef USE_OVEP_NPU_MEMORY
   std::vector<AllocatorPtr> CreatePreferredAllocators() override;
 #endif

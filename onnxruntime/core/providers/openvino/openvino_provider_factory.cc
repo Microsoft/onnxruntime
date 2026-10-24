@@ -431,6 +431,10 @@ struct OpenVINOProviderFactory : IExecutionProviderFactory {
     ProviderInfo provider_info = provider_info_;
     ParseProviderInfo(provider_options, &config_options, provider_info);
     ParseConfigOptions(provider_info);
+    session_options.GetEpContextDataCallbacks(&provider_info.ep_context_data_read_func,
+                                              &provider_info.ep_context_data_read_state,
+                                              &provider_info.ep_context_data_write_func,
+                                              &provider_info.ep_context_data_write_state);
 
     auto ov_ep = std::make_unique<OpenVINOExecutionProvider>(provider_info);
     ov_ep->SetLogger(reinterpret_cast<const logging::Logger*>(&session_logger));
@@ -440,9 +444,13 @@ struct OpenVINOProviderFactory : IExecutionProviderFactory {
   // This is called during session creation when AppendExecutionProvider_V2 is used.
   // This one is called because ParseProviderInfo / ParseConfigOptions, etc. are already
   // performed in CreateIExecutionProvider, and so provider_info_ has already been populated.
-  std::unique_ptr<IExecutionProvider> CreateProvider_V2(const OrtSessionOptions& /*session_options*/,
+  std::unique_ptr<IExecutionProvider> CreateProvider_V2(const OrtSessionOptions& session_options,
                                                         const OrtLogger& session_logger) {
     ProviderInfo provider_info = provider_info_;
+    session_options.GetEpContextDataCallbacks(&provider_info.ep_context_data_read_func,
+                                              &provider_info.ep_context_data_read_state,
+                                              &provider_info.ep_context_data_write_func,
+                                              &provider_info.ep_context_data_write_state);
     auto ov_ep = std::make_unique<OpenVINOExecutionProvider>(provider_info);
     ov_ep->SetLogger(reinterpret_cast<const logging::Logger*>(&session_logger));
     return ov_ep;

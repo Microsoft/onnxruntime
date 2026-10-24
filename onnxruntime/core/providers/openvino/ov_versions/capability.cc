@@ -1,6 +1,7 @@
 // Copyright (C) 2019- Intel Corporation
 // Licensed under the MIT License
 #include <map>
+#include <algorithm>
 #include <unordered_set>
 #include <type_traits>
 
@@ -75,6 +76,22 @@ std::vector<std::unique_ptr<ComputeCapability>> GetCapability::Execute() {
 
   // Check for EpContext nodes
   const auto& nodes = graph_viewer_.GetNodesInTopologicalOrder();
+  if (nodes.size() > 1 && std::all_of(nodes.begin(), nodes.end(), [this](const auto index) {
+        const auto* node = graph_viewer_.GetNode(index);
+        return node != nullptr && ep_ctx_handler_.CheckForOVEPCtxNode(*node);
+      })) {
+    // Cached partitions must be imported individually, not translated as ONNX EPContext operations.
+    for (const auto index : nodes) {
+      const auto* node = graph_viewer_.GetNode(index);
+      std::vector<std::string> inputs;
+      std::vector<std::string> outputs;
+      Iterable2String(inputs, node->InputDefs());
+      Iterable2String(outputs, node->OutputDefs());
+      AppendClusterToSubGraph({index}, inputs, outputs, result);
+    }
+    is_wholly_supported_graph_ = true;
+    return result;
+  }
 
   // Build set of all outputs actually produced by nodes in the graph
   std::unordered_set<std::string> valid_node_outputs;
