@@ -483,7 +483,6 @@ void GroupQueryAttentionTypeAndShapeInference(ONNX_NAMESPACE::InferenceContext& 
 
 void DynamicSparseAttentionTypeAndShapeInference(ONNX_NAMESPACE::InferenceContext& ctx) {
   ONNX_NAMESPACE::propagateElemTypeFromInputToOutput(ctx, 0, 0);
-
   const int64_t num_heads = getAttribute(ctx, "num_heads", 0);
   const int64_t kv_num_heads = getAttribute(ctx, "kv_num_heads", 0);
   if (num_heads <= 0 || num_heads > std::numeric_limits<int>::max()) {
@@ -524,7 +523,8 @@ void DynamicSparseAttentionTypeAndShapeInference(ONNX_NAMESPACE::InferenceContex
       continue;
     }
 
-    ONNX_NAMESPACE::propagateElemTypeFromInputToOutput(ctx, 0, output_index);
+    ONNX_NAMESPACE::propagateElemTypeFromInputToOutput(
+        ctx, ctx.getInputType(input_index) != nullptr ? input_index : 0, output_index);
     if (hasInputShape(ctx, input_index)) {
       ONNX_NAMESPACE::propagateShapeFromInputToOutput(ctx, input_index, output_index);
       continue;
@@ -589,6 +589,12 @@ The main cache uses BNSH layout and ordinary contiguous append semantics. Select
 Auxiliary K/V use BNSH layout and are read-only. When `auxiliary_kv_shared=1`, auxiliary_value may be omitted and
 auxiliary_key is used as both K and V. DeepSeek-style post-attention inverse/conjugate RoPE and output projection remain
 the exporter's responsibility.
+
+Main caches may instead use INT8 with positive finite float32 key_scale and value_scale vectors, one scale per
+KV-head channel. Newly appended keys (after optional normalization and RoPE) and values are divided by their scales,
+rounded to nearest with ties to even, and saturated to [-128, 127]. Attention reads the quantized representation,
+including newly appended rows. Auxiliary caches remain floating point. Invalid scale values produce validation_status=10
+when validation is requested; CUDA strict validation also reports them as an error.
 )DOC";
 
 ONNX_MS_OPERATOR_SET_SCHEMA(
@@ -629,8 +635,8 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
                OpSchema::Optional)
         .Input(2, "value", "Current main value [batch, sequence, kv_num_heads * head_size].", "T",
                OpSchema::Optional)
-        .Input(3, "past_key", "Main key cache in BNSH layout.", "T", OpSchema::Optional)
-        .Input(4, "past_value", "Main value cache in BNSH layout.", "T", OpSchema::Optional)
+        .Input(3, "past_key", "Main key cache in BNSH layout, same type as query or INT8.", "TCache", OpSchema::Optional)
+        .Input(4, "past_value", "Main value cache in BNSH layout, same type as past_key.", "TCache", OpSchema::Optional)
         .Input(5, "auxiliary_key", "Read-only auxiliary key sequence in BNSH layout.", "T",
                OpSchema::Optional)
         .Input(6, "auxiliary_value", "Read-only auxiliary value sequence in BNSH layout.", "T",
@@ -652,13 +658,34 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
         .Input(16, "head_sink",
                "Optional sink logit [num_heads]. Participates in the shared softmax denominator in both attention modes.",
                "T", OpSchema::Optional)
+        .Input(17, "committed_length",
+               "Optional single-request committed token count for cursor validation. When supplied, validation_status "
+               "is 9 if seqlens_k, sequence_length, or cache_capacity is inconsistent. CUDA only.",
+               "M", OpSchema::Optional)
+        .Input(18, "key_scale", "Positive finite per-channel INT8 key-cache scales [kv_num_heads * head_size].",
+               "S", OpSchema::Optional)
+        .Input(19, "value_scale", "Positive finite per-channel INT8 value-cache scales [kv_num_heads * head_size].",
+               "S", OpSchema::Optional)
         .Output(0, "output", "Attention output [batch, sequence, num_heads * head_size].", "T")
-        .Output(1, "present_key", "Updated main key cache in BNSH layout.", "T", OpSchema::Optional)
-        .Output(2, "present_value", "Updated main value cache in BNSH layout.", "T", OpSchema::Optional)
+        .Output(1, "present_key", "Updated main key cache in BNSH layout.", "TCache", OpSchema::Optional)
+        .Output(2, "present_value", "Updated main value cache in BNSH layout.", "TCache", OpSchema::Optional)
+        .Output(3, "validation_status", "Optional CUDA-only int32 status: 0 when valid, a validation code when invalid.",
+                "M", OpSchema::Optional)
         .TypeConstraint("T", {"tensor(float)", "tensor(float16)", "tensor(bfloat16)"},
                         "Constrain all floating-point inputs and outputs to one element type.")
+        .TypeConstraint("TCache", {"tensor(float)", "tensor(float16)", "tensor(bfloat16)", "tensor(int8)"},
+                        "Cache type must match T unless INT8 per-channel scales are supplied.")
+        .TypeConstraint("S", {"tensor(float)"}, "INT8 cache scales use float32.")
         .TypeConstraint("M", {"tensor(int32)"}, "Constrain selection and sequence metadata to int32.")
-        .TypeAndShapeInferenceFunction(DynamicSparseAttentionTypeAndShapeInference));
+        .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
+          DynamicSparseAttentionTypeAndShapeInference(ctx);
+          if (ctx.getNumOutputs() > 3 && ctx.hasOutput(3)) {
+            updateOutputElemType(ctx, 3, ONNX_NAMESPACE::TensorProto_DataType_INT32);
+            ONNX_NAMESPACE::TensorShapeProto status_shape;
+            status_shape.add_dim()->set_dim_value(1);
+            updateOutputShape(ctx, 3, status_shape);
+          }
+        }));
 
 constexpr const char* Attention_ver1_doc = R"DOC(
 Multi-Head Attention that can be either unidirectional (like GPT-2) or bidirectional (like BERT).
@@ -2878,6 +2905,15 @@ void PackedSparseAttentionIndexerTypeAndShapeInference(ONNX_NAMESPACE::Inference
   const bool has_capture_count = PackedSparseAttentionIndexerHasInput(ctx, psai::kStateUpdateCaptureCount);
   const bool has_state_update_active = PackedSparseAttentionIndexerHasInput(ctx, psai::kStateUpdateActive);
   const bool has_state_update_output = ctx.hasOutput(psai::kStateUpdate);
+  const bool has_mid_kv_buffer = ctx.hasOutput(psai::kMidKvBuffer);
+  const bool has_mid_state_lengths = ctx.hasOutput(psai::kMidStateLengths);
+  const bool has_validation_status = ctx.hasOutput(psai::kValidationStatus);
+  if (has_mid_kv_buffer != has_mid_state_lengths) {
+    fail_shape_inference("PackedSparseAttentionIndexer: mid_kv_buffer and mid_state_lengths must be connected together");
+  }
+  if (!is_qsa && (has_mid_kv_buffer || has_validation_status)) {
+    fail_shape_inference("PackedSparseAttentionIndexer: mid-state and validation outputs are only supported for qsa");
+  }
   if (!is_qsa && (state_update_capacity > 0 || has_capture_count ||
                   has_state_update_active || has_state_update_output)) {
     fail_shape_inference("PackedSparseAttentionIndexer: state update capture is only valid for policy_mode 'qsa'");
@@ -2889,9 +2925,9 @@ void PackedSparseAttentionIndexerTypeAndShapeInference(ONNX_NAMESPACE::Inference
   }
 
   if (ctx.getNumOutputs() < static_cast<size_t>(psai::kFixedOutputCount) ||
-      ctx.getNumOutputs() > static_cast<size_t>(psai::kOutputCount)) {
-    fail_shape_inference("PackedSparseAttentionIndexer: expected ", psai::kFixedOutputCount, " or ",
-                         psai::kOutputCount, " declared outputs, got ", ctx.getNumOutputs());
+      ctx.getNumOutputs() > static_cast<size_t>(psai::kMaxOutputCount)) {
+    fail_shape_inference("PackedSparseAttentionIndexer: expected ", psai::kFixedOutputCount, " to ",
+                         psai::kMaxOutputCount, " declared outputs, got ", ctx.getNumOutputs());
   }
   if (ctx.hasOutput(psai::kPresentGateBuffer) == is_qsa) {
     fail_shape_inference("PackedSparseAttentionIndexer: output ", psai::kPresentGateBuffer,
@@ -2902,19 +2938,43 @@ void PackedSparseAttentionIndexerTypeAndShapeInference(ONNX_NAMESPACE::Inference
   updateOutputElemType(ctx, psai::kSelectedCounts, ONNX_NAMESPACE::TensorProto_DataType_INT32);
   if (has_indexshare) updateOutputElemType(ctx, psai::kIndexShareStatus, ONNX_NAMESPACE::TensorProto_DataType_INT32);
   updateOutputElemType(ctx, psai::kPresentStateLengths, ONNX_NAMESPACE::TensorProto_DataType_INT32);
+  if (has_mid_state_lengths) {
+    updateOutputElemType(ctx, psai::kMidStateLengths, ONNX_NAMESPACE::TensorProto_DataType_INT32);
+    propagateShapeFromInputToOutput(ctx, psai::kPastStateLengths, psai::kMidStateLengths);
+  }
+  if (has_validation_status) {
+    updateOutputElemType(ctx, psai::kValidationStatus, ONNX_NAMESPACE::TensorProto_DataType_INT32);
+    propagateShapeFromInputToOutput(ctx, psai::kPastSequenceLengths, psai::kValidationStatus);
+  }
   const bool has_state_status_output = ctx.hasOutput(psai::kStateStatus);
   if (has_state_status_output) {
     updateOutputElemType(ctx, psai::kStateStatus, ONNX_NAMESPACE::TensorProto_DataType_INT32);
   }
   propagateElemTypeFromInputToOutput(ctx, psai::kPastKeyState, psai::kPresentKeyState);
   propagateElemTypeFromInputToOutput(ctx, psai::kPastKvBuffer, psai::kPresentKvBuffer);
+  if (has_mid_kv_buffer) {
+    propagateElemTypeFromInputToOutput(ctx, psai::kPastKvBuffer, psai::kMidKvBuffer);
+    propagateShapeFromInputToOutput(ctx, psai::kPastKvBuffer, psai::kMidKvBuffer);
+  }
+  for (int prefix = 0; prefix < 2; ++prefix) {
+    const int buffer = psai::kMidKvBuffer2 + 2 * prefix;
+    const int lengths = buffer + 1;
+    if (ctx.hasOutput(buffer) != ctx.hasOutput(lengths))
+      fail_shape_inference("PackedSparseAttentionIndexer: prefix buffer and lengths must be connected together");
+    if (!ctx.hasOutput(buffer)) continue;
+    if (!is_qsa) fail_shape_inference("PackedSparseAttentionIndexer: prefix outputs require policy_mode='qsa'");
+    propagateElemTypeFromInputToOutput(ctx, psai::kPastKvBuffer, buffer);
+    propagateShapeFromInputToOutput(ctx, psai::kPastKvBuffer, buffer);
+    updateOutputElemType(ctx, lengths, ONNX_NAMESPACE::TensorProto_DataType_INT32);
+    propagateShapeFromInputToOutput(ctx, psai::kPastStateLengths, lengths);
+  }
   if (!is_qsa) {
     // present_gate_buffer keeps its fixed positional slot (with an empty name) for policy_mode
     // 'qsa'; only propagate its type/shape when it is actually produced.
     propagateElemTypeFromInputToOutput(ctx, psai::kPastGateBuffer, psai::kPresentGateBuffer);
   }
   if (has_state_update_output) {
-    propagateElemTypeFromInputToOutput(ctx, psai::kPastKeyState, psai::kStateUpdate);
+    propagateElemTypeFromInputToOutput(ctx, psai::kPastKvBuffer, psai::kStateUpdate);
   }
 
   const auto* query_shape = PackedSparseAttentionIndexerShape(ctx, psai::kQuery, 2);
@@ -3182,6 +3242,8 @@ Unlike SparseAttentionIndexer, this operator:
     (the optional state_status output reports which requests were rejected and why);
   * additionally emits selected_counts, the exact number of active (non -1) entries per query, so
     that no downstream consumer needs to scan selected_indices for its query's true count.
+  * for QSA, optionally emits the pending-state snapshot after the first request token and a
+    per-request validation status for overflow or inconsistent state metadata.
 
 Both policy_mode values keep the semantics of SparseAttentionIndexer, applied independently to each
 request's own packed token range and fixed-capacity state slice:
@@ -3195,8 +3257,8 @@ request's own packed token range and fixed-capacity state slice:
     sum_h ReLU(q_h . k), the token_budget / compress_ratio highest scoring blocks are kept, and
     their token indices are emitted (request-local logical positions, i.e. the same numbering as
     past_sequence_lengths + local offset) followed by the causally visible tokens of the trailing
-    incomplete block. QSA positions are the request-local logical cache positions derived from
-    past_sequence_lengths and cumulative_sequence_lengths; position_ids must be omitted.
+    incomplete block. There is no position_ids input: QSA positions are the request-local logical
+    cache positions derived from past_sequence_lengths and cumulative_sequence_lengths.
 
   policy_mode = "csa" ("compressed sparse attention" block indexer)
     Applies the same window-plan arithmetic as SparseAttentionIndexer (overlap/leftover/new window
@@ -3346,8 +3408,9 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
                "past_key_state",
                "Generic fixed-capacity state: policy_mode 'qsa' stores prepared complete-block keys; "
                "policy_mode 'csa' stores compressed keys. Shape is (batch_size, state_capacity, head_size) and "
-               "never changes across calls.",
-               "T")
+               "never changes across calls. CUDA QSA also supports FLOAT key state with BFLOAT16 "
+               "query/key tensors. WebGPU requires key state and activations to have the same type.",
+               "T_KEY")
         .Input(13,
                "past_kv_buffer",
                "Generic fixed-capacity pending-token buffer. Shape is (batch_size, 2 * compress_ratio - 1, "
@@ -3401,7 +3464,7 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
         .Output(2,
                 "present_key_state",
                 "Updated generic key state, with the same fixed shape as past_key_state.",
-                "T")
+                "T_KEY")
         .Output(3,
                 "present_kv_buffer",
                 "Updated generic pending-token buffer, with the same fixed shape as past_kv_buffer.",
@@ -3437,9 +3500,32 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
                 "synchronizing inside the operator. Currently supported by the CUDA provider only.",
                 "M",
                 OpSchema::Optional)
+        .Output(9, "mid_kv_buffer",
+                "Only for CUDA policy_mode 'qsa' refresh: pending-buffer snapshot after the first token of each request. "
+                "Not supported in IndexShare reuse mode.",
+                "T", OpSchema::Optional)
+        .Output(10, "mid_state_lengths",
+                "Only for CUDA policy_mode 'qsa' refresh: state lengths after the first token of each request. "
+                "Not supported in IndexShare reuse mode.",
+                "M", OpSchema::Optional)
+        .Output(11, "validation_status",
+                "Only for CUDA policy_mode 'qsa' refresh: per-request overflow status; two-token rejection is encoded as 0x99. "
+                "Not supported in IndexShare reuse mode.",
+                "M", OpSchema::Optional)
+        .Output(12, "mid_kv_buffer2", "CUDA QSA pending-buffer snapshot after at most two request tokens.",
+                "T", OpSchema::Optional)
+        .Output(13, "mid_state_lengths2", "CUDA QSA state lengths after at most two request tokens.",
+                "M", OpSchema::Optional)
+        .Output(14, "mid_kv_buffer3", "CUDA QSA pending-buffer snapshot after at most three request tokens.",
+                "T", OpSchema::Optional)
+        .Output(15, "mid_state_lengths3", "CUDA QSA state lengths after at most three request tokens.",
+                "M", OpSchema::Optional)
         .TypeConstraint("T",
                         {"tensor(float)", "tensor(float16)", "tensor(bfloat16)"},
                         "Constrain floating point tensors to float, float16 and bfloat16.")
+        .TypeConstraint("T_KEY",
+                        {"tensor(float)", "tensor(float16)", "tensor(bfloat16)"},
+                        "Constrain the generic key-state tensor to float, float16 and bfloat16.")
         .TypeConstraint("I", {"tensor(int64)"}, "Constrain position ids to 64-bit integer tensors.")
         .TypeConstraint("M", {"tensor(int32)"},
                         "Constrain packed metadata, generic state lengths and selected indices/counts to 32-bit "

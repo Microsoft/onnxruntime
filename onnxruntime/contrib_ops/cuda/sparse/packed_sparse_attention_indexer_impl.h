@@ -39,6 +39,13 @@ struct PackedSparseAttentionIndexerParams {
   // policy_mode = "qsa"
   int block_topk = 0;  // token_budget / compress_ratio
   int state_update_capacity = 0;
+  void* mid_kv_buffer = nullptr;          // [batch, buffer_capacity, head_size] T
+  int32_t* mid_state_lengths = nullptr;   // [batch, 2]
+  void* mid_kv_buffer2 = nullptr;         // [batch, buffer_capacity, head_size] T
+  int32_t* mid_state_lengths2 = nullptr;  // [batch, 2]
+  void* mid_kv_buffer3 = nullptr;         // [batch, buffer_capacity, head_size] T
+  int32_t* mid_state_lengths3 = nullptr;  // [batch, 2]
+  int32_t* validation_status = nullptr;   // [batch]
 
   // policy_mode = "csa"
   int index_topk = 0;
@@ -61,7 +68,7 @@ Status LaunchValidatePackedIndexerReuse(cudaStream_t stream, const int32_t* cumu
 // unchanged and present_state_lengths is left as past_state_lengths clamped to valid bounds) and
 // the select kernels force that request's selected_indices/selected_counts to the safe empty
 // result (-1 / 0) rather than selecting against a partially updated state.
-template <typename T>
+template <typename T, typename TState>
 Status LaunchQsaPackedSparseAttentionIndexer(
     cudaStream_t stream,
     const PackedSparseAttentionIndexerParams& params,
@@ -74,14 +81,14 @@ Status LaunchQsaPackedSparseAttentionIndexer(
     const int32_t* cumulative_sequence_lengths,
     const int32_t* past_sequence_lengths,
     const int64_t* position_ids,
-    const T* past_key_state,
+    const TState* past_key_state,
     const T* past_kv_buffer,
     const int32_t* past_state_lengths,
     const int32_t* state_update_capture_count,
     bool state_update_active,
     int32_t* selected_indices,
     int32_t* selected_counts,
-    T* present_key_state,
+    TState* present_key_state,
     T* present_kv_buffer,
     int32_t* present_state_lengths,
     T* state_update,

@@ -22,6 +22,7 @@ enum DynamicSparseAttentionValidationError : int32_t {
   kDynamicSparseAttentionNonCausalIndex = 6,
   kDynamicSparseAttentionInvalidSequenceLength = 7,
   kDynamicSparseAttentionInvalidPosition = 8,
+  kDynamicSparseAttentionInvalidCacheScale = 10,
 };
 
 template <typename T>
@@ -47,6 +48,9 @@ struct DynamicSparseAttentionData {
   T* present_value = nullptr;
   T* output = nullptr;
   float* attention_workspace = nullptr;
+  bool quantized_cache = false;
+  const float* key_scale = nullptr;
+  const float* value_scale = nullptr;
 };
 
 size_t GetDynamicSparseAttentionValidationWorkspaceSize(
@@ -56,7 +60,8 @@ size_t GetDynamicSparseAttentionValidationWorkspaceSize(
 size_t GetDynamicSparseAttentionWorkspaceSize(
     const DynamicSparseAttentionParameters& parameters,
     size_t element_size,
-    size_t max_shared_memory_per_block);
+    size_t max_shared_memory_per_block,
+    bool quantized_cache = false);
 
 Status ValidateDynamicSparseAttentionOnDevice(
     cudaStream_t stream,
@@ -68,7 +73,10 @@ Status ValidateDynamicSparseAttentionOnDevice(
     int32_t* error_flag,
     uint32_t* validation_bitmap,
     size_t max_shared_memory_per_block,
-    bool copy_result_to_host);
+    bool copy_result_to_host,
+    const float* key_scale = nullptr,
+    const float* value_scale = nullptr,
+    const int32_t* committed_length = nullptr);
 
 template <typename T>
 Status LaunchDynamicSparseAttention(

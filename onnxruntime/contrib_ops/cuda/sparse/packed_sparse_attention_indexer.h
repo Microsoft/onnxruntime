@@ -11,7 +11,7 @@ namespace onnxruntime {
 namespace contrib {
 namespace cuda {
 
-template <typename T>
+template <typename T, typename TState>
 class PackedSparseAttentionIndexer final : public onnxruntime::cuda::CudaKernel {
  public:
   explicit PackedSparseAttentionIndexer(const OpKernelInfo& info);
