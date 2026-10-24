@@ -820,7 +820,12 @@ Status GroupQueryAttention<T, U>::ComputeInternal(OpKernelContext* context) cons
   // LaunchGetSequenceLengths to derive P = T - sequence_length.
   // It is also disabled for a windowed KV cache: the kernel derives both the absolute RoPE position
   // and the cache append offset from a single seqlens_k value, which those two no longer share.
-  data.use_flash_attention_fast_decode = use_flash_attention && !disable_flash_decode_ && !parameters.is_first_prompt && parameters.sequence_length == 1 && parameters.kv_sequence_length > 0 && parameters.past_present_share_buffer && !is_inputs_quantized && !parameters.use_qk_norm && !parameters.is_windowed_kv_cache;
+  // Explicit RoPE positions may differ from cache offsets and require position-aware PrepareQKV.
+  data.use_flash_attention_fast_decode = use_flash_attention && !disable_flash_decode_ && !parameters.is_first_prompt &&
+                                         parameters.sequence_length == 1 && parameters.kv_sequence_length > 0 &&
+                                         parameters.past_present_share_buffer && !is_inputs_quantized &&
+                                         !parameters.use_qk_norm && !parameters.is_windowed_kv_cache &&
+                                         (!parameters.do_rotary || data.position_ids == nullptr);
 
   if (use_flash_attention) {
     // Flash-specific buffer sizes (softmax LSE and the optional split accumulators) come from the
