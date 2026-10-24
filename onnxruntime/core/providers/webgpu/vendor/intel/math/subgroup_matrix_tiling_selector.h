@@ -12,12 +12,18 @@ namespace onnxruntime {
 namespace webgpu {
 namespace intel {
 
-// Creates the Intel tile/split-K selection callback for the common subgroup-matrix
-// kernel. Returns an empty selector on devices that are not Intel or that do not
-// support the required 8x16x16 F16 subgroup matrix configuration, so the common
-// factory yields no implementation and the caller falls back to the default
-// MatMul path.
+// MatMul selector's SLM budget, in f16 elements (16384 == 32 KB). Shared with the
+// Conv kernel's own split-K safety clamp.
+constexpr uint32_t kMaxScratchElems = 16384;
+
+// Tile/split-K selector for the common subgroup-matrix kernel. Empty on non-Intel
+// devices or ones lacking the 8x16x16 F16 config.
 SubgroupMatrixTilingSelector CreateSubgroupMatrixTilingSelector(
+    const ComputeContextBase& context);
+
+// Conv counterpart: Conv scratch budget (also stages the im2col A tile) and a
+// Conv-only heuristic, no pretuned table.
+SubgroupMatrixTilingSelector CreateSubgroupMatrixConvTilingSelector(
     const ComputeContextBase& context);
 
 }  // namespace intel
