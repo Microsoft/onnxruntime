@@ -4,6 +4,12 @@ This directory contains doxygen configuration to generate the C/C++ API docs for
 
 The actual generation is performed by a GitHub actions workflow: [publish-c-apidocs.yml](../../.github/workflows/publish-c-apidocs.yml).
 
+## User documentation
+
+- [C API quickstart](C_API_Quickstart.md): a short starting point guide for calling ONNX Runtime
+  from C, with a complete, copy-pasteable example program and an explanation of the arguments of
+  every call it makes.
+
 # C/C++ API Documentation Conventions
 
 ## Handling API changes across versions
