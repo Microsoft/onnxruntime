@@ -23,7 +23,7 @@ def create_external_data_tensor(value, tensor_name):  # type: (List[Any], Text) 
     return tensor
 
 
-def GenerateModel(model_name, external_data_name):  # noqa: N802
+def GenerateModel(model_name, external_data_name, output_shape=(1, 4)):  # noqa: N802
     # Create one input (ValueInfoProto)
     X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 2])  # noqa: N806
 
@@ -31,7 +31,7 @@ def GenerateModel(model_name, external_data_name):  # noqa: N802
     Pads = helper.make_tensor_value_info(external_data_name, TensorProto.INT64, [4])  # noqa: N806
 
     # Create one output (ValueInfoProto)
-    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 4])  # noqa: N806
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, output_shape)  # noqa: N806
 
     # Create a node (NodeProto)
     node_def = helper.make_node(
@@ -74,4 +74,4 @@ def GenerateModel(model_name, external_data_name):  # noqa: N802
 
 if __name__ == "__main__":
     GenerateModel("model_with_external_initializers.onnx", "Pads")
-    GenerateModel("model_with_orig_ext_data.onnx", "model_with_orig_ext_data")
+    GenerateModel("model_with_orig_ext_data.onnx", "model_with_orig_ext_data", output_shape=(2, 3))
