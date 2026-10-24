@@ -5526,6 +5526,13 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
                "CPU int32 control with shape (1). Zero disables transition capture, ignores "
                "capture_count, and produces a zero-filled state_update. Omission is conservative.",
                "TI", OpSchema::Optional)
+        .Input(11, "gate_projections",
+               "WebGPU-only packed raw gate projections, shape (...tokens, 2 * num_heads_v), "
+               "with all decay projection heads followed by all beta projection heads per token. "
+               "Replaces both decay and beta inputs, which must be omitted. Requires "
+               "update_rule=gated_delta, gate_activation=qwen, and beta_activation=sigmoid. "
+               "Values are widened to float before gate arithmetic; recurrent state remains float.",
+               "T", OpSchema::Optional)
         .Output(0, "output",
                 "Output, shape (total_tokens, max(num_heads_q, num_heads_v), head_size_v)", "T")
         .Output(1, "final_state",
@@ -5538,7 +5545,7 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
                 "head_size_qk + num_heads_v * head_size_v)).",
                 "TS", OpSchema::Optional)
         .TypeConstraint("T", {"tensor(float)", "tensor(float16)", "tensor(bfloat16)"},
-                        "Constrain query/key/value/output types.")
+                        "Constrain query/key/value/output and packed gate projection types.")
         .TypeConstraint("TS", {"tensor(float)"},
                         "State, gate, beta and compact state-update tensors are always float.")
         .TypeConstraint("TI", {"tensor(int32)"}, "Constrain index and count tensors to int32.")
@@ -5549,6 +5556,17 @@ ONNX_MS_OPERATOR_SET_SCHEMA(
           }
           if (ctx.getNumOutputs() > 2) {
             updateOutputElemType(ctx, 2, ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+          }
+
+          if (ctx.getNumInputs() > 11 && ctx.getInputType(11) != nullptr) {
+            if (ctx.getInputType(4) != nullptr || ctx.getInputType(5) != nullptr) {
+              fail_shape_inference("GatedDeltaNet: gate_projections requires omitted decay and beta");
+            }
+            if (getAttribute(ctx, "update_rule", "gated_delta") != "gated_delta" ||
+                getAttribute(ctx, "gate_activation", "none") != "qwen" ||
+                getAttribute(ctx, "beta_activation", "none") != "sigmoid") {
+              fail_shape_inference("GatedDeltaNet: gate_projections requires gated_delta, qwen and sigmoid");
+            }
           }
 
           const bool has_key = ctx.getNumInputs() > 1 && ctx.getInputType(1) != nullptr;

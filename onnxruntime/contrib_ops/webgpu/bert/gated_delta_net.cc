@@ -245,9 +245,11 @@ Status GatedDeltaNetPrefillOutputProgram::GenerateShaderCode(ShaderHelper& shade
 Status GatedDeltaNetParamsProgram::GenerateShaderCode(ShaderHelper& shader) const {
   const auto& parameters = shader.AddOutput("parameters", ShaderUsage::UseUniform);
   const ShaderVariableHelper* decay = &parameters;
-  if (has_decay_) decay = &shader.AddInput("decay", ShaderUsage::UseUniform);
+  if (has_decay_ && !has_gate_projections_) decay = &shader.AddInput("decay", ShaderUsage::UseUniform);
   const ShaderVariableHelper* beta = &parameters;
-  if (has_beta_) beta = &shader.AddInput("beta", ShaderUsage::UseUniform);
+  if (has_beta_ && !has_gate_projections_) beta = &shader.AddInput("beta", ShaderUsage::UseUniform);
+  const ShaderVariableHelper* gate_projections = &parameters;
+  if (has_gate_projections_) gate_projections = &shader.AddInput("gate_projections", ShaderUsage::UseUniform);
   const ShaderVariableHelper* a_log = &parameters;
   const ShaderVariableHelper* dt_bias = &parameters;
   if (qwen_gate_) {
@@ -257,12 +259,14 @@ Status GatedDeltaNetParamsProgram::GenerateShaderCode(ShaderHelper& shader) cons
   return WGSL_TEMPLATE_APPLY(shader, "bert/gated_delta_net_params.wgsl.template",
                              WGSL_TEMPLATE_PARAMETER(has_beta, has_beta_),
                              WGSL_TEMPLATE_PARAMETER(has_decay, has_decay_),
+                             WGSL_TEMPLATE_PARAMETER(has_gate_projections, has_gate_projections_),
                              WGSL_TEMPLATE_PARAMETER(qwen_gate, qwen_gate_),
                              WGSL_TEMPLATE_PARAMETER(sigmoid_beta, sigmoid_beta_),
                              WGSL_TEMPLATE_VARIABLE(a_log, *a_log),
                              WGSL_TEMPLATE_VARIABLE(beta, *beta),
                              WGSL_TEMPLATE_VARIABLE(decay, *decay),
                              WGSL_TEMPLATE_VARIABLE(dt_bias, *dt_bias),
+                             WGSL_TEMPLATE_VARIABLE(gate_projections, *gate_projections),
                              WGSL_TEMPLATE_VARIABLE(parameters, parameters));
 }
 
@@ -313,6 +317,7 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
   const auto* dt_bias = context.Input(8);
   const auto* capture_count = context.Input(9);
   const auto* state_update_active = context.Input(10);
+  const auto* gate_projections = context.Input(11);
 
   const bool needs_decay = update_rule_ == GatedDeltaNetUpdateRule::Gated ||
                            update_rule_ == GatedDeltaNetUpdateRule::GatedDelta;
@@ -326,8 +331,15 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
     ORT_RETURN_IF_NOT(initial_state->Shape().NumDimensions() == 4,
                       "initial_state must be rank 4 [batch, num_heads_v, head_size_v, head_size_qk]");
   }
-  ORT_RETURN_IF_NOT(needs_decay == (decay != nullptr), "decay input presence must match update_rule");
-  ORT_RETURN_IF_NOT(needs_beta == (beta != nullptr), "beta input presence must match update_rule");
+  if (gate_projections != nullptr) {
+    ORT_RETURN_IF_NOT(update_rule_ == GatedDeltaNetUpdateRule::GatedDelta && qwen_gate_ && sigmoid_beta_,
+                      "gate_projections requires gated_delta, qwen and sigmoid");
+    ORT_RETURN_IF_NOT(decay == nullptr && beta == nullptr,
+                      "gate_projections requires omitted decay and beta");
+  } else {
+    ORT_RETURN_IF_NOT(needs_decay == (decay != nullptr), "decay input presence must match update_rule");
+    ORT_RETURN_IF_NOT(needs_beta == (beta != nullptr), "beta input presence must match update_rule");
+  }
   ORT_RETURN_IF_NOT((state_update_capacity_ > 0) == (capture_count != nullptr),
                     "capture_count must be present exactly when state_update_capacity is positive");
   if (state_update_active != nullptr) {
@@ -447,6 +459,15 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
                           beta->Shape()[token_dims] == hv,
                       "beta must have shape [...tokens, num_heads_v]");
   }
+  if (gate_projections != nullptr) {
+    ORT_RETURN_IF_NOT(gate_projections->Shape().NumDimensions() == token_dims + 1 &&
+                          gate_projections->Shape().SizeToDimension(token_dims) == total_tokens &&
+                          gate_projections->Shape()[token_dims] == 2 * hv &&
+                          gate_projections->GetElementType() == query->GetElementType(),
+                      "gate_projections must match query type and have shape [...tokens, 2 * num_heads_v]");
+    ORT_RETURN_IF_NOT(static_cast<uint64_t>(total_tokens) * hv * 2 <= kMaxUint32,
+                      "gate_projections size must fit in uint32");
+  }
   if (qwen_gate_) {
     ORT_RETURN_IF_NOT(a_log != nullptr && dt_bias != nullptr &&
                           a_log->Shape().NumDimensions() == 1 && a_log->Shape()[0] == hv &&
@@ -498,7 +519,7 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
                                                 ? binding_count(query)
                                                 : binding_count(query) + binding_count(key) + binding_count(value);
   uint32_t direct_binding_count = source_qkv_binding_count +
-                                  binding_count(cu_seqlens) + binding_count(decay) + binding_count(beta) +
+                                  binding_count(cu_seqlens) + binding_count(decay) + binding_count(beta) + binding_count(gate_projections) +
                                   binding_count(initial_state) + binding_count(a_log) + binding_count(dt_bias) +
                                   binding_count(capture_state_updates ? capture_count : nullptr) +
                                   binding_count(output) + binding_count(final_state) +
@@ -521,6 +542,7 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
   uint32_t dynamic_param_binding_count = 0;
   if (needs_decay) dynamic_param_binding_count += binding_count(decay);
   if (needs_beta) dynamic_param_binding_count += binding_count(beta);
+  dynamic_param_binding_count += binding_count(gate_projections);
   if (qwen_gate_) dynamic_param_binding_count += binding_count(a_log) + binding_count(dt_bias);
   const uint64_t packed_params_size_in_bytes =
       static_cast<uint64_t>(total_tokens) * hv * 2 * sizeof(float);
@@ -530,6 +552,8 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
   const bool can_pack_params =
       needs_dynamic_params &&
       dynamic_param_binding_count + packed_params_binding_count <= max_storage_buffers;
+  ORT_RETURN_IF_NOT(gate_projections == nullptr || can_pack_params,
+                    "gate_projections exceeds WebGPU parameter binding limits");
   const bool can_copy_qkv =
       qkv_element_count <= kMaxUint32 &&
       largest_qkv_binding_count + packed_qkv_binding_count <= max_storage_buffers;
@@ -537,6 +561,8 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
                     "packed QKV input exceeds WebGPU buffer binding limits");
   const bool use_packed_qkv = input_is_packed_qkv ||
                               (direct_binding_count > max_storage_buffers &&
+                               !(gate_projections != nullptr &&
+                                 direct_binding_count - dynamic_param_binding_count + packed_params_binding_count <= max_storage_buffers) &&
                                can_copy_qkv &&
                                (direct_binding_count - qkv_binding_count + packed_qkv_binding_count <=
                                     max_storage_buffers ||
@@ -588,22 +614,24 @@ Status GatedDeltaNet::ComputeInternal(onnxruntime::webgpu::ComputeContext& conte
   const bool use_packed_params =
       needs_dynamic_params &&
       can_pack_params &&
-      binding_count_after_qkv > max_storage_buffers &&
-      binding_count_after_qkv - dynamic_param_binding_count + packed_params_binding_count <= max_storage_buffers;
+      (gate_projections != nullptr ||
+       (binding_count_after_qkv > max_storage_buffers &&
+        binding_count_after_qkv - dynamic_param_binding_count + packed_params_binding_count <= max_storage_buffers));
   std::optional<Tensor> packed_params;
   if (use_packed_params) {
     packed_params.emplace(
         context.CreateGPUTensor(DataTypeImpl::GetType<float>(), TensorShape{total_tokens, hv, 2}));
-    GatedDeltaNetParamsProgram params_program{needs_decay, needs_beta, qwen_gate_, sigmoid_beta_};
+    GatedDeltaNetParamsProgram params_program{needs_decay, needs_beta, qwen_gate_, sigmoid_beta_, gate_projections != nullptr};
     if (decay != nullptr) params_program.AddInput({decay, ProgramTensorMetadataDependency::None});
     if (beta != nullptr) params_program.AddInput({beta, ProgramTensorMetadataDependency::None});
+    if (gate_projections != nullptr) params_program.AddInput({gate_projections, ProgramTensorMetadataDependency::Type});
     if (qwen_gate_) params_program.AddInputs({{a_log, ProgramTensorMetadataDependency::None},
                                               {dt_bias, ProgramTensorMetadataDependency::None}});
     params_program.AddOutput({&*packed_params, ProgramTensorMetadataDependency::None})
         .SetDispatchGroupSize(onnxruntime::narrow<uint32_t>(
             (static_cast<uint64_t>(total_tokens) * static_cast<uint64_t>(hv) + 63u) / 64u))
         .SetWorkgroupSize(64)
-        .CacheHint(needs_decay, needs_beta, qwen_gate_, sigmoid_beta_)
+        .CacheHint(needs_decay, needs_beta, qwen_gate_, sigmoid_beta_, gate_projections != nullptr)
         .AddUniformVariables({{onnxruntime::narrow<uint32_t>(total_tokens)},
                               {onnxruntime::narrow<uint32_t>(hv)}});
     ORT_RETURN_IF_ERROR(context.RunProgram(params_program));

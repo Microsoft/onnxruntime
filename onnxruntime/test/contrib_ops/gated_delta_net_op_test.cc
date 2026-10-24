@@ -416,11 +416,15 @@ void RunTypedCase(const Geometry& g, const Options& o, const Inputs& in_raw, flo
                   bool use_webgpu = false, bool omit_final_state = false,
                   [[maybe_unused]] const ConfigOptions* webgpu_config = nullptr,
                   [[maybe_unused]] uint64_t test_max_storage_buffer_binding_size = 0,
-                  bool packed_qkv = false) {
+                  bool packed_qkv = false, bool packed_gates = false) {
   Inputs in = in_raw;
   in.q = RoundToTensorType<T>(in_raw.q);
   in.k = RoundToTensorType<T>(in_raw.k);
   in.v = RoundToTensorType<T>(in_raw.v);
+  if (packed_gates) {
+    in.decay = RoundToTensorType<T>(in_raw.decay);
+    in.beta = RoundToTensorType<T>(in_raw.beta);
+  }
 
   std::vector<float> ref_out, ref_state, ref_state_update;
   Reference(g, o, in, &ref_out, &ref_state, use_webgpu ? &ref_state_update : nullptr);
@@ -489,12 +493,12 @@ void RunTypedCase(const Geometry& g, const Options& o, const Inputs& in_raw, flo
       o.update_rule == "gated" || o.update_rule == "gated_delta";
   const bool needs_beta =
       o.update_rule == "delta" || o.update_rule == "gated_delta";
-  if (needs_decay) {
+  if (needs_decay && !packed_gates) {
     test.AddInput<float>("decay", shaped({g.hv}), in.decay);
   } else {
     test.AddOptionalInputEdge<float>();
   }
-  if (needs_beta) {
+  if (needs_beta && !packed_gates) {
     test.AddInput<float>("beta", shaped({g.hv}), in.beta);
   } else {
     test.AddOptionalInputEdge<float>();
@@ -513,11 +517,23 @@ void RunTypedCase(const Geometry& g, const Options& o, const Inputs& in_raw, flo
   }
   if (o.state_update_capacity > 0) {
     test.AddInput<int32_t>("capture_count", {g.batch}, in.capture_count);
-  } else if (!in.state_update_active.empty()) {
+  } else if (!in.state_update_active.empty() || packed_gates) {
     test.AddOptionalInputEdge<int32_t>();
   }
   if (!in.state_update_active.empty()) {
     test.AddInput<int32_t>("state_update_active", {1}, in.state_update_active);
+  } else if (packed_gates) {
+    test.AddOptionalInputEdge<int32_t>();
+  }
+  if (packed_gates) {
+    std::vector<float> projections;
+    projections.reserve(static_cast<size_t>(g.total_tokens) * g.hv * 2);
+    for (int token = 0; token < g.total_tokens; ++token) {
+      const size_t base = static_cast<size_t>(token) * g.hv;
+      projections.insert(projections.end(), in.decay.begin() + base, in.decay.begin() + base + g.hv);
+      projections.insert(projections.end(), in.beta.begin() + base, in.beta.begin() + base + g.hv);
+    }
+    test.AddInput<T>("gate_projections", shaped({2 * g.hv}), ToTensorType<T>(projections));
   }
 
   test.AddOutput<T>("output", shaped({out_heads, g.dv}), ToTensorType<T>(ref_out),
@@ -884,6 +900,97 @@ TEST(GatedDeltaNetWebGpuTest, ChunkwiseQwenPrefillPartialChunk) {
     RunTypedCase<MLFloat16>(geometry, options, inputs, 3e-3f, 5e-4f,
                             /*rank4=*/false, /*fetches=*/nullptr, /*use_webgpu=*/true);
   }
+}
+
+TEST(GatedDeltaNetWebGpuTest, PackedGateProjectionsDecodeAndChunkwisePrefill) {
+  if (NeedSkipGatedDeltaNetWebGpuTest()) {
+    GTEST_SKIP() << "WebGPU execution provider is not available";
+  }
+  Options options;
+  options.chunk_size = 16;
+  options.gate_activation = "qwen";
+  options.beta_activation = "sigmoid";
+  options.qk_l2_norm = 1;
+  for (int tokens : {1, 65}) {
+    SCOPED_TRACE(tokens);
+    const Geometry geometry{tokens, 1, 16, 48, 128, 128};
+    Inputs inputs = MakeInputs(geometry, 241);
+    inputs.cu_seqlens = {0, tokens};
+    for (bool packed_qkv : {false, true}) {
+      SCOPED_TRACE(packed_qkv);
+      RunTypedCase<MLFloat16>(geometry, options, inputs, 3e-3f, 5e-4f,
+                              false, nullptr, true, false, nullptr, 0, packed_qkv, true);
+    }
+  }
+}
+
+TEST(GatedDeltaNetWebGpuTest, PackedGateProjectionsRecurrentPrefillWithActiveCapture) {
+  if (NeedSkipGatedDeltaNetWebGpuTest()) {
+    GTEST_SKIP() << "WebGPU execution provider is not available";
+  }
+  Options options;
+  options.chunk_size = 16;
+  options.gate_activation = "qwen";
+  options.beta_activation = "sigmoid";
+  options.qk_l2_norm = 1;
+  options.state_update_capacity = 8;
+  const Geometry geometry{65, 1, 16, 48, 128, 128};
+  Inputs inputs = MakeInputs(geometry, 243);
+  inputs.cu_seqlens = {0, geometry.total_tokens};
+  inputs.capture_count = {3};
+  inputs.state_update_active = {1};
+  for (bool packed_qkv : {false, true}) {
+    SCOPED_TRACE(packed_qkv);
+    RunTypedCase<MLFloat16>(geometry, options, inputs, 3e-3f, 5e-4f,
+                            false, nullptr, true, false, nullptr, 0, packed_qkv, true);
+  }
+}
+
+TEST(GatedDeltaNetWebGpuTest, PackedGateProjectionsUniformAndRagged) {
+  if (NeedSkipGatedDeltaNetWebGpuTest()) {
+    GTEST_SKIP() << "WebGPU execution provider is not available";
+  }
+  Options options;
+  options.chunk_size = 16;
+  options.gate_activation = "qwen";
+  options.beta_activation = "sigmoid";
+  options.qk_l2_norm = 1;
+  const Geometry geometry{130, 2, 2, 4, 32, 32};
+  for (bool rank4 : {false, true}) {
+    SCOPED_TRACE(rank4);
+    Inputs inputs = MakeInputs(geometry, 242);
+    if (!rank4) inputs.cu_seqlens = {0, 0, 130};
+    RunTypedCase<float>(geometry, options, inputs, 5e-4f, 5e-4f,
+                        rank4, nullptr, true, false, nullptr, 0, false, true);
+    RunTypedCase<MLFloat16>(geometry, options, inputs, 3e-3f, 5e-4f,
+                            rank4, nullptr, true, false, nullptr, 0, false, true);
+  }
+}
+
+TEST(GatedDeltaNetWebGpuTest, PackedGateProjectionsRejectInvalidWidth) {
+  if (NeedSkipGatedDeltaNetWebGpuTest()) {
+    GTEST_SKIP() << "WebGPU execution provider is not available";
+  }
+  OpTester test("GatedDeltaNet", 1, onnxruntime::kMSDomain);
+  test.AddAttribute("gate_activation", std::string("qwen"));
+  test.AddAttribute("beta_activation", std::string("sigmoid"));
+  test.AddInput<float>("query", {1, 1, 4}, std::vector<float>(4, 0.1f));
+  test.AddInput<float>("key", {1, 1, 4}, std::vector<float>(4, 0.1f));
+  test.AddInput<float>("value", {1, 2, 4}, std::vector<float>(8, 0.1f));
+  test.AddInput<int32_t>("cu_seqlens", {2}, {0, 1});
+  test.AddOptionalInputEdge<float>();
+  test.AddOptionalInputEdge<float>();
+  test.AddOptionalInputEdge<float>();
+  test.AddInput<float>("a_log", {2}, {0.0f, 0.0f});
+  test.AddInput<float>("dt_bias", {2}, {0.0f, 0.0f});
+  test.AddOptionalInputEdge<int32_t>();
+  test.AddOptionalInputEdge<int32_t>();
+  test.AddInput<float>("gate_projections", {1, 5}, std::vector<float>(5, 0.0f));
+  test.AddOutput<float>("output", {1, 2, 4}, std::vector<float>(8, 0.0f));
+  std::vector<std::unique_ptr<IExecutionProvider>> providers;
+  providers.push_back(DefaultWebGpuExecutionProvider());
+  test.Run(OpTester::ExpectResult::kExpectFailure,
+           "gate_projections must match query type and have shape", {}, nullptr, &providers);
 }
 
 TEST(GatedDeltaNetWebGpuTest, ChunkwiseQwenPrefillSaturatedGates) {

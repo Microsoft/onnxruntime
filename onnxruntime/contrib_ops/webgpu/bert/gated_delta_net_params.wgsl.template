@@ -3,6 +3,7 @@
 
 #param has_beta
 #param has_decay
+#param has_gate_projections
 #param qwen_gate
 #param sigmoid_beta
 #use .getByOffset .setByOffset
@@ -30,7 +31,12 @@ $MAIN {
   let value_head = index % uniforms.num_heads_v;
   var gate = 0.0;
 #if has_decay
+#if has_gate_projections
+  let projection_offset = (index / uniforms.num_heads_v) * (2u * uniforms.num_heads_v) + value_head;
+  gate = f32(gate_projections.getByOffset(projection_offset));
+#else
   gate = decay.getByOffset(index);
+#endif
 #if qwen_gate
   gate = -exp(a_log.getByOffset(value_head)) * gdn_params_softplus(gate + dt_bias.getByOffset(value_head));
 #endif
@@ -39,7 +45,11 @@ $MAIN {
 
   var beta_value = 1.0;
 #if has_beta
+#if has_gate_projections
+  beta_value = f32(gate_projections.getByOffset(projection_offset + uniforms.num_heads_v));
+#else
   beta_value = beta.getByOffset(index);
+#endif
 #if sigmoid_beta
   beta_value = gdn_params_sigmoid(beta_value);
 #endif

@@ -186,12 +186,14 @@ class GatedDeltaNetPrefillOutputProgram final : public Program<GatedDeltaNetPref
 
 class GatedDeltaNetParamsProgram final : public Program<GatedDeltaNetParamsProgram> {
  public:
-  GatedDeltaNetParamsProgram(bool has_decay, bool has_beta, bool qwen_gate, bool sigmoid_beta)
+  GatedDeltaNetParamsProgram(bool has_decay, bool has_beta, bool qwen_gate, bool sigmoid_beta,
+                             bool has_gate_projections = false)
       : Program{"GatedDeltaNetParams"},
         has_decay_(has_decay),
         has_beta_(has_beta),
         qwen_gate_(qwen_gate),
-        sigmoid_beta_(sigmoid_beta) {}
+        sigmoid_beta_(sigmoid_beta),
+        has_gate_projections_(has_gate_projections) {}
 
   Status GenerateShaderCode(ShaderHelper& shader) const override;
 
@@ -204,6 +206,7 @@ class GatedDeltaNetParamsProgram final : public Program<GatedDeltaNetParamsProgr
   bool has_beta_;
   bool qwen_gate_;
   bool sigmoid_beta_;
+  bool has_gate_projections_;
 };
 
 class GatedDeltaNetCopyProgram final : public Program<GatedDeltaNetCopyProgram> {

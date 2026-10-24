@@ -2525,7 +2525,7 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>One of: 'linear', 'gated', 'delta', 'gated_delta'. Default is 'gated_delta'.</dd>
 </dl>
 
-#### Inputs (1 - 11)
+#### Inputs (1 - 12)
 
 <dl>
 <dt><tt>query</tt> : T</dt>
@@ -2550,6 +2550,8 @@ This version of the operator has been available since version 1 of the 'com.micr
 <dd>Number of leading local token transitions to capture for each request, shape (batch_size). Clamped on device to [0, min(state_update_capacity, sequence_length)]. Required exactly when state_update_capacity is positive.</dd>
 <dt><tt>state_update_active</tt> (optional) : TI</dt>
 <dd>CPU int32 control with shape (1). Zero disables transition capture, ignores capture_count, and produces a zero-filled state_update. Omission is conservative.</dd>
+<dt><tt>gate_projections</tt> (optional) : T</dt>
+<dd>WebGPU-only packed raw gate projections, shape (...tokens, 2 * num_heads_v), with all decay projection heads followed by all beta projection heads per token. Replaces both decay and beta inputs, which must be omitted. Requires update_rule=gated_delta, gate_activation=qwen, and beta_activation=sigmoid. Values are widened to float before gate arithmetic; recurrent state remains float.</dd>
 </dl>
 
 #### Outputs (1 - 3)
@@ -2567,7 +2569,7 @@ This version of the operator has been available since version 1 of the 'com.micr
 
 <dl>
 <dt><tt>T</tt> : tensor(float), tensor(float16), tensor(bfloat16)</dt>
-<dd>Constrain query/key/value/output types.</dd>
+<dd>Constrain query/key/value/output and packed gate projection types.</dd>
 <dt><tt>TS</tt> : tensor(float)</dt>
 <dd>State, gate, beta and compact state-update tensors are always float.</dd>
 <dt><tt>TI</tt> : tensor(int32)</dt>
