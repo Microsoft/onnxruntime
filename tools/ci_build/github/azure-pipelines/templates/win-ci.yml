@@ -1,3 +1,9 @@
+# --------------------------------------------------------------
+# Main Windows CI stage: builds ONNX Runtime, runs tests,
+# performs CMake install, and packages C-API (and optionally Java/Node.js) artifacts.
+# Triggered as part of the overall CI pipeline.
+# --------------------------------------------------------------
+
 parameters:
 - name: DoCompliance
   displayName: Run Compliance Tasks?
@@ -118,15 +124,17 @@ stages:
           enabled: true
           scanOutputDirectoryOnly: true
       outputs:
+      # Main C-API artifact (the .zip)
       - output: pipelineArtifact
         targetPath: $(Build.ArtifactStagingDirectory)
         artifactName: 'onnxruntime${{ parameters.artifact_name_suffix }}-win-${{ parameters.packageName }}'
 
+      # Java binaries (if built)
       - ${{ if eq(parameters.buildJava, 'true') }}:
         - output: pipelineArtifact
           targetPath: $(Build.BinariesDirectory)\onnxruntime-java-win-${{ parameters.msbuildPlatform }}
           artifactName: 'drop-onnxruntime-java-win-${{ parameters.packageName }}${{parameters.artifact_name_suffix}}'
-      # GPU build has two jobs. This is the first one.
+      # GPU build stages test artifacts for later GPU testing
       - ${{ if contains(parameters.ort_build_pool_name, 'GPU') }}:
           - output: pipelineArtifact
             targetPath: $(Agent.TempDirectory)/RelWithDebInfo
@@ -146,12 +154,15 @@ stages:
       timeoutInMinutes: 360
 
     steps:
+      # 1. Source checkout
       - template: jobs/checkout-and-git-redirect.yml
 
+      # 2. Install build tools (VS, CMake, etc.)
       - template: setup-build-tools.yml
         parameters:
           host_cpu_arch: 'x64'
 
+      # 3. Optional: Java JDK
       - ${{ if eq(parameters['buildJava'], 'true') }}:
         # Download and install JDK 17 explicitly instead of relying on a
         # preinstalled JDK, which is no longer guaranteed to be present on the
@@ -171,6 +182,7 @@ stages:
             jdkDestinationDirectory: '$(Agent.ToolsDirectory)\jdk17'
             cleanDestinationDirectory: true
 
+      # 4. Optional: Download GPU libraries (CUDA, TRT)
       - ${{ if ne(parameters.CudaVersion, '') }}:
         - template: jobs/download_win_gpu_library.yml
           parameters:
@@ -181,10 +193,13 @@ stages:
               DownloadCUDA: true
               DownloadTRT: true
 
+      # 5. Set version variables (e.g., OnnxRuntimeVersion, commit hash)
       - template: set-version-number-variables-step.yml
 
+      # 6. Install Python dependencies for build scripts
       - script: python -m pip install -r $(Build.SourcesDirectory)\tools\ci_build\github\windows\python\requirements.txt
 
+      # 7. Assemble common build arguments
       - template: set-variable.yml
         parameters:
           name: commonBuildPyArgs
@@ -206,6 +221,7 @@ stages:
             $(timeoutParameter)
             $(buildJavaParameter)
 
+      # 8. Build (special handling for arm64x, otherwise generic)
       - ${{ if eq(parameters.msbuildPlatform, 'arm64x') }}:
         - template: build-win-arm64x-steps.yml
           parameters:
@@ -220,7 +236,7 @@ stages:
             arguments: '$(commonBuildPyArgs) --build_dir $(Build.BinariesDirectory)'
             workingDirectory: '$(Build.BinariesDirectory)'
 
-      # For CPU job, tests are run in the same machine as building
+      # 9. Java build (if enabled)
       - ${{ if eq(parameters.buildJava, 'true') }}:
         - template: setup-maven.yml
         - template: make_java_win_binaries.yml
@@ -231,7 +247,7 @@ stages:
             PreReleaseVersionSuffixNumber: ${{ parameters.PreReleaseVersionSuffixNumber }}
             buildOnly: true
 
-        # All GPU builds will be tested in the next stage with GPU machine
+      # 10. Run tests (on CPU) or stage test binaries for later GPU runs
       - ${{ if contains(parameters.ort_build_pool_name, 'CPU') }}:
         - task: PythonScript@0
           displayName: 'test'
@@ -241,6 +257,7 @@ stages:
             arguments: '--config RelWithDebInfo --use_binskim_compliant_compile_flags --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --test --cmake_generator "$(VSGenerator)" --enable_onnx_tests  $(TelemetryOption) ${{ parameters.buildparameter }}'
             workingDirectory: '$(Build.BinariesDirectory)'
       - ${{ else }}:
+        # For GPU builds, copy necessary test files to a temporary location for later execution
         - powershell: |
             New-Item $(Agent.TempDirectory)/RelWithDebInfo -Force -ItemType Directory
             Copy-Item -Path "$(Build.BinariesDirectory)/RelWithDebInfo/CTestTestfile.cmake" -Destination $(Agent.TempDirectory)/RelWithDebInfo/ -Force
@@ -262,12 +279,14 @@ stages:
             displayName: 'Copy java pad and folder for java test'
             workingDirectory: '$(Build.BinariesDirectory)'
 
+      # 11. List built DLLs for debugging
       - script: |
           dir *.dll
           mkdir $(Build.ArtifactStagingDirectory)\testdata
         workingDirectory: '$(Build.BinariesDirectory)/RelWithDebInfo/RelWithDebInfo'
         displayName: 'List built DLLs'
 
+      # 12. Package the C-API artifact using the dedicated template
       - template: c-api-artifacts-package-and-publish-steps-windows.yml
         parameters:
           buildConfig: RelWithDebInfo
@@ -276,6 +295,7 @@ stages:
           commitId: $(OnnxRuntimeGitCommitHash)
           DoEsrp: ${{ parameters.DoEsrp }}
 
+      # 13. Optional: Node.js bindings packaging
       - ${{ if eq(parameters.buildNodejs, true) }}:
         - template: nodejs-artifacts-package-and-publish-steps-windows.yml
           parameters:
@@ -283,6 +303,7 @@ stages:
             artifactName: 'drop-onnxruntime-nodejs-win-${{ parameters.packageName }}${{ parameters.artifact_name_suffix }}'
             DoEsrp: ${{ parameters.DoEsrp }}
 
+      # 14. Copy custom operator library (for testing) if x64
       - task: CopyFiles@2
         displayName: 'Copy custom_op_library to: $(Build.ArtifactStagingDirectory)'
         condition: and(succeeded(), eq('${{ parameters.packageName}}', 'x64'))

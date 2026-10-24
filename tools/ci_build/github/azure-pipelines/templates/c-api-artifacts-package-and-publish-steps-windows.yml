@@ -1,4 +1,15 @@
-# sets up common build tools for the windows build machines before build
+# --------------------------------------------------------------
+# Template: Package and publish Windows C-API artifacts.
+# Expects a "cmake --install" tree under $(Build.BinariesDirectory)\installed.
+# Produces a versioned .zip containing DLLs, libs, headers, CMake package
+# files, and docs.
+#
+# Note: Runtime DLLs are placed under lib/ (not bin/) to align with the
+#       patched CMake target files. The installed include/onnxruntime/
+#       hierarchy is flattened so public headers sit directly under
+#       include/, e.g. include/onnxruntime_c_api.h rather than
+#       include/onnxruntime/onnxruntime_c_api.h.
+# --------------------------------------------------------------
 
 parameters:
 - name: DoEsrp
@@ -36,10 +47,35 @@ parameters:
   default: false
 
 steps:
-    - ${{if or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/rel-'))}}:
+
+    # Verify that the CMake build tree is present before install
+    - task: CmdLine@2
+      displayName: 'Verify CMake build tree location'
+      inputs:
+        script: |
+          if not exist "$(Build.BinariesDirectory)\${{parameters.buildConfig}}\CMakeCache.txt" (
+            echo ERROR: CMakeCache.txt not found at $(Build.BinariesDirectory)\${{parameters.buildConfig}}
+            echo This means the --install step below is pointed at the wrong directory.
+            exit /b 1
+          )
+          echo "Confirmed CMake build tree at $(Build.BinariesDirectory)\${{parameters.buildConfig}}"
+
+    # Run cmake --install to populate the "installed" tree used for packaging
+    - task: CmdLine@2
+      displayName: 'CMake install'
+      inputs:
+        script: |
+          cmake --install "$(Build.BinariesDirectory)\${{parameters.buildConfig}}" --config ${{parameters.buildConfig}} --prefix "$(Build.BinariesDirectory)\installed"
+          if errorlevel 1 (
+            echo ERROR: cmake --install failed
+            exit /b 1
+          )
+
+    # Publish symbols to Microsoft symbol server for main/rel-* branches
+    - ${{ if or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/rel-'))}}:
       - template: publish-symbolrequestprod-api.yml
         parameters:
-          ${{if eq(variables['Build.SourceBranch'], 'refs/heads/main')}}:
+          ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main')}}:
             symbolExpiryTime: 60
           includePublicSymbolServer: true
           symbolsArtifactName: ${{parameters.artifactNameNoVersionString}}
@@ -50,96 +86,363 @@ steps:
             $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime.pdb
             $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_*.pdb
 
+    # Validate that cmake --install produced all required files
+    - task: CmdLine@2
+      displayName: 'Validate CMake install output'
+      inputs:
+        script: |
+          if not exist "$(Build.BinariesDirectory)\installed\bin\onnxruntime.dll" (
+            echo ERROR: installed\bin\onnxruntime.dll not found. Did the cmake --install step run?
+            exit /b 1
+          )
 
+          if not exist "$(Build.BinariesDirectory)\installed\lib\cmake\onnxruntime\onnxruntimeConfig.cmake" (
+            echo ERROR: onnxruntimeConfig.cmake not found in installed tree
+            exit /b 1
+          )
+
+          if not exist "$(Build.BinariesDirectory)\installed\lib\cmake\onnxruntime\onnxruntimeConfigVersion.cmake" (
+            echo ERROR: onnxruntimeConfigVersion.cmake not found in installed tree
+            exit /b 1
+          )
+
+          if not exist "$(Build.BinariesDirectory)\installed\lib\cmake\onnxruntime\onnxruntimeTargets.cmake" (
+            echo ERROR: onnxruntimeTargets.cmake not found in installed tree. install(EXPORT) may not have run.
+            exit /b 1
+          )
+
+          echo "CMake install output validated successfully"
+
+    # Flatten include/onnxruntime -> include/ and patch CMake target files to reference lib/ for .dll
+    - task: PowerShell@2
+      displayName: 'Flatten include directory and patch generated CMake Targets files'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $installed = "$(Build.BinariesDirectory)\installed"
+          $nestedInclude = Join-Path $installed "include\onnxruntime"
+          $flatInclude = Join-Path $installed "include"
+
+          if (Test-Path $nestedInclude) {
+            Write-Host "Flattening $nestedInclude into $flatInclude"
+            Get-ChildItem -Path $nestedInclude | Move-Item -Destination $flatInclude -Force
+            Remove-Item -Path $nestedInclude -Recurse -Force
+          } else {
+            Write-Host "##vso[task.logissue type=warning]Expected nested include dir not found: $nestedInclude"
+          }
+
+          $cmakeDir = Join-Path $installed "lib\cmake\onnxruntime"
+          $targetFiles = Get-ChildItem -Path $cmakeDir -Filter "onnxruntimeTargets*.cmake" -ErrorAction SilentlyContinue
+
+          if (-not $targetFiles) {
+            Write-Host "##vso[task.logissue type=error]No onnxruntimeTargets*.cmake files found to patch in $cmakeDir"
+            exit 1
+          }
+
+          foreach ($file in $targetFiles) {
+              Write-Host "Patching $($file.FullName)"
+              $content = Get-Content -Path $file.FullName -Raw
+
+              # Remove nested 'include/onnxruntime' from prefix
+              $content = $content -replace '(\$\{_IMPORT_PREFIX\}/include)/onnxruntime', '$1'
+
+              # Change DLL location from bin/ to lib/
+              $content = $content -replace '\$\{_IMPORT_PREFIX\}/bin/', '${_IMPORT_PREFIX}/lib/'
+
+              Set-Content -Path $file.FullName -Value $content -NoNewline
+          }
+
+          # Verify that patches succeeded
+          $stillNested = Select-String `
+              -Path (Join-Path $cmakeDir "onnxruntimeTargets*.cmake") `
+              -Pattern 'include/onnxruntime' `
+              -ErrorAction SilentlyContinue
+
+          $stillBin = Select-String `
+              -Path (Join-Path $cmakeDir "onnxruntimeTargets*.cmake") `
+              -Pattern '\$\{_IMPORT_PREFIX\}/bin/' `
+              -ErrorAction SilentlyContinue
+
+          if ($stillNested) {
+              Write-Host "##vso[task.logissue type=error]include/onnxruntime reference still present"
+              exit 1
+          }
+
+          if ($stillBin) {
+              Write-Host "##vso[task.logissue type=error]bin DLL reference still present"
+              exit 1
+          }
+
+          Write-Host "Include directory flattened and CMake Targets files patched successfully"
+
+    # Assemble the final artifact directory by copying from the installed tree
     - task: CmdLine@2
       displayName: 'Copy build artifacts for zipping'
       inputs:
         script: |
-          mkdir $(Build.BinariesDirectory)\${{parameters.artifactName}}
-          mkdir $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          mkdir $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
+          set INSTALLED=$(Build.BinariesDirectory)\installed
+          set ARTIFACT=$(Build.BinariesDirectory)\${{parameters.artifactName}}
+          set RAWBUILD=$(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}
 
-          if exist $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_cuda.dll (
-            echo "cuda context headers copied"
-            mkdir $(Build.BinariesDirectory)\${{parameters.artifactName}}\include\core\providers\cuda
-            copy $(Build.SourcesDirectory)\include\onnxruntime\core\providers\resource.h $(Build.BinariesDirectory)\${{parameters.artifactName}}\include\core\providers
-            copy $(Build.SourcesDirectory)\include\onnxruntime\core\providers\custom_op_context.h $(Build.BinariesDirectory)\${{parameters.artifactName}}\include\core\providers
-            copy $(Build.SourcesDirectory)\include\onnxruntime\core\providers\cuda\cuda_context.h $(Build.BinariesDirectory)\${{parameters.artifactName}}\include\core\providers\cuda
-            copy $(Build.SourcesDirectory)\include\onnxruntime\core\providers\cuda\cuda_resource.h $(Build.BinariesDirectory)\${{parameters.artifactName}}\include\core\providers\cuda
+          if exist %ARTIFACT% (
+            rmdir /S /Q %ARTIFACT%
+          )
+          mkdir %ARTIFACT%
+
+          REM Copy DLLs (runtime) and all lib/ contents (libs, cmake, pdbs) into artifact\lib
+          xcopy /I /Y "%INSTALLED%\bin\*.dll"    "%ARTIFACT%\lib"
+          xcopy /E /I /Y "%INSTALLED%\lib\*"     "%ARTIFACT%\lib"
+          REM Copy flattened headers into artifact\include
+          xcopy /E /I /Y "%INSTALLED%\include\*" "%ARTIFACT%\include"
+
+          echo "Copied installed tree into artifact directory"
+
+          REM Remove any stray .exe files from lib (they belong elsewhere)
+          if exist "%ARTIFACT%\lib\*.exe" (
+            del /Q "%ARTIFACT%\lib\*.exe"
+            echo "Removed .exe files from lib\"
           )
 
-          echo "Directories created"
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_shared.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_shared.lib $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_shared.pdb $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_cuda.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_cuda.pdb $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_cuda.lib $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
+          REM Copying provider_options.h file into include directory
+          copy "$(Build.SourcesDirectory)\include\onnxruntime\core\framework\provider_options.h" "%ARTIFACT%\include"
 
-          # Copy WebGPU dependencies if required
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\dxcompiler.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
+          REM Optional- CUDA provider - copy extra headers
+          if exist "%INSTALLED%\bin\onnxruntime_providers_cuda.dll" (
+            echo "CUDA provider present"
+            if not exist "%ARTIFACT%\include\core\providers\cuda" (
+              mkdir "%ARTIFACT%\include\core\providers\cuda"
+            )
+            copy "$(Build.SourcesDirectory)\include\onnxruntime\core\providers\resource.h"            "%ARTIFACT%\include\core\providers"
+            copy "$(Build.SourcesDirectory)\include\onnxruntime\core\providers\custom_op_context.h"   "%ARTIFACT%\include\core\providers"
+            copy "$(Build.SourcesDirectory)\include\onnxruntime\core\providers\cuda\cuda_context.h"   "%ARTIFACT%\include\core\providers\cuda"
+            copy "$(Build.SourcesDirectory)\include\onnxruntime\core\providers\cuda\cuda_resource.h"  "%ARTIFACT%\include\core\providers\cuda"
+          )
 
-          # Copy QNN dependencies if required
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_qnn.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\libQnnHtp*.so $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib /Y
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\libqnnhtp*.cat $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib /Y
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnCpu.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnGpu.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnHtp.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnHtpPrepare.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnHtpV68Stub.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnHtpV73Stub.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnHtpV81Stub.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnSaver.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\QnnSystem.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\Qualcomm_LICENSE.pdf $(Build.BinariesDirectory)\${{parameters.artifactName}}
+          REM Optional- WebGPU dependencies (staged into build output, not installed by CMake)
+          if exist "%RAWBUILD%\dxcompiler.dll" (
+            echo "WebGPU dxcompiler.dll present"
+            copy "%RAWBUILD%\dxcompiler.dll" "%ARTIFACT%\lib"
+          )
+          if exist "%RAWBUILD%\dxil.dll" (
+            echo "WebGPU dxil.dll present"
+            copy "%RAWBUILD%\dxil.dll" "%ARTIFACT%\lib"
+          )
 
-          # copy trt ep libraries only when trt ep is enabled
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_tensorrt.dll $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_tensorrt.pdb $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime_providers_tensorrt.lib $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
+          REM Optional- QNN dependencies (staged into build output, not installed by CMake)
+          REM Gate checks raw build output, NOT installed\bin, because the QNN provider DLL
+          REM and its SDK runtime dependencies are not covered by any CMake install() rule.
+          if exist "%RAWBUILD%\onnxruntime_providers_qnn.dll" (
+            echo "QNN provider present - copying QNN SDK runtime DLLs and license"
+            if exist "%RAWBUILD%\libQnnHtp*.so" (
+              copy "%RAWBUILD%\libQnnHtp*.so" "%ARTIFACT%\lib" /Y
+            )
+            if exist "%RAWBUILD%\libqnnhtp*.cat" (
+              copy "%RAWBUILD%\libqnnhtp*.cat" "%ARTIFACT%\lib" /Y
+            )
+            if exist "%RAWBUILD%\QnnCpu.dll" (
+              copy "%RAWBUILD%\QnnCpu.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnGpu.dll" (
+              copy "%RAWBUILD%\QnnGpu.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnHtp.dll" (
+              copy "%RAWBUILD%\QnnHtp.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnHtpPrepare.dll" (
+              copy "%RAWBUILD%\QnnHtpPrepare.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnHtpV68Stub.dll" (
+              copy "%RAWBUILD%\QnnHtpV68Stub.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnHtpV73Stub.dll" (
+              copy "%RAWBUILD%\QnnHtpV73Stub.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnHtpV81Stub.dll" (
+              copy "%RAWBUILD%\QnnHtpV81Stub.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnSaver.dll" (
+              copy "%RAWBUILD%\QnnSaver.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\QnnSystem.dll" (
+              copy "%RAWBUILD%\QnnSystem.dll" "%ARTIFACT%\lib"
+            )
+            if exist "%RAWBUILD%\Qualcomm_LICENSE.pdf" (
+              copy "%RAWBUILD%\Qualcomm_LICENSE.pdf" "%ARTIFACT%"
+            )
+          )
 
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime.pdb $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.BinariesDirectory)\${{parameters.buildConfig}}\${{parameters.buildConfig}}\onnxruntime.lib $(Build.BinariesDirectory)\${{parameters.artifactName}}\lib
-          copy $(Build.SourcesDirectory)\include\onnxruntime\core\session\onnxruntime_*.h  $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
-          copy $(Build.SourcesDirectory)\include\onnxruntime\core\session\onnxruntime_*.inc  $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
-          copy $(Build.SourcesDirectory)\include\onnxruntime\core\framework\provider_options.h  $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
-          copy $(Build.SourcesDirectory)\include\onnxruntime\core\providers\cpu\cpu_provider_factory.h  $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
-          copy $(Build.SourcesDirectory)\orttraining\orttraining\training_api\include\onnxruntime_training*.h  $(Build.BinariesDirectory)\${{parameters.artifactName}}\include
+          REM Copy PDB files for debugging from raw build output.
+          REM NOTE: this must run BEFORE the TRT-disabled cleanup below, otherwise the
+          REM wildcard onnxruntime_providers_*.pdb copy will re-introduce the TensorRT
+          REM pdb that the cleanup step is about to delete.
+          if exist "%RAWBUILD%\onnxruntime.pdb" (
+            copy "%RAWBUILD%\onnxruntime.pdb" "%ARTIFACT%\lib"
+          )
 
-          REM copy the README, license and TPN
-          copy $(Build.SourcesDirectory)\README.md $(Build.BinariesDirectory)\${{parameters.artifactName}}\README.md
-          copy $(Build.SourcesDirectory)\docs\Privacy.md $(Build.BinariesDirectory)\${{parameters.artifactName}}\Privacy.md
-          copy $(Build.SourcesDirectory)\LICENSE $(Build.BinariesDirectory)\${{parameters.artifactName}}\LICENSE
-          copy $(Build.SourcesDirectory)\ThirdPartyNotices.txt $(Build.BinariesDirectory)\${{parameters.artifactName}}\ThirdPartyNotices.txt
-          copy $(Build.SourcesDirectory)\VERSION_NUMBER $(Build.BinariesDirectory)\${{parameters.artifactName}}\VERSION_NUMBER
-          @echo ${{parameters.commitId}} > $(Build.BinariesDirectory)\${{parameters.artifactName}}\GIT_COMMIT_ID
+          if exist "%RAWBUILD%\onnxruntime_providers_*.pdb" (
+            copy "%RAWBUILD%\onnxruntime_providers_*.pdb" "%ARTIFACT%\lib"
+          )
 
-        workingDirectory: '$(Build.BinariesDirectory)\${{parameters.buildConfig}}'
+          REM If TRT is disabled, remove its binaries from the artifact.
+          REM Must run AFTER the pdb copy above so the deletion is not undone.
+          if /I "${{ parameters.trtEnabled }}"=="false" (
+            if exist "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.dll" del "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.dll"
+            if exist "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.lib" del "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.lib"
+            if exist "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.pdb" del "%ARTIFACT%\lib\onnxruntime_providers_tensorrt.pdb"
+          )
 
+          REM Training API headers (if built)
+          if exist "$(Build.SourcesDirectory)\orttraining\orttraining\training_api\include\onnxruntime_training*.h" (
+            copy "$(Build.SourcesDirectory)\orttraining\orttraining\training_api\include\onnxruntime_training*.h" "%ARTIFACT%\include"
+          )
+
+          REM Docs and License -> root\
+          copy "$(Build.SourcesDirectory)\README.md"             "%ARTIFACT%\README.md"
+          copy "$(Build.SourcesDirectory)\docs\Privacy.md"       "%ARTIFACT%\Privacy.md"
+          copy "$(Build.SourcesDirectory)\LICENSE"               "%ARTIFACT%\LICENSE"
+          copy "$(Build.SourcesDirectory)\ThirdPartyNotices.txt" "%ARTIFACT%\ThirdPartyNotices.txt"
+          copy "$(Build.SourcesDirectory)\VERSION_NUMBER"        "%ARTIFACT%\VERSION_NUMBER"
+
+          REM Record the Git commit hash
+          @echo ${{parameters.commitId}} > "%ARTIFACT%\GIT_COMMIT_ID"
+
+          echo "Directories and files finalized"
+
+        workingDirectory: '$(Build.BinariesDirectory)'
+
+    # Verify the final artifact contains only intended ORT public content
+    - task: PowerShell@2
+      displayName: 'Verify artifact contains only intended ORT public headers and libraries'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $artifactDir = "$(Build.BinariesDirectory)\${{parameters.artifactName}}"
+          $includeDir = Join-Path $artifactDir "include"
+          $libDir     = Join-Path $artifactDir "lib"
+
+          # ---------- Include directory ----------
+          if (Test-Path $includeDir) {
+              $allowedIncludeDirs = @('core', 'cuda', 'training')
+              $unexpectedDirs = Get-ChildItem -Path $includeDir -Directory | Where-Object {
+                  $_.Name -notin $allowedIncludeDirs
+              }
+              if ($unexpectedDirs) {
+                  Write-Host "##vso[task.logissue type=error]Unexpected directories in include/: $($unexpectedDirs.Name -join ', ')"
+                  exit 1
+              }
+              # Allow loose files directly under include/ that are ORT's own public/training headers
+              $allowedLooseHeaderPattern = '^(onnxruntime.*\.(h|inc)|cpu_provider_factory\.h|provider_options\.h)$'
+              $looseFiles = Get-ChildItem -Path $includeDir -File | Where-Object {
+              $allowedLooseHeaderPattern = '^(onnxruntime.*\.(h|inc)|([a-z0-9_]+_)?provider_(factory|options)\.h)$'
+              }
+              if ($looseFiles) {
+                  Write-Host "##vso[task.logissue type=error]Unexpected loose files found directly under include/: $($looseFiles.Name -join ', ')"
+                  exit 1
+              }
+
+          }
+
+          # ---------- Library directory ----------
+          if (Test-Path $libDir) {
+              # Only these file extensions are expected in lib/
+              $allowedExtensions = @('.dll', '.lib', '.pdb', '.so', '.cat')
+              $badFiles = Get-ChildItem -Path $libDir -File | Where-Object {
+                  $ext = [System.IO.Path]::GetExtension($_.Name).ToLowerInvariant()
+                  $ext -notin $allowedExtensions
+              }
+              if ($badFiles) {
+                  Write-Host "##vso[task.logissue type=error]Unexpected file types in lib/: $($badFiles.Name -join ', ')"
+                  exit 1
+              }
+
+              # Reject any static library (.lib / .a) that does not start with 'onnxruntime' (or 'libonnxruntime')
+              $badStatic = Get-ChildItem -Path $libDir -File | Where-Object {
+                  $ext = [System.IO.Path]::GetExtension($_.Name).ToLowerInvariant()
+                  ($ext -in @('.lib', '.a')) -and ($_.Name -notmatch '^(lib)?onnxruntime.*\.(lib|a)$')
+              }
+              if ($badStatic) {
+                  Write-Host "##vso[task.logissue type=error]Unexpected static libraries: $($badStatic.Name -join ', ')"
+                  exit 1
+              }
+
+              # Reject any file name that matches known third-party dependency names,
+              # even if it has an otherwise-allowed extension. ORT's own files (which
+              # all start with "onnxruntime") are explicitly excluded first so this
+              # cannot false-positive on, e.g., onnxruntime.dll.
+              # NOTE: update this list if ONNX Runtime adds new bundled third-party
+              # dependencies whose install() rules could land files in lib/.
+              $thirdPartyPatterns = @('protobuf', 'absl', 're2', 'nsync', 'gtest', 'benchmark', '^onnx\.', '^onnx_test')
+              $thirdPartyFiles = Get-ChildItem -Path $libDir -File | Where-Object {
+                  $name = $_.BaseName.ToLowerInvariant()
+                  if ($name -match '^(lib)?onnxruntime') { return $false }
+                  ($thirdPartyPatterns | Where-Object { $name -match $_ }) -ne $null
+              }
+              if ($thirdPartyFiles) {
+                  Write-Host "##vso[task.logissue type=error]Files resembling third-party libraries: $($thirdPartyFiles.Name -join ', ')"
+                  exit 1
+              }
+
+              # The only allowed subdirectory in lib/ is 'cmake'
+              $badDirs = Get-ChildItem -Path $libDir -Directory | Where-Object { $_.Name -ne 'cmake' }
+              if ($badDirs) {
+                  Write-Host "##vso[task.logissue type=error]Unexpected subdirectories in lib/: $($badDirs.Name -join ', ')"
+                  exit 1
+              }
+
+              # ---------- cmake subdirectory ----------
+              $cmakeDir = Join-Path $libDir 'cmake'
+              if (Test-Path $cmakeDir) {
+                  # Only onnxruntime*.cmake files and the onnxruntime/ subfolder are allowed
+                  $badCmakeFiles = Get-ChildItem -Path $cmakeDir -File | Where-Object {
+                      $_.Name -notmatch '^onnxruntime.*\.cmake$'
+                  }
+                  if ($badCmakeFiles) {
+                      Write-Host "##vso[task.logissue type=error]Unexpected .cmake files: $($badCmakeFiles.Name -join ', ')"
+                      exit 1
+                  }
+
+                  # If there is an onnxruntime subdir, allow it (it contains the actual CMake targets)
+                  $onnxruntimeCmakeDir = Join-Path $cmakeDir 'onnxruntime'
+                  if (Test-Path $onnxruntimeCmakeDir) {
+                      $badOnnxFiles = Get-ChildItem -Path $onnxruntimeCmakeDir -File | Where-Object {
+                          $_.Name -notmatch '^onnxruntime.*\.cmake$'
+                      }
+                      if ($badOnnxFiles) {
+                          Write-Host "##vso[task.logissue type=error]Unexpected files in cmake/onnxruntime/: $($badOnnxFiles.Name -join ', ')"
+                          exit 1
+                      }
+                  }
+              }
+          }
+
+          Write-Host "Verification passed: only ORT public headers and libraries found."
+
+    # Code signing (ESRP) - only when requested
     - ${{ if eq(parameters.DoEsrp, true) }}:
       - template: win-esrp-dll.yml
         parameters:
           FolderPath: '$(Build.BinariesDirectory)\${{parameters.artifactName}}'
           DisplayName: 'ESRP - Sign Native dlls'
           DoEsrp: ${{parameters.DoEsrp}}
-          Pattern: '*.dll,*.exe'
+          Pattern: '*.dll'
 
+    # Remove temporary signing summaries
     - task: DeleteFiles@1
       displayName: 'Delete CodeSignSummary*.md'
       inputs:
         SourceFolder: '$(Build.BinariesDirectory)\${{parameters.artifactName}}'
         Contents: 'CodeSignSummary*.md'
 
+    # Create final .zip archive
     - task: ArchiveFiles@2
       inputs:
         rootFolderOrFile: '$(Build.BinariesDirectory)\${{parameters.artifactName}}'
         includeRootFolder: true
-        archiveType: 'zip' # Options: zip, 7z, tar, wim
+        archiveType: 'zip'
         archiveFile: '$(Build.ArtifactStagingDirectory)\${{parameters.artifactName}}.zip'
         replaceExistingArchive: true
 
+    # Optionally publish the staging directory itself as a pipeline artifact
     - ${{ if parameters.publishArtifactStagingDirectory }}:
       - task: 1ES.PublishPipelineArtifact@1
         inputs:

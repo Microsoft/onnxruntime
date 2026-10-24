@@ -16,6 +16,6 @@ FOR /R %%i IN (*.zip) do (
        move onnxruntime-win-x64-tensorrt\lib\onnxruntime.dll !filename!\lib\onnxruntime.dll
        move onnxruntime-win-x64-tensorrt\lib\onnxruntime.lib !filename!\lib\onnxruntime.lib
        move onnxruntime-win-x64-tensorrt\lib\onnxruntime.pdb !filename!\lib\onnxruntime.pdb
-       7z a  %%~ni.zip !filename!\lib
+       7z a %%~ni.zip !filename!\lib
    )
 )
