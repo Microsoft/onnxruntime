@@ -3024,7 +3024,7 @@ common::Status InferenceSession::Initialize() {
         return Status::OK();
       };
 
-      // Enable DQ->MatMulNBits fusion if NvTensorRTRTX EP is registered.
+      // Enable DQ->MatMulNBits fusion if the NvTensorRTRTX plugin EP is registered.
       if (execution_providers_.Get(onnxruntime::kNvTensorRTRTXExecutionProvider) != nullptr) {
         if (session_options_.config_options.GetConfigOrDefault(
                 kOrtSessionOptionsEnableDQMatMulNBitsFusion, "") == "") {

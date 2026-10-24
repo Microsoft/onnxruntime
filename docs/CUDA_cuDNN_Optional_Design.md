@@ -3,10 +3,10 @@
 Status: Draft / Proposal
 Owner: (CUDA EP)
 Scope: `onnxruntime/core/providers/cuda` (main static CUDA EP), CUDA Plugin EP
-(`BUILD_CUDA_EP_AS_PLUGIN`), and the CUDA unit tests. **Out of scope:** TensorRT EP and
-NV‑TensorRT‑RTX EP (they create and own their own cuDNN handles and inherently depend on
-cuDNN/TensorRT). The existing build-time `USE_CUDA_MINIMAL` path is also out of scope; it is
-used by TensorRT / NV‑TensorRT‑RTX integration and should remain available.
+(`BUILD_CUDA_EP_AS_PLUGIN`), and the CUDA unit tests. **Out of scope:** TensorRT EP (it creates
+and owns its own cuDNN handles and inherently depends on cuDNN/TensorRT). The existing
+build-time `USE_CUDA_MINIMAL` path is also out of scope; it is used by TensorRT integration
+and should remain available.
 
 ---
 
@@ -82,7 +82,7 @@ This is delivered in **three phases**:
 - `CUDNN_FE_CALL` / `CUDNN_FE_RETURN_IF_ERROR` for the frontend (`cudnn_fe_call.*`).
 - `CudaErrString<cudnnStatus_t>` calls `cudnnGetErrorString` (`cuda_call.cc`).
 - All of the above are already gated by `#ifndef USE_CUDA_MINIMAL` in shared CUDA code. That
-  build‑time path is used by TensorRT / NV‑TensorRT‑RTX related builds and is a useful
+  build‑time path is used by TensorRT-related builds and is a useful
   inventory of cuDNN‑touching code, but it is *not* the CUDA EP runtime behavior we want.
 
 ### 2.4 Operators / components that depend on cuDNN
@@ -354,9 +354,8 @@ Python wheel packaging is unchanged by this design: cuDNN DLLs are not packed in
 today, so Phase 1 is not introducing a new "CUDA-minimal" wheel flavor. The runtime loader
 simply makes the existing package tolerant of environments where cuDNN is absent.
 
-TensorRT / NV‑RTX EPs are untouched and continue to link cuDNN as before. (If both a TRT EP
-and the shimmed CUDA EP are in the same process, symbol collision must be avoided — see
-§8 Risks.)
+The TensorRT EP is untouched and continues to link cuDNN as before. (If both a TRT EP and the
+shimmed CUDA EP are in the same process, symbol collision must be avoided — see §8 Risks.)
 
 ### 3.6 Applying the same pattern to cuFFT
 
@@ -452,8 +451,8 @@ present, behavior is byte‑for‑byte identical to today.
      `NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING`. This is required so frontend graph code uses
      `dlsym` / `GetProcAddress` on `cudnn_frontend::cudnn_dlhandle` instead of creating
      link-time imports for `cudnnBackend*` symbols.
-   - Keep `USE_CUDA_MINIMAL` working. It is used by TensorRT / NV‑TensorRT‑RTX related
-     builds and is not replaced by the optional-cuDNN runtime shim.
+   - Keep `USE_CUDA_MINIMAL` working. It is used by TensorRT-related builds and is not
+     replaced by the optional-cuDNN runtime shim.
 
    Current CMake anchor points:
 
@@ -741,5 +740,5 @@ kernels; CUTLASS (already vendored) for conv/GEMM‑shaped work.
   from application code before creating the session.
 - No new "CUDA-minimal" wheel is required for Phase 1. cuDNN DLLs are not packed in the wheel
   today.
-- Keep the existing `USE_CUDA_MINIMAL` build-time path. It is used by RTX/TensorRT-related EP
+- Keep the existing `USE_CUDA_MINIMAL` build-time path. It is used by TensorRT-related EP
   builds and is not replaced by the CUDA EP runtime shim.

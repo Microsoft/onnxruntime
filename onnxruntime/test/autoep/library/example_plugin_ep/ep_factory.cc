@@ -89,6 +89,9 @@ ExampleEpFactory::ExampleEpFactory(const char* ep_name, ApiPtrs apis, const OrtL
 
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
 
+  InitGraphicsInterop = InitGraphicsInteropImpl;
+  DeinitGraphicsInterop = DeinitGraphicsInteropImpl;
+
   GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
   GetCustomOpDomains = GetCustomOpDomainsImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
@@ -608,6 +611,44 @@ OrtStatus* ORT_API_CALL ExampleEpFactory::CreateExternalResourceImporterForDevic
   auto importer = std::make_unique<ExampleExternalResourceImporter>(factory);
   *out_importer = importer.release();
 
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL ExampleEpFactory::InitGraphicsInteropImpl(OrtEpFactory* this_ptr,
+                                                                  const OrtEpDevice* /*ep_device*/,
+                                                                  const OrtGraphicsInteropConfig* config) noexcept {
+  auto& factory = *static_cast<ExampleEpFactory*>(this_ptr);
+
+  // OrtGraphicsInteropConfig was added in ORT API version 25.
+  if (config->version < 25) {
+    return factory.ort_api.CreateStatus(ORT_INVALID_ARGUMENT,
+                                        "ExampleEP: OrtGraphicsInteropConfig version must be at least 25");
+  }
+
+  // The example EP has no real graphics device; it only validates the requested API and tracks state.
+  if (config->graphics_api != ORT_GRAPHICS_API_D3D12 && config->graphics_api != ORT_GRAPHICS_API_VULKAN) {
+    return factory.ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "ExampleEP: unsupported graphics API");
+  }
+
+  std::lock_guard<std::mutex> lock{factory.mutex_};
+  if (factory.graphics_interop_initialized_) {
+    return factory.ort_api.CreateStatus(ORT_FAIL, "ExampleEP: graphics interop is already initialized");
+  }
+
+  factory.graphics_interop_initialized_ = true;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL ExampleEpFactory::DeinitGraphicsInteropImpl(OrtEpFactory* this_ptr,
+                                                                    const OrtEpDevice* /*ep_device*/) noexcept {
+  auto& factory = *static_cast<ExampleEpFactory*>(this_ptr);
+
+  std::lock_guard<std::mutex> lock{factory.mutex_};
+  if (!factory.graphics_interop_initialized_) {
+    return factory.ort_api.CreateStatus(ORT_FAIL, "ExampleEP: graphics interop is not initialized");
+  }
+
+  factory.graphics_interop_initialized_ = false;
   return nullptr;
 }
 

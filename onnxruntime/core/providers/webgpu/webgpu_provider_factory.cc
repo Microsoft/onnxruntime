@@ -337,7 +337,7 @@ WebGpuContextConfig ParseWebGpuContextConfig(
 
   // Compile-only mode (skip Dawn adapter/device creation so graph transformation can run device-free)
   // is derived from the session config kOrtSessionOptionCompileOnly, which the Compile API sets
-  // automatically -- same signal other EPs use (e.g. NV TensorRT RTX). Not a WebGPU-specific option.
+  // automatically. This is not a WebGPU-specific option.
   config.compile_only = config_options.GetConfigOrDefault(kOrtSessionOptionCompileOnly, "0") == "1";
 
   std::string max_storage_buffer_binding_size_str;

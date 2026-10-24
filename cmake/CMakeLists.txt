@@ -153,7 +153,6 @@ option(onnxruntime_ENABLE_MICROSOFT_INTERNAL "Use this option to enable/disable 
 option(onnxruntime_USE_VITISAI "Build with Vitis-AI" OFF)
 option(onnxruntime_USE_TENSORRT "Build with TensorRT support" OFF)
 option(onnxruntime_USE_TENSORRT_BUILTIN_PARSER "Use TensorRT builtin parser" OFF)
-option(onnxruntime_USE_NV "Build with TensorRT support" OFF)
 option(onnxruntime_ENABLE_LTO "Enable link time optimization" OFF)
 option(onnxruntime_CROSS_COMPILING "Cross compiling onnx runtime" OFF)
 option(onnxruntime_GCOV_COVERAGE "Compile with options necessary to run code coverage" OFF)
@@ -349,7 +348,6 @@ else()
 endif()
 
 option(onnxruntime_USE_TENSORRT_INTERFACE "Build ONNXRuntime shared lib which is compatible with TensorRT EP interface" OFF)
-option(onnxruntime_USE_NV_INTERFACE "Build ONNXRuntime shared lib which is compatible with NV EP interface" OFF)
 option(onnxruntime_USE_CUDA_INTERFACE "Build ONNXRuntime shared lib which is compatible with Cuda EP interface" OFF)
 option(onnxruntime_USE_OPENVINO_INTERFACE "Build ONNXRuntime shared lib which is compatible with OpenVINO EP interface" OFF)
 option(onnxruntime_USE_VITISAI_INTERFACE "Build ONNXRuntime shared lib which is compatible with Vitis-AI EP interface" OFF)
@@ -993,15 +991,6 @@ endif()
 
 if (onnxruntime_USE_TENSORRT_INTERFACE AND (NOT onnxruntime_USE_TENSORRT))
     list(APPEND ORT_PROVIDER_FLAGS -DUSE_TENSORRT_PROVIDER_INTERFACE=1)
-endif()
-
-if (onnxruntime_USE_NV)
-    list(APPEND ORT_PROVIDER_FLAGS -DUSE_NV=1)
-    list(APPEND ONNXRUNTIME_PROVIDER_NAMES nv_tensorrt_rtx)
-endif()
-
-if (onnxruntime_USE_NV_INTERFACE AND (NOT onnxruntime_USE_NV))
-    list(APPEND ORT_PROVIDER_FLAGS -DUSE_NV_PROVIDER_INTERFACE=1)
 endif()
 
 if (onnxruntime_USE_RKNPU)

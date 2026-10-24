@@ -717,7 +717,7 @@ static const char* const kOrtSessionOptionsQDQMatMulNBitsBlockSize = "session.qd
 
 // Enable the DQ->MatMulNBits fusion graph transformer.
 // "0": disabled (default). "1": enabled.
-// This is typically set automatically by InferenceSession when the NvTensorRTRTX EP is registered.
+// This is typically enabled automatically when the NvTensorRTRTX plugin EP is registered.
 static const char* const kOrtSessionOptionsEnableDQMatMulNBitsFusion = "session.enable_dq_matmulnbits_fusion";
 
 // THIS OPTION IS NOT A REGULAR SESSION OPTION SINCE IT CAN BE MODIFIED AT ANY TIME

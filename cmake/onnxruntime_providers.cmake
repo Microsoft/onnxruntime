@@ -129,10 +129,6 @@ if (onnxruntime_USE_TENSORRT)
   include(onnxruntime_providers_tensorrt.cmake)
 endif()
 
-if (onnxruntime_USE_NV)
-  include(onnxruntime_providers_nv.cmake)
-endif()
-
 if (onnxruntime_USE_VITISAI)
   include(onnxruntime_providers_vitisai.cmake)
 endif()

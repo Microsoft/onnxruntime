@@ -65,7 +65,6 @@ kleidiai;https://github.com/ARM-software/kleidiai/archive/refs/tags/v1.30.0.tar.
 # kleidiai-qmx is pinned to a specific commit as there are no tagged releases. When an appropriate tagged release becomes available,
 # this entry will be updated to use refs/tags/<version> instead of the raw commit hash.
 kleidiai-qmx;https://github.com/qualcomm/kleidiai/archive/2f10c9a8d32f81ffeeb6d4885a29cc35d2b0da87.zip;5e855730a2d69057a569f43dd7532db3b2d2a05c
-vulkan_headers;https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v1.4.344;57bc528ef7c4a3f7bfbb59e64a187e3734bd29d8
 # cpp_client_telemetry (1DS SDK) for cross-platform telemetry, including vcpkg builds.
 # This release fixes Windows Debug listener TLS leaks during DLL unload.
 cpp_client_telemetry;https://github.com/microsoft/cpp_client_telemetry/archive/refs/tags/v3.10.279.1.zip;e97ee8f91c9348551d35873da33a18b4e50cf0db

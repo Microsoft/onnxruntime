@@ -198,19 +198,6 @@ try:
                     f.write("    import os\n")
                     f.write('    os.environ["ORT_TENSORRT_UNAVAILABLE"] = "1"\n')
 
-        def _rewrite_ld_preload_nv_tensorrt_rtx(self, to_preload):
-            with open("onnxruntime/capi/_ld_preload.py", "a", encoding="ascii") as f:
-                if len(to_preload) > 0:
-                    f.write("from ctypes import CDLL, RTLD_GLOBAL\n")
-                    f.write("try:\n")
-                    f.writelines(
-                        '    _{} = CDLL("{}", mode=RTLD_GLOBAL)\n'.format(library.split(".")[0], library)
-                        for library in to_preload
-                    )
-                    f.write("except OSError:\n")
-                    f.write("    import os\n")
-                    f.write('    os.environ["ORT_NV_TENSORRT_RTX_UNAVAILABLE"] = "1"\n')
-
         def run(self):
             if is_manylinux:
                 source = "onnxruntime/capi/onnxruntime_pybind11_state.so"
@@ -221,7 +208,6 @@ try:
                 to_preload = []
                 to_preload_cuda = []
                 to_preload_tensorrt = []
-                to_preload_nv_tensorrt_rtx = []
                 to_preload_cann = []
 
                 cuda_dependencies = [
@@ -298,7 +284,6 @@ try:
                 self._rewrite_ld_preload(to_preload)
                 self._rewrite_ld_preload_cuda(to_preload_cuda)
                 self._rewrite_ld_preload_tensorrt(to_preload_tensorrt)
-                self._rewrite_ld_preload_tensorrt(to_preload_nv_tensorrt_rtx)
                 self._rewrite_ld_preload(to_preload_cann)
             elif platform.system() == "Linux":
                 # Non-manylinux Linux builds: preload libcudart so that undefined CUDA symbols
@@ -348,7 +333,6 @@ class InstallCommand(InstallCommandBase):
 
 providers_cuda = "onnxruntime_providers_cuda"
 providers_tensorrt_or_migraphx = "onnxruntime_providers_" + ("migraphx" if is_migraphx else "tensorrt")
-providers_nv_tensorrt_rtx = "onnxruntime_providers_nv_tensorrt_rtx"
 providers_openvino = "onnxruntime_providers_openvino"
 providers_cann = "onnxruntime_providers_cann"
 providers_qnn = "onnxruntime_providers_qnn"
@@ -356,14 +340,12 @@ providers_qnn = "onnxruntime_providers_qnn"
 if platform.system() == "Linux":
     providers_cuda = "lib" + providers_cuda + ".so"
     providers_tensorrt_or_migraphx = "lib" + providers_tensorrt_or_migraphx + ".so"
-    providers_nv_tensorrt_rtx = "lib" + providers_nv_tensorrt_rtx + ".so"
     providers_openvino = "lib" + providers_openvino + ".so"
     providers_cann = "lib" + providers_cann + ".so"
     providers_qnn = "lib" + providers_qnn + ".so"
 elif platform.system() == "Windows":
     providers_cuda = providers_cuda + ".dll"
     providers_tensorrt_or_migraphx = providers_tensorrt_or_migraphx + ".dll"
-    providers_nv_tensorrt_rtx = providers_nv_tensorrt_rtx + ".dll"
     providers_openvino = providers_openvino + ".dll"
     providers_cann = providers_cann + ".dll"
     providers_qnn = providers_qnn + ".dll"
@@ -402,7 +384,6 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     libs.extend(["libonnxruntime_providers_openvino.so"])
     libs.extend(["libonnxruntime_providers_vitisai.so"])
     libs.append(providers_cuda)
-    libs.append(providers_nv_tensorrt_rtx)
     libs.append(providers_tensorrt_or_migraphx)
     libs.append(providers_cann)
     libs.append(providers_qnn)
@@ -421,10 +402,6 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     ]
     dl_libs.extend(qnn_deps)
     libs.extend(qnn_deps)
-    # NV TensorRT RTX
-    nv_tensorrt_rtx_deps = ["libtensorrt_rtx.so", "libtensorrt_onnxparser_rtx.so"]
-    dl_libs.extend(nv_tensorrt_rtx_deps)
-    libs.extend(nv_tensorrt_rtx_deps)
     if nightly_build:
         libs.extend(["libonnxruntime_pywrapper.so"])
 elif platform.system() == "Darwin":
@@ -451,7 +428,6 @@ else:
         "libiomp5md.dll",
         providers_cuda,
         providers_tensorrt_or_migraphx,
-        providers_nv_tensorrt_rtx,
         providers_cann,
         "onnxruntime.dll",
     ]
@@ -459,7 +435,6 @@ else:
     libs.extend(["onnxruntime_providers_shared.dll"])
     libs.extend(["onnxruntime_providers_dnnl.dll"])
     libs.extend(["onnxruntime_providers_tensorrt.dll"])
-    libs.extend(["onnxruntime_providers_nv_tensorrt_rtx.dll"])
     libs.extend(["onnxruntime_providers_openvino.dll"])
     libs.extend(["onnxruntime_providers_cuda.dll"])
     libs.extend(["onnxruntime_providers_migraphx.dll"])
@@ -510,10 +485,6 @@ else:
         "migraphx_tf.dll",
     ]
     libs.extend(migraphx_deps)
-    # NV TensorRT RTX Libs
-    nv_tensorrt_rtx_deps = ["tensorrt_onnxparser_rtx_*.dll", "tensorrt_rtx_*.dll"]
-    libs.extend(nv_tensorrt_rtx_deps)
-
 if is_manylinux:
     if is_openvino:
         ov_libs = [
@@ -555,14 +526,12 @@ else:
 examples_names = ["mul_1.onnx", "logreg_iris.onnx", "sigmoid.onnx"]
 examples = [path.join("datasets", x) for x in examples_names]
 
-# Extra files such as EULA and ThirdPartyNotices (and Qualcomm License, only for QNN release packages)(and TensorRT RTX License and Acknowledgements for TRT RTX EP)
+# Extra files such as EULA and ThirdPartyNotices (and Qualcomm License, only for QNN release packages)
 extra = [
     "LICENSE",
     "ThirdPartyNotices.txt",
     "Privacy.md",
     "Qualcomm_LICENSE.pdf",
-    "TRT_RTX_LICENSE.txt",
-    "TRT_RTX_Acknowledgements.txt",
 ]
 
 # Description
@@ -822,13 +791,6 @@ if not path.exists(requirements_path):
     raise FileNotFoundError("Unable to find " + requirements_file)
 with open(requirements_path) as f:
     install_requires = f.read().splitlines()
-
-# Adding CUDA Runtime as dependency for NV TensorRT RTX python wheel
-if package_name == "onnxruntime-trt-rtx":
-    major = cuda_major_version or "12"  # Default to CUDA 12
-    # CUDA 13 dropped the "-cuNN" suffix from the CUDA Runtime package name.
-    runtime_pkg = "nvidia-cuda-runtime" if int(major) >= 13 else f"nvidia-cuda-runtime-cu{major}"
-    install_requires.append(f"{runtime_pkg}~={major}.0")
 
 
 def save_build_and_package_info(package_name, version_number, cuda_version, qnn_version):

@@ -27,9 +27,6 @@
 #include "core/providers/dml/dml_provider_factory_creator.h"
 #endif
 
-#if defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE)
-#include "core/providers/nv_tensorrt_rtx/nv_provider_options.h"
-#endif
 using namespace onnxruntime;
 
 namespace onnxruntime {
@@ -101,7 +98,6 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
     JS,
     VitisAI,
     CoreML,
-    NvTensorRtRtx,  // TensorRt EP for RTX GPUs.
     MIGraphX,
     CPU
   };
@@ -112,7 +108,7 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
     const char* canonical_name = nullptr;
   };
 
-  static std::array<EpToAppend, 14> supported_eps = {
+  static std::array<EpToAppend, 13> supported_eps = {
       EpToAppend{EpID::DML, "DML", kDmlExecutionProvider},
       EpToAppend{EpID::QNN, "QNN", kQnnExecutionProvider},
       EpToAppend{EpID::OpenVINO, "OpenVINO", kOpenVINOExecutionProvider},
@@ -124,7 +120,6 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
       EpToAppend{EpID::JS, "JS", kJsExecutionProvider},
       EpToAppend{EpID::VitisAI, "VitisAI", kVitisAIExecutionProvider},
       EpToAppend{EpID::CoreML, "CoreML", kCoreMLExecutionProvider},
-      EpToAppend{EpID::NvTensorRtRtx, "NvTensorRtRtx", kNvTensorRTRTXExecutionProvider},
       EpToAppend{EpID::MIGraphX, "MIGraphX", kMIGraphXExecutionProvider},
       EpToAppend{EpID::CPU, "CPU", kCpuExecutionProvider}};
 
@@ -183,6 +178,17 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
 
     return OrtApis::CreateStatus(ORT_INVALID_ARGUMENT, str_builder.str().c_str());
   };
+
+  // The provider-bridge NvTensorRtRtx EP is deprecated. Report the plugin EP flow with the deprecation error
+  if (strcmp(provider_name, "NvTensorRtRtx") == 0 || strcmp(provider_name, kNvTensorRTRTXExecutionProvider) == 0) {
+    return OrtApis::CreateStatus(
+        ORT_INVALID_ARGUMENT,
+        (std::string("The '") + provider_name +
+         "' execution provider is no longer built into ONNX Runtime. Use the NVIDIA TensorRT RTX plugin EP "
+         "instead: register its library with RegisterExecutionProviderLibrary, select an OrtEpDevice from "
+         "GetEpDevices, and append it with SessionOptionsAppendExecutionProvider_V2.")
+            .c_str());
+  }
 
   auto ep_to_append_iter = std::find_if(supported_eps.begin(), supported_eps.end(),
                                         [&provider_name](const EpToAppend& elem) -> bool {
@@ -315,19 +321,6 @@ ORT_API_STATUS_IMPL(OrtApis::SessionOptionsAppendExecutionProvider,
     case EpID::CoreML: {
 #if defined(USE_COREML)
       options->provider_factories.push_back(CoreMLProviderFactoryCreator::Create(provider_options));
-#else
-      status = create_not_supported_status();
-#endif
-      break;
-    }
-    case EpID::NvTensorRtRtx: {
-#if defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE)
-      auto factory = onnxruntime::NvProviderFactoryCreator::Create(provider_options, &(options->value));
-      if (factory) {
-        options->provider_factories.push_back(factory);
-      } else {
-        status = create_failed_to_load_provider_status();
-      }
 #else
       status = create_not_supported_status();
 #endif

@@ -24,7 +24,7 @@
 //    - In Compile(), the EP executes its compiled bits to perform inference for
 //      the fused custom node.
 //
-// Note: Approach #2 is suitable for plugin TRT RTX EP to support TRT plugins.
+// Note: Approach #2 is suitable for plugin EPs that support custom operator libraries.
 
 struct CustomMulKernel : MulKernel {
   CustomMulKernel(const OrtApi& ort_api,

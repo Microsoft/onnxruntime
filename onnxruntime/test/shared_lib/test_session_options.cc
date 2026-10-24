@@ -97,20 +97,19 @@ TEST(CApiTest, session_options_provider_interface_fail_add_cuda) {
 }
 #endif  // defined(USE_CUDA_PROVIDER_INTERFACE)
 
-#if defined(USE_NV_PROVIDER_INTERFACE)
-// Test that loading NV EP when only the interface is built (but not the full EP) fails.
-TEST(CApiTest, session_options_provider_interface_fail_add_nv) {
+// Test that appending the deprecated provider-bridge NV TensorRT RTX EP by name reports the plugin EP flow.
+TEST(CApiTest, session_options_append_removed_nv_tensorrt_rtx_ep) {
   const OrtApi& api = Ort::GetApi();
-  Ort::SessionOptions session_options;
 
-  Ort::Status status = Ort::Status{api.SessionOptionsAppendExecutionProvider(session_options,
-                                                                             kNvTensorRTRTXExecutionProvider,
-                                                                             nullptr, nullptr, 0)};
-  ASSERT_TRUE(!status.IsOK());
-  EXPECT_EQ(status.GetErrorCode(), ORT_FAIL);
-  EXPECT_THAT(status.GetErrorMessage(), testing::HasSubstr("Failed to load"));
+  for (const char* provider_name : {"NvTensorRtRtx", kNvTensorRTRTXExecutionProvider}) {
+    Ort::SessionOptions session_options;
+    Ort::Status status = Ort::Status{api.SessionOptionsAppendExecutionProvider(session_options, provider_name,
+                                                                               nullptr, nullptr, 0)};
+    ASSERT_FALSE(status.IsOK());
+    EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+    EXPECT_THAT(status.GetErrorMessage(), testing::HasSubstr("Use the NVIDIA TensorRT RTX plugin EP"));
+  }
 }
-#endif  // defined(USE_OPENVINO_PROVIDER_INTERFACE)
 
 #if defined(USE_TENSORRT_PROVIDER_INTERFACE)
 // Test that loading TensorRT EP when only the interface is built (but not the full EP) fails.

@@ -70,7 +70,7 @@ endif()
 if(onnxruntime_ENABLE_INSTRUMENT)
   target_compile_definitions(onnxruntime_framework PRIVATE ONNXRUNTIME_ENABLE_INSTRUMENT)
 endif()
-if(onnxruntime_USE_TENSORRT OR onnxruntime_USE_NCCL OR onnxruntime_USE_NV)
+if(onnxruntime_USE_TENSORRT OR onnxruntime_USE_NCCL)
 # TODO: for now, core framework depends on CUDA. It should be moved to TensorRT EP
 # TODO: provider_bridge_ort.cc should not include nccl.h
 target_include_directories(onnxruntime_framework PRIVATE ${ONNXRUNTIME_ROOT} ${CMAKE_CURRENT_BINARY_DIR} PUBLIC ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})

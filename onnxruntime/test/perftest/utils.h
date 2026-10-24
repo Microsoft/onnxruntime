@@ -40,8 +40,6 @@ std::vector<Ort::ConstEpDevice> AppendPluginExecutionProviders(Ort::Env& env,
                                                                Ort::SessionOptions& session_options,
                                                                const PerformanceTestConfig& test_config);
 
-bool UsesNvidiaDevice(Ort::Env& env, const PerformanceTestConfig& test_config);
-
 struct PluginEpAllocatorSelection {
   Ort::UnownedAllocator allocator;
   bool is_host_accessible = false;

@@ -731,38 +731,6 @@ void RegisterTensorRTPluginsAsCustomOps(PySessionOptions& so, const ProviderOpti
 }
 #endif
 
-#if defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE)
-void RegisterNvTensorRTRtxPluginsAsCustomOps(PySessionOptions& so, const ProviderOptions& options) {
-  if (auto* nv_tensorrt_rtx_provider_info = TryGetProviderInfo_Nv()) {
-    auto is_already_in_domains = [&](std::string& domain_name, std::vector<OrtCustomOpDomain*>& domains) {
-      for (auto ptr : domains) {
-        if (domain_name == ptr->domain_) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    std::string extra_plugin_lib_paths = "";
-    const auto it = options.find("extra_plugin_lib_paths");
-    if (it != options.end()) {
-      extra_plugin_lib_paths = it->second;
-    }
-    std::vector<OrtCustomOpDomain*> custom_op_domains;
-    nv_tensorrt_rtx_provider_info->GetTensorRTCustomOpDomainList(custom_op_domains, extra_plugin_lib_paths);
-    for (auto ptr : custom_op_domains) {
-      if (!is_already_in_domains(ptr->domain_, so.custom_op_domains_)) {
-        so.custom_op_domains_.push_back(ptr);
-      } else {
-        LOGS_DEFAULT(WARNING) << "The custom op domain name " << ptr->domain_ << " is already in session option.";
-      }
-    }
-  } else {
-    ORT_THROW("Please install TensorRT libraries as mentioned in the GPU requirements page, make sure they're in the PATH or LD_LIBRARY_PATH, and that your GPU is supported.");
-  }
-}
-#endif
-
 #if !defined(ORT_MINIMAL_BUILD)
 // Find a registered plugin EP device matching the given EP name and optional device_id from provider options.
 // Returns nullptr if no matching device is found.
@@ -1236,28 +1204,6 @@ static std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory
                           << "TensorRT-ExecutionProvider.html#requirements to ensure all dependencies are met.";
 #endif
 
-  } else if (type == kNvTensorRTRTXExecutionProvider) {
-#if defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE)
-    if (Env::Default().GetEnvironmentVar("ORT_NV_TENSORRT_RTX_UNAVAILABLE").empty()) {
-      auto it = provider_options_map.find(type);
-      if (it != provider_options_map.end()) {
-        ProviderOptions info = it->second;
-        if (std::shared_ptr<IExecutionProviderFactory> nv_tensorrt_rtx_provider_factory = onnxruntime::NvProviderFactoryCreator::Create(
-                info, &session_options)) {
-          return nv_tensorrt_rtx_provider_factory;
-        }
-      } else {
-        if (std::shared_ptr<IExecutionProviderFactory> nv_tensorrt_rtx_provider_factory = onnxruntime::NvProviderFactoryCreator::Create(cuda_device_id)) {
-          return nv_tensorrt_rtx_provider_factory;
-        }
-      }
-    }
-    LOGS_DEFAULT(WARNING) << "Failed to create "
-                          << type
-                          << ". Please reference "
-                          << "https://onnxruntime.ai/docs/execution-providers/"
-                          << "TensorRT-ExecutionProvider.html#requirements to ensure all dependencies are met.";
-#endif
   } else if (type == kMIGraphXExecutionProvider) {
 #if defined(USE_MIGRAPHX) || defined(USE_MIGRAPHX_PROVIDER_INTERFACE)
     auto it = provider_options_map.find(type);
@@ -2053,12 +1999,6 @@ Returns a dictionary with:
       "Register TensorRT plugins as custom ops.");
 #endif
 
-#if defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE)
-  m.def(
-      "register_nv_tensorrt_rtx_plugins_as_custom_ops", [](PySessionOptions& so, const ProviderOptions& options) { RegisterNvTensorRTRtxPluginsAsCustomOps(so, options); },
-      "Register NV TensorRT RTX plugins as custom ops.");
-#endif
-
 #ifdef ENABLE_ATEN
   m.def("register_aten_op_executor",
         [](const std::string& is_tensor_argument_address_str, const std::string& aten_op_executor_address_str) -> void {
@@ -2195,7 +2135,7 @@ void addObjectMethods(py::module& m, ExecutionProviderRegistrationFn ep_registra
                type = OrtDevice::GPU;
                vendor = OrtDevice::VendorIds::MICROSOFT;
              } else if (type == OrtDevice::GPU) {
-#if USE_CUDA || USE_NV || USE_NV_PROVIDER_INTERFACE || USE_CUDA_PROVIDER_INTERFACE
+#if USE_CUDA || USE_CUDA_PROVIDER_INTERFACE
                vendor = OrtDevice::VendorIds::NVIDIA;
 #elif USE_MIGRAPHX
                vendor = OrtDevice::VendorIds::AMD;

@@ -16,7 +16,6 @@ std::conditional_t<THRW, void, Status> CudaCall(
     const char* file, const int line);
 
 #define CUDA_CALL(expr) (::onnxruntime::CudaCall<cudaError, false>((expr), #expr, "CUDA", cudaSuccess, "", __FILE__, __LINE__))
-#define CU_CALL(expr) (::onnxruntime::CudaCall<CUresult, false>((expr), #expr, "CUDA", CUDA_SUCCESS, "", __FILE__, __LINE__))
 #define CUBLAS_CALL(expr) (::onnxruntime::CudaCall<cublasStatus_t, false>((expr), #expr, "CUBLAS", CUBLAS_STATUS_SUCCESS, "", __FILE__, __LINE__))
 
 #define CURAND_CALL(expr) (::onnxruntime::CudaCall<curandStatus_t, false>((expr), #expr, "CURAND", CURAND_STATUS_SUCCESS, "", __FILE__, __LINE__))
@@ -26,7 +25,6 @@ std::conditional_t<THRW, void, Status> CudaCall(
 #define CUFFT_CALL(expr) (::onnxruntime::CudaCall<cufftResult, false>((expr), #expr, "CUFFT", CUFFT_SUCCESS, "", __FILE__, __LINE__))
 
 #define CUDA_CALL_THROW(expr) (::onnxruntime::CudaCall<cudaError, true>((expr), #expr, "CUDA", cudaSuccess, "", __FILE__, __LINE__))
-#define CU_CALL_THROW(expr) (::onnxruntime::CudaCall<CUresult, true>((expr), #expr, "CUDA", CUDA_SUCCESS, "", __FILE__, __LINE__))
 #define CUBLAS_CALL_THROW(expr) (::onnxruntime::CudaCall<cublasStatus_t, true>((expr), #expr, "CUBLAS", CUBLAS_STATUS_SUCCESS, "", __FILE__, __LINE__))
 
 #define CURAND_CALL_THROW(expr) (::onnxruntime::CudaCall<curandStatus_t, true>((expr), #expr, "CURAND", CURAND_STATUS_SUCCESS, "", __FILE__, __LINE__))

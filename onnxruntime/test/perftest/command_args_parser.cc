@@ -57,7 +57,9 @@ ABSL_FLAG(std::string, F, "",
           "[Usage]: -f \"dimension_denotation1:override_value1\" -f \"dimension_denotation2:override_value2\" ...  or"
           " -f \"dimension_denotation1:override_value1 dimension_denotation2 : override_value2... \". Override value must > 0.");
 ABSL_FLAG(std::string, m, "duration", "Specifies the test mode. Value could be 'duration' or 'times'.");
-ABSL_FLAG(std::string, e, "cpu", "Specifies the provider 'cpu','cuda','dnnl','tensorrt', 'nvtensorrtrtx', 'openvino', 'dml', 'acl', 'nnapi', 'coreml', 'qnn', 'snpe', 'migraphx', 'xnnpack', 'vitisai' or 'webgpu'.");
+ABSL_FLAG(std::string, e, "cpu",
+          "Specifies the provider 'cpu','cuda','dnnl','tensorrt', 'openvino', 'dml', 'acl', 'nnapi', "
+          "'coreml', 'qnn', 'snpe', 'migraphx', 'xnnpack', 'vitisai' or 'webgpu'.");
 ABSL_FLAG(size_t, r, DefaultPerformanceTestConfig().run_config.repeated_times, "Specifies the repeated times if running in 'times' test mode.");
 ABSL_FLAG(size_t, t, DefaultPerformanceTestConfig().run_config.duration_in_seconds, "Specifies the seconds to run for 'duration' mode.");
 ABSL_FLAG(std::string, p, "", "Specifies the profile name to enable profiling and dump the profile data to the file.");
@@ -191,7 +193,9 @@ ABSL_FLAG(uint32_t, hold_ms_after_session_creation, DefaultPerformanceTestConfig
           "When used with -n, keeps the process alive for the specified number of milliseconds after session creation.\n"
           "Prints 'SESSION_READY' to stdout before sleeping. Useful for multi-process memory measurements.");
 ABSL_FLAG(bool, l, DefaultPerformanceTestConfig().model_info.load_via_path, "Provides file as binary in memory by using fopen before session creation.");
-ABSL_FLAG(bool, g, DefaultPerformanceTestConfig().run_config.enable_cuda_io_binding, "[TensorRT RTX | TensorRT | CUDA] Enables tensor input and output bindings on CUDA before session run.");
+ABSL_FLAG(bool, g, DefaultPerformanceTestConfig().run_config.enable_cuda_io_binding,
+          "[Plugin EP | TensorRT | CUDA] Enables tensor input and output bindings on the device before session run. "
+          "For plugin EPs, binds to the selected EP device's allocator.");
 ABSL_FLAG(bool, X, DefaultPerformanceTestConfig().run_config.use_extensions, "Registers custom ops from onnxruntime-extensions.");
 ABSL_FLAG(std::string, plugin_ep_libs, "",
           "Specifies a list of plugin execution provider (EP) registration names and their corresponding shared libraries to register.\n"
@@ -370,8 +374,6 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
         test_config.machine_config.provider_type_name = onnxruntime::kVitisAIExecutionProvider;
       } else if (ep == "webgpu") {
         test_config.machine_config.provider_type_name = onnxruntime::kWebGpuExecutionProvider;
-      } else if (ep == "nvtensorrtrtx") {
-        test_config.machine_config.provider_type_name = onnxruntime::kNvTensorRTRTXExecutionProvider;
       } else {
         return false;
       }

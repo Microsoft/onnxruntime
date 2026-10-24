@@ -60,19 +60,25 @@ RunTiming OnnxRuntimeTestSession::Run() {
   }
 
   RunTiming timing;
-  if (CUDA == device_memory_name_) {
+  if (CUDA == device_memory_name_ || use_plugin_ep_io_binding_) {
     Ort::IoBinding io_binding(session_);
     auto mem_info = allocator_.GetInfo();
 
     for (size_t i = 0; i < input_names_.size(); ++i) {
       io_binding.BindInput(input_names_[i], input[i]);
     }
-    for (auto& name : output_names_) {
-      io_binding.BindOutput(name.c_str(), mem_info);
+    // String outputs require host-accessible memory, so let the session allocate them on the CPU.
+    const auto cpu_mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    for (size_t i = 0; i < output_names_.size(); ++i) {
+      io_binding.BindOutput(output_names_[i].c_str(), is_output_string_[i] ? cpu_mem_info : mem_info);
     }
 
-    // Use async execution and rely on IO binding's SynchronizeOutputs to synchronize.
-    run_options.AddConfigEntry(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "1");
+    // Plugin EPs may synchronize at run end (OnRunEnd / stream flush) without implementing OrtEp::Sync, in which case
+    // IoBinding::SynchronizeOutputs() does not wait. Only defer synchronization for the built-in CUDA/TensorRT path.
+    if (!use_plugin_ep_io_binding_) {
+      // Use async execution and rely on IO binding's SynchronizeOutputs to synchronize.
+      run_options.AddConfigEntry(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "1");
+    }
 
     // do not time IO binding creation
     start = std::chrono::high_resolution_clock::now();
@@ -118,20 +124,28 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
     std::vector<Ort::ConstEpDevice> selected_ep_devices =
         perftest::utils::AppendPluginExecutionProviders(env, session_options, performance_test_config);
 
-    if (performance_test_config.run_config.enable_cuda_io_binding &&
-        perftest::utils::UsesNvidiaDevice(env, performance_test_config) &&
-        device_memory_name_.empty()) {
-      device_memory_name_ = CUDA;
+    // Pick an allocator from the plugin EP devices unless the user explicitly requested to force the CPU allocator.
+    if (performance_test_config.plugin_ep_force_cpu_allocator) {
+      fprintf(stdout, "[Plugin EP] Forcing CPU allocator (--plugin_ep_force_cpu_allocator was specified).\n");
+    } else if (auto plugin_ep_allocator = perftest::utils::GetPluginEpAllocator(env, selected_ep_devices)) {
+      allocator_ = plugin_ep_allocator->allocator;
+      plugin_ep_allocator_selection_ = std::move(plugin_ep_allocator);
     }
 
-    // Pick an allocator from the plugin EP devices unless IO binding already set one,
-    // or the user explicitly requested to force the CPU allocator.
-    if (device_memory_name_.empty()) {
-      if (performance_test_config.plugin_ep_force_cpu_allocator) {
-        fprintf(stdout, "[Plugin EP] Forcing CPU allocator (--plugin_ep_force_cpu_allocator was specified).\n");
-      } else if (auto plugin_ep_allocator = perftest::utils::GetPluginEpAllocator(env, selected_ep_devices)) {
-        allocator_ = plugin_ep_allocator->allocator;
-        plugin_ep_allocator_selection_ = std::move(plugin_ep_allocator);
+    // IO binding binds outputs to allocator_'s memory info, which comes from the selected EP device (including its
+    // device id), so it is only used when that allocator is device memory.
+    if (performance_test_config.run_config.enable_cuda_io_binding) {
+      use_plugin_ep_io_binding_ = IsAllocatorDeviceOnly();
+      if (!use_plugin_ep_io_binding_) {
+        if (performance_test_config.plugin_ep_force_cpu_allocator) {
+          fprintf(stdout,
+                  "[Plugin EP] -g is ignored because --plugin_ep_force_cpu_allocator was specified. "
+                  "IO binding is disabled.\n");
+        } else {
+          fprintf(stdout,
+                  "[Plugin EP] -g requires a single selected EP device with a device allocator. "
+                  "IO binding is disabled.\n");
+        }
       }
     }
   }
@@ -261,32 +275,6 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
     session_options.AppendExecutionProvider_CUDA(cuda_options);
 #else
     ORT_THROW("TensorRT is not supported in this build\n");
-#endif
-  } else if (provider_name_ == onnxruntime::kNvTensorRTRTXExecutionProvider) {
-#ifdef USE_NV
-#ifdef _MSC_VER
-    std::string opt_string = ToUTF8String(performance_test_config.run_config.ep_runtime_config_string);
-#else
-    std::string opt_string = performance_test_config.run_config.ep_runtime_config_string;
-#endif
-    ParseSessionConfigs(opt_string, provider_options);
-    if (!provider_options.empty()) {
-      std::cout << "Setting NV TensorRT RTX provider options to:\n";
-      for (const auto& provider_option : provider_options) {
-        std::cout << "\t" << provider_option.first << ":" << provider_option.second << "\n";
-      }
-    }
-    if (performance_test_config.run_config.enable_cuda_io_binding) {
-      device_memory_name_ = CUDA;
-      if (cudaStreamCreate(&stream_) != cudaError_t::cudaSuccess) {
-        ORT_THROW("Unable to create CUDA stream for IOBinding");
-      }
-      auto stream_str = std::to_string(reinterpret_cast<uintptr_t>(stream_));
-      provider_options["user_compute_stream"] = stream_str;
-    }
-    session_options.AppendExecutionProvider("NvTensorRtRtx", provider_options);
-#else
-    ORT_THROW("NV TensorRT RTX is not supported in this build\n");
 #endif
   } else if (provider_name_ == onnxruntime::kQnnExecutionProvider) {
 #ifdef USE_QNN
@@ -1032,7 +1020,10 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
     // String tensors require host-accessible memory; skip pre-allocation for them when allocator_
     // is device-only and let the session allocate them itself.
     bool is_string_output = tensor_info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING;
-    if (is_dynamic || (device_memory_name_.empty() && !plugin_ep_allocator_selection_.has_value()) ||
+    is_output_string_.push_back(is_string_output);
+    // With plugin EP IO binding, Run() binds fresh outputs and never uses outputs_.
+    if (is_dynamic || use_plugin_ep_io_binding_ ||
+        (device_memory_name_.empty() && !plugin_ep_allocator_selection_.has_value()) ||
         (is_string_output && IsAllocatorDeviceOnly())) {
       outputs_.emplace_back(Ort::Value(nullptr));
     } else {
@@ -1061,7 +1052,7 @@ bool OnnxRuntimeTestSession::IsAllocatorDeviceOnly() const {
   if (plugin_ep_allocator_selection_.has_value()) {
     return !plugin_ep_allocator_selection_->is_host_accessible;
   }
-#if defined(USE_CUDA) || defined(USE_TENSORRT) || defined(USE_NV)
+#if defined(USE_CUDA) || defined(USE_TENSORRT)
   if (device_memory_name_ == CUDA) {
     return true;
   }
@@ -1173,7 +1164,7 @@ static void InitializeTensorWithSeed(int32_t seed, Ort::Value& tensor) {
 void OnnxRuntimeTestSession::CreateAndStoreGeneratedInput(size_t test_data_id, size_t input_idx,
                                                           const std::vector<int64_t>& dims,
                                                           ONNXTensorElementDataType element_type, int32_t seed) {
-#if defined(USE_CUDA) || defined(USE_TENSORRT) || defined(USE_NV)
+#if defined(USE_CUDA) || defined(USE_TENSORRT)
   if (device_memory_name_ == CUDA) {
     Ort::AllocatorWithDefaultOptions default_allocator;
     Ort::Value default_tensor = Ort::Value::CreateTensor(default_allocator, dims.data(),

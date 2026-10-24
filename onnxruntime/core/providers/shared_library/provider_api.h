@@ -313,7 +313,6 @@ constexpr const char* kDnnlExecutionProvider = "DnnlExecutionProvider";
 constexpr const char* kOpenVINOExecutionProvider = "OpenVINOExecutionProvider";
 constexpr const char* kVitisAIExecutionProvider = "VitisAIExecutionProvider";
 constexpr const char* kTensorrtExecutionProvider = "TensorrtExecutionProvider";
-constexpr const char* kNvTensorRTRTXExecutionProvider = "NvTensorRTRTXExecutionProvider";
 constexpr const char* kMIGraphXExecutionProvider = "MIGraphXExecutionProvider";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";

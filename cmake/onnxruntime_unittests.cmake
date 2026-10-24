@@ -122,7 +122,7 @@ function(AddTest)
             Threads::Threads)
     target_compile_definitions(${_UT_TARGET} PRIVATE -DUSE_ONNXRUNTIME_DLL)
   else()
-    if(onnxruntime_USE_CUDA OR onnxruntime_USE_NV)
+    if(onnxruntime_USE_CUDA)
       #XXX: we should not need to do this. onnxruntime_test_all.exe should not have direct dependency on CUDA DLLs,
       # otherwise it will impact when CUDA DLLs can be unloaded.
       target_link_libraries(${_UT_TARGET} PRIVATE CUDA::cudart)
@@ -151,11 +151,6 @@ function(AddTest)
     # used for instantiating placeholder TRT builder to mitigate TRT library load/unload overhead
     target_include_directories(${_UT_TARGET} PRIVATE ${TENSORRT_INCLUDE_DIR})
   endif()
-  if (onnxruntime_USE_NV)
-    # used for instantiating placeholder TRT builder to mitigate TRT library load/unload overhead
-    target_include_directories(${_UT_TARGET} PRIVATE ${NV_INCLUDE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
-  endif()
-
   if(MSVC)
     target_compile_options(${_UT_TARGET} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
             "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
@@ -780,25 +775,6 @@ if(onnxruntime_USE_TENSORRT)
   list(APPEND onnxruntime_test_providers_libs ${TENSORRT_LIBRARY_INFER})
 endif()
 
-if(onnxruntime_USE_NV)
-  # If an external project (e.g. dawn from Webgpu EP has already added a Vulkan::Headers target we shouldn't try to import another version of the Vulkan headers)
-  if (NOT TARGET Vulkan::Headers)
-    onnxruntime_fetchcontent_declare(
-      vulkan_headers
-      URL ${DEP_URL_vulkan_headers}
-      URL_HASH SHA1=${DEP_SHA1_vulkan_headers}
-      EXCLUDE_FROM_ALL
-    )
-    onnxruntime_fetchcontent_makeavailable(vulkan_headers)
-  endif()
-  list(APPEND onnxruntime_test_framework_src_patterns  ${TEST_SRC_DIR}/providers/nv_tensorrt_rtx/*)
-  list(APPEND onnxruntime_test_framework_src_patterns  "${ONNXRUNTIME_ROOT}/core/providers/nv_tensorrt_rtx/nv_execution_provider_utils.h")
-  list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_nv_tensorrt_rtx onnxruntime_providers_shared)
-  list(APPEND onnxruntime_test_providers_libs ${TENSORRT_LIBRARY_INFER})
-  list(APPEND onnxruntime_test_providers_libs Vulkan::Headers)
-endif()
-
-
 if(onnxruntime_USE_MIGRAPHX)
   list(APPEND onnxruntime_test_framework_src_patterns  ${TEST_SRC_DIR}/providers/migraphx/*)
 endif()
@@ -1243,7 +1219,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR IOS)
 endif()
 
 set(test_all_args)
-if (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV)
+if (onnxruntime_USE_TENSORRT)
   # TRT EP CI takes much longer time when updating to TRT 8.2
   # So, we only run trt ep and exclude other eps to reduce CI test time.
   #
@@ -2279,7 +2255,7 @@ if (NOT onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
         list(APPEND onnxruntime_perf_test_libs onnxruntime_graph onnxruntime_session ${onnxruntime_providers_target} onnxruntime_framework onnxruntime_util onnxruntime_mlas onnxruntime_optimizer onnxruntime_flatbuffers iconv re2 gtest absl_failure_signal_handler absl_examine_stack absl_flags_parse  absl_flags_usage absl_flags_usage_internal)
       endif()
       target_link_libraries(onnxruntime_perf_test PRIVATE ${onnxruntime_perf_test_libs} Threads::Threads)
-      if (onnxruntime_USE_CUDA OR onnxruntime_USE_NV OR onnxruntime_USE_TENSORRT)
+      if (onnxruntime_USE_CUDA OR onnxruntime_USE_TENSORRT)
         target_link_libraries(onnxruntime_perf_test PRIVATE CUDA::cudart)
       endif()
       if(WIN32)
@@ -2288,7 +2264,7 @@ if (NOT onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
     else()
       target_link_libraries(onnxruntime_perf_test PRIVATE onnx_test_runner_common absl::flags absl::flags_parse ${onnx_test_libs})
       #  When onnxruntime_BUILD_SHARED_LIB is OFF (the plugin build path), perf test was missing CUDA include directories and CUDA::cudart linkage.
-      if (onnxruntime_USE_CUDA OR onnxruntime_USE_NV OR onnxruntime_USE_TENSORRT)
+      if (onnxruntime_USE_CUDA OR onnxruntime_USE_TENSORRT)
         target_include_directories(onnxruntime_perf_test PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
         target_link_libraries(onnxruntime_perf_test PRIVATE CUDA::cudart)
       endif()
@@ -2485,9 +2461,6 @@ endif()
     if (onnxruntime_USE_TENSORRT)
       list(APPEND onnxruntime_shared_lib_test_LIBS ${TENSORRT_LIBRARY_INFER})
     endif()
-    if (onnxruntime_USE_NV)
-      list(APPEND onnxruntime_shared_lib_test_LIBS ${TENSORRT_LIBRARY_INFER} CUDA::cudart)
-    endif()
     if (onnxruntime_USE_DML)
       list(APPEND onnxruntime_shared_lib_test_LIBS d3d12.lib)
     endif()
@@ -2512,11 +2485,6 @@ endif()
       target_include_directories(onnxruntime_shared_lib_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
       target_sources(onnxruntime_shared_lib_test PRIVATE ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/cuda_ops.cu)
     endif()
-    if (onnxruntime_USE_NV)
-      target_include_directories(onnxruntime_shared_lib_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    endif()
-
-
     if (CMAKE_SYSTEM_NAME STREQUAL "Android")
       target_sources(onnxruntime_shared_lib_test PRIVATE
         "${ONNXRUNTIME_ROOT}/core/platform/android/cxa_demangle.cc"
@@ -2818,9 +2786,6 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND NOT onnxruntime_CUDA_MINIMAL
       list(APPEND onnxruntime_customopregistration_test_LIBS cpuinfo)
     endif()
     if (onnxruntime_USE_TENSORRT)
-      list(APPEND onnxruntime_customopregistration_test_LIBS ${TENSORRT_LIBRARY_INFER})
-    endif()
-    if (onnxruntime_USE_NV)
       list(APPEND onnxruntime_customopregistration_test_LIBS ${TENSORRT_LIBRARY_INFER})
     endif()
     if (CMAKE_SYSTEM_NAME MATCHES "AIX")
@@ -3180,7 +3145,7 @@ if (onnxruntime_BUILD_SHARED_LIB AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten"
     list(APPEND onnxruntime_ep_graph_test_LIBS  ${CMAKE_DL_LIBS})
   endif()
 
-  if (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV)
+  if (onnxruntime_USE_TENSORRT)
     # Need this because unittest_main_src defines a global nvinfer1::IBuilder variable.
     list(APPEND onnxruntime_ep_graph_test_LIBS ${TENSORRT_LIBRARY_INFER})
   endif()

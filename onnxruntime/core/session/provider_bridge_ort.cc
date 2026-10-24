@@ -104,7 +104,6 @@ using EtwRegistrationManager_EtwInternalCallback = EtwRegistrationManager::EtwIn
 #include "core/providers/migraphx/migraphx_provider_factory_creator.h"
 #include "core/providers/openvino/openvino_provider_factory_creator.h"
 #include "core/providers/tensorrt/tensorrt_provider_factory_creator.h"
-#include "core/providers/nv_tensorrt_rtx/nv_provider_factory_creator.h"
 #include "core/providers/vitisai/vitisai_provider_factory_creator.h"
 #include "core/providers/qnn/qnn_provider_factory_creator.h"
 
@@ -118,16 +117,13 @@ using EtwRegistrationManager_EtwInternalCallback = EtwRegistrationManager::EtwIn
 #include "core/providers/cuda/cuda_provider_options.h"
 #include "core/providers/cann/cann_provider_options.h"
 #include "core/providers/dnnl/dnnl_provider_options.h"
-#include "core/providers/nv_tensorrt_rtx/nv_provider_factory.h"
-#include "core/providers/nv_tensorrt_rtx/nv_provider_options.h"
 
 #if defined(_WIN32) && !defined(NDEBUG) && defined(ONNXRUNTIME_ENABLE_MEMLEAK_CHECK)
 #include "core/platform/windows/debug_alloc.h"
 #endif
 
-#if !defined(ORT_MINIMAL_BUILD) &&                                        \
-    (defined(USE_TENSORRT) || defined(USE_TENSORRT_PROVIDER_INTERFACE) || \
-     defined(USE_NV) || defined(USE_NV_PROVIDER_INTERFACE))
+#if !defined(ORT_MINIMAL_BUILD) && \
+    (defined(USE_TENSORRT) || defined(USE_TENSORRT_PROVIDER_INTERFACE))
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #endif
 
@@ -160,8 +156,6 @@ ProviderInfo_Dnnl& GetProviderInfo_Dnnl();
 ProviderHostCPU& GetProviderHostCPU();
 ProviderInfo_MIGraphX* TryGetProviderInfo_MIGraphX();
 ProviderInfo_MIGraphX& GetProviderInfo_MIGraphX();
-ProviderInfo_Nv* TryGetProviderInfo_Nv();
-ProviderInfo_Nv& GetProviderInfo_Nv();
 ProviderInfo_OpenVINO* TryGetProviderInfo_OpenVINO();
 
 ONNX_NAMESPACE::OpSchema CreateSchema(const std::string& domain, const std::vector<const OrtCustomOp*>& ops);
@@ -2130,7 +2124,6 @@ static ProviderLibrary s_library_tensorrt(LIBRARY_PREFIX ORT_TSTR("onnxruntime_p
                                           false
 #endif
 );
-static ProviderLibrary s_library_nv(LIBRARY_PREFIX ORT_TSTR("onnxruntime_providers_nv_tensorrt_rtx") LIBRARY_EXTENSION);
 static ProviderLibrary s_library_migraphx(LIBRARY_PREFIX ORT_TSTR("onnxruntime_providers_migraphx") LIBRARY_EXTENSION);
 
 // QNN EP can be built either as a static library or a shared library. Can safely define s_library_qnn even if static.
@@ -2147,7 +2140,6 @@ void UnloadSharedProviders() {
   s_library_shared.Unload();
   s_library_migraphx.Unload();
   s_library_qnn.Unload();
-  s_library_nv.Unload();
 }
 
 // Used by test code
@@ -2296,28 +2288,6 @@ std::shared_ptr<IExecutionProviderFactory> TensorrtProviderFactoryCreator::Creat
   ORT_CATCH_LOG_RETURN_NULLPTR;
 }
 
-std::shared_ptr<IExecutionProviderFactory> NvProviderFactoryCreator::Create(int device_id) {
-  ORT_TRY {
-    return s_library_nv.Get().CreateExecutionProviderFactory(device_id);
-  }
-  ORT_CATCH_LOG_RETURN_NULLPTR;
-}
-
-std::shared_ptr<IExecutionProviderFactory> NvProviderFactoryCreator::Create(
-    const ProviderOptions& provider_options, const SessionOptions* session_options) {
-  ORT_TRY {
-    const ConfigOptions* config_options = nullptr;
-    if (session_options != nullptr) {
-      config_options = &session_options->config_options;
-    }
-
-    std::array<const void*, 2> configs_array = {&provider_options, config_options};
-    const void* arg = reinterpret_cast<const void*>(&configs_array);
-    return s_library_nv.Get().CreateExecutionProviderFactory(arg);
-  }
-  ORT_CATCH_LOG_RETURN_NULLPTR;
-}
-
 std::shared_ptr<IExecutionProviderFactory> MIGraphXProviderFactoryCreator::Create(const ProviderOptions& provider_options) {
   return s_library_migraphx.Get().CreateExecutionProviderFactory(&provider_options);
 }
@@ -2435,20 +2405,6 @@ ProviderInfo_TensorRT& GetProviderInfo_TensorRT() {
     return *info;
 
   ORT_THROW("TensorRT Provider not available, can't get interface for it");
-}
-
-ProviderInfo_Nv* TryGetProviderInfo_Nv() {
-  ORT_TRY {
-    return reinterpret_cast<ProviderInfo_Nv*>(s_library_nv.Get().GetInfo());
-  }
-  ORT_CATCH_LOG_RETURN_NULLPTR;
-}
-
-ProviderInfo_Nv& GetProviderInfo_Nv() {
-  if (auto* info = TryGetProviderInfo_Nv())
-    return *info;
-
-  ORT_THROW("NV Provider not available, can't get interface for it");
 }
 
 ProviderInfo_CUDA* TryGetProviderInfo_CUDA() {

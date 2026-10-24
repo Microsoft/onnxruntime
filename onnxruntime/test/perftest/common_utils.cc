@@ -236,25 +236,6 @@ std::optional<PluginEpAllocatorSelection> GetPluginEpAllocator(Ort::Env& env,
   return std::nullopt;
 }
 
-bool UsesNvidiaDevice(Ort::Env& env, const PerformanceTestConfig& test_config) {
-  const auto ep_devices = env.GetEpDevices();
-  const auto& plugin_eps = test_config.machine_config.plugin_provider_type_list;
-
-  const bool uses_nvidia_device = std::any_of(ep_devices.begin(), ep_devices.end(),
-                                              [&plugin_eps](const Ort::ConstEpDevice& ep_device) {
-                                                const std::string ep_name(ep_device.EpName());
-                                                if (std::find(plugin_eps.begin(), plugin_eps.end(), ep_name) == plugin_eps.end()) {
-                                                  return false;
-                                                }
-
-                                                const auto hardware_device = ep_device.Device();
-                                                return hardware_device.Type() == OrtDevice::GPU &&
-                                                       hardware_device.VendorId() == OrtDevice::VendorIds::NVIDIA;
-                                              });
-
-  return uses_nvidia_device;
-}
-
 }  // namespace utils
 }  // namespace perftest
 }  // namespace onnxruntime

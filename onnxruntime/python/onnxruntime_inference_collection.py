@@ -700,58 +700,22 @@ class InferenceSession(Session):
     def _create_inference_session(self, providers, provider_options, disabled_optimizers=None):
         available_providers = C.get_available_providers()
 
-        # Validate that TensorrtExecutionProvider and NvTensorRTRTXExecutionProvider are not both specified
-        if providers:
-            has_tensorrt = any(
-                provider == "TensorrtExecutionProvider"
-                or (isinstance(provider, tuple) and provider[0] == "TensorrtExecutionProvider")
-                for provider in providers
+        provider_names = [provider[0] if isinstance(provider, tuple) else provider for provider in providers or []]
+        has_tensorrt = "TensorrtExecutionProvider" in provider_names
+        # NvTensorRTRTXExecutionProvider is only available as a plugin EP registered by the application.
+        has_tensorrt_rtx = "NvTensorRTRTXExecutionProvider" in provider_names
+        if has_tensorrt and has_tensorrt_rtx:
+            raise ValueError(
+                "Cannot enable both 'TensorrtExecutionProvider' and 'NvTensorRTRTXExecutionProvider' "
+                "in the same session."
             )
-            has_tensorrt_rtx = any(
-                provider == "NvTensorRTRTXExecutionProvider"
-                or (isinstance(provider, tuple) and provider[0] == "NvTensorRTRTXExecutionProvider")
-                for provider in providers
-            )
-            if has_tensorrt and has_tensorrt_rtx:
-                raise ValueError(
-                    "Cannot enable both 'TensorrtExecutionProvider' and 'NvTensorRTRTXExecutionProvider' "
-                    "in the same session."
-                )
-        # Tensorrt and TensorRT RTX can fall back to CUDA if it's explicitly assigned. All others fall back to CPU.
-        if "NvTensorRTRTXExecutionProvider" in available_providers:
-            if (
-                providers
-                and any(
-                    provider == "CUDAExecutionProvider"
-                    or (isinstance(provider, tuple) and provider[0] == "CUDAExecutionProvider")
-                    for provider in providers
-                )
-                and any(
-                    provider == "NvTensorRTRTXExecutionProvider"
-                    or (isinstance(provider, tuple) and provider[0] == "NvTensorRTRTXExecutionProvider")
-                    for provider in providers
-                )
-            ):
-                self._fallback_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            else:
-                self._fallback_providers = ["CPUExecutionProvider"]
-        elif "TensorrtExecutionProvider" in available_providers:
-            if (
-                providers
-                and any(
-                    provider == "CUDAExecutionProvider"
-                    or (isinstance(provider, tuple) and provider[0] == "CUDAExecutionProvider")
-                    for provider in providers
-                )
-                and any(
-                    provider == "TensorrtExecutionProvider"
-                    or (isinstance(provider, tuple) and provider[0] == "TensorrtExecutionProvider")
-                    for provider in providers
-                )
-            ):
-                self._fallback_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            else:
-                self._fallback_providers = ["CPUExecutionProvider"]
+
+        # TensorRT and TensorRT RTX can fall back to CUDA if it's explicitly assigned. All others fall back to CPU.
+        if "CUDAExecutionProvider" in provider_names and any(
+            name in provider_names and name in available_providers
+            for name in ("TensorrtExecutionProvider", "NvTensorRTRTXExecutionProvider")
+        ):
+            self._fallback_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         else:
             self._fallback_providers = ["CPUExecutionProvider"]
 
@@ -847,15 +811,6 @@ class InferenceSession(Session):
                 and providers[i][0] == "TensorrtExecutionProvider"
             ):
                 C.register_tensorrt_plugins_as_custom_ops(session_options, providers[i][1])
-
-            if providers[i] in available_providers and providers[i] == "NvTensorRTRTXExecutionProvider":
-                C.register_nv_tensorrt_rtx_plugins_as_custom_ops(session_options, provider_options[i])
-            elif (
-                isinstance(providers[i], tuple)
-                and providers[i][0] in available_providers
-                and providers[i][0] == "NvTensorrtRTXExecutionProvider"
-            ):
-                C.register_nv_tensorrt_rtx_plugins_as_custom_ops(session_options, providers[i][1])
 
 
 def make_get_initializer_location_func_wrapper(

@@ -195,7 +195,6 @@ test {
 		'USE_DNNL',
 		'USE_MIGRAPHX',
 		'USE_NNAPI',
-		'USE_NV',
 		'USE_OPENVINO',
 		'USE_QNN',
 		'USE_RKNPU',

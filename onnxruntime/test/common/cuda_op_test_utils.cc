@@ -3,7 +3,7 @@
 
 #include <iostream>
 
-#if defined(USE_CUDA) || defined(USE_NV)
+#if defined(USE_CUDA)
 #include "cuda_runtime_api.h"
 #endif
 
@@ -15,7 +15,7 @@ int GetCudaArchitecture() {
   // Usually, we test on a single GPU or multiple GPUs of same architecture, so it's fine to cache the result.
   static int cuda_arch = -1;
 
-#if defined(USE_CUDA) || defined(USE_NV)
+#if defined(USE_CUDA)
   if (cuda_arch == -1) {
     int current_device_id = 0;
     cudaGetDevice(&current_device_id);

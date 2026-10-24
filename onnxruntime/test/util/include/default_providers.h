@@ -44,7 +44,6 @@ std::unique_ptr<IExecutionProvider> DefaultDnnlExecutionProvider();
 std::unique_ptr<IExecutionProvider> DnnlExecutionProviderWithOptions(const OrtDnnlProviderOptions* provider_options);
 // std::unique_ptr<IExecutionProvider> DefaultTvmExecutionProvider();
 std::unique_ptr<IExecutionProvider> DefaultTensorrtExecutionProvider();
-std::unique_ptr<IExecutionProvider> DefaultNvTensorRTRTXExecutionProvider();
 std::unique_ptr<IExecutionProvider> TensorrtExecutionProviderWithOptions(const OrtTensorRTProviderOptions* params);
 std::unique_ptr<IExecutionProvider> TensorrtExecutionProviderWithOptions(const OrtTensorRTProviderOptionsV2* params);
 std::unique_ptr<IExecutionProvider> DefaultMIGraphXExecutionProvider();

@@ -461,7 +461,6 @@ def generate_build_tree(
     cudnn_home,
     nccl_home,
     tensorrt_home,
-    tensorrt_rtx_home,
     migraphx_home,
     acl_home,
     acl_libs,
@@ -565,13 +564,11 @@ def generate_build_tree(
         "-Donnxruntime_ENABLE_MICROSOFT_INTERNAL=" + ("ON" if args.enable_msinternal else "OFF"),
         "-Donnxruntime_USE_VITISAI=" + ("ON" if args.use_vitisai else "OFF"),
         "-Donnxruntime_USE_TENSORRT=" + ("ON" if args.use_tensorrt else "OFF"),
-        "-Donnxruntime_USE_NV=" + ("ON" if args.use_nv_tensorrt_rtx else "OFF"),
         "-Donnxruntime_USE_TENSORRT_BUILTIN_PARSER="
         + ("ON" if args.use_tensorrt_builtin_parser and not args.use_tensorrt_oss_parser else "OFF"),
         # interface variables are used only for building onnxruntime/onnxruntime_shared.dll but not EPs
         "-Donnxruntime_USE_TENSORRT_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
         "-Donnxruntime_USE_CUDA_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
-        "-Donnxruntime_USE_NV_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
         "-Donnxruntime_USE_OPENVINO_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
         "-Donnxruntime_USE_VITISAI_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
         "-Donnxruntime_USE_QNN_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
@@ -864,8 +861,6 @@ def generate_build_tree(
 
     if args.use_tensorrt:
         cmake_args.append("-Donnxruntime_TENSORRT_HOME=" + tensorrt_home)
-    if args.use_nv_tensorrt_rtx:
-        cmake_args.append("-Donnxruntime_TENSORRT_RTX_HOME=" + tensorrt_rtx_home)
 
     if args.use_cuda:
         nvcc_threads = number_of_nvcc_threads(args)
@@ -1894,8 +1889,6 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
         dll_path_list = []
         if args.use_tensorrt:
             dll_path_list.append(os.path.join(args.tensorrt_home, "lib"))
-        if args.use_nv_tensorrt_rtx:
-            dll_path_list.append(os.path.join(args.tensorrt_rtx_home, "lib"))
 
         dll_path = None
         if len(dll_path_list) > 0:
@@ -2251,10 +2244,6 @@ def build_python_wheel(
                 args.append(f"--qnn_version={qnn_version}")
         elif use_azure:
             args.append("--use_azure")
-        elif wheel_name_suffix == "trt-rtx":
-            cuda_version = cuda_version or parse_cuda_version_from_json(cuda_home)
-            if cuda_version:
-                args.append(f"--cuda_version={cuda_version}")
 
         run_subprocess(args, cwd=cwd)
 
@@ -2655,9 +2644,6 @@ def main():
 
     # if using tensorrt, setup tensorrt paths
     tensorrt_home = ""
-    tensorrt_rtx_home = ""
-    if args.use_nv_tensorrt_rtx:
-        tensorrt_rtx_home = args.tensorrt_rtx_home
     if args.use_tensorrt:
         tensorrt_home = setup_tensorrt_vars(args)
 
@@ -2794,7 +2780,6 @@ def main():
             cudnn_home,
             nccl_home,
             tensorrt_home,
-            tensorrt_rtx_home,
             migraphx_home,
             acl_home,
             acl_libs,
