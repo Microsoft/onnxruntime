@@ -1116,6 +1116,20 @@ Return Value:
 #endif
 }
 
+bool
+MLASCALL
+MlasPlatformAvx512Supported(
+    void
+    )
+{
+#if defined(MLAS_TARGET_AMD64) && !defined(ORT_MINIMAL_BUILD)
+    const auto& p = GetMlasPlatform();
+    return p.Avx512Supported_ && p.KVQuantGemmFp16Supported_;
+#else
+    return false;
+#endif
+}
+
 #ifdef MLAS_TARGET_AMD64_IX86
 
 bool

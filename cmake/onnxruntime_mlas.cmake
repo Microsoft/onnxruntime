@@ -5,6 +5,10 @@ set(MLAS_ROOT ${ONNXRUNTIME_ROOT}/core/mlas)
 set(MLAS_SRC_DIR ${MLAS_ROOT}/lib)
 set(MLAS_INC_DIR ${MLAS_ROOT}/inc)
 
+include(CMakeDependentOption)
+cmake_dependent_option(onnxruntime_ENABLE_MLAS_QMOE_OFFLOAD "Build QMoE CPU offload kernels in MLAS" ON
+  "NOT onnxruntime_DISABLE_CONTRIB_OPS;NOT onnxruntime_MINIMAL_BUILD;NOT onnxruntime_EXTENDED_MINIMAL_BUILD;NOT onnxruntime_ORT_MINIMAL_BUILD" OFF)
+
 
 # mlas_private_compile_definitions contains compile definitions that are private to onnxruntime_mlas and targets which
 # use internal MLAS headers like mlasi.h.
@@ -92,6 +96,69 @@ if (NOT onnxruntime_ORT_MINIMAL_BUILD)
     ${MLAS_SRC_DIR}/q4_dq.cpp
     ${MLAS_SRC_DIR}/q4gemm.cpp
   )
+endif()
+
+if (onnxruntime_ENABLE_MLAS_QMOE_OFFLOAD AND NOT onnxruntime_DISABLE_CONTRIB_OPS AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_EXTENDED_MINIMAL_BUILD AND NOT onnxruntime_ORT_MINIMAL_BUILD)
+  include(CheckCXXSourceCompiles)
+  set(MLAS_QMOE_AVX512_FLAGS "")
+  if (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND
+      NOT (onnxruntime_target_platform STREQUAL "ARM64") AND
+      NOT (onnxruntime_target_platform STREQUAL "ARM64EC"))
+    set(_OLD_CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_FLAGS "${_OLD_CMAKE_REQUIRED_FLAGS} /arch:AVX512")
+    check_cxx_source_compiles("
+      #include <immintrin.h>
+      int main() {
+        __m128i x = _mm_setzero_si128();
+        __m512i y = _mm512_cvtepu8_epi32(x);
+        __m512 z = _mm512_permutexvar_ps(y, _mm512_setzero_ps());
+        float f = _mm_cvtss_f32(_mm_cvtph_ps(x));
+        return static_cast<int>(_mm512_reduce_add_ps(z) + f);
+      }"
+      MLAS_COMPILER_SUPPORTS_QMOE_AVX512
+    )
+    set(CMAKE_REQUIRED_FLAGS "${_OLD_CMAKE_REQUIRED_FLAGS}")
+    unset(_OLD_CMAKE_REQUIRED_FLAGS)
+    if (MLAS_COMPILER_SUPPORTS_QMOE_AVX512)
+      set(MLAS_QMOE_AVX512_FLAGS "/arch:AVX512")
+    endif()
+  elseif (NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    set(_OLD_CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_FLAGS "${_OLD_CMAKE_REQUIRED_FLAGS} -mavx512f -mavx512bw -mavx512dq -mavx512vl -mfma -mf16c")
+    check_cxx_source_compiles("
+      #include <immintrin.h>
+      int main() {
+        __m128i x = _mm_setzero_si128();
+        __m512i y = _mm512_cvtepu8_epi32(x);
+        __m512 z = _mm512_permutexvar_ps(y, _mm512_setzero_ps());
+        float f = _mm_cvtss_f32(_mm_cvtph_ps(x));
+        return static_cast<int>(_mm512_reduce_add_ps(z) + f);
+      }"
+      MLAS_COMPILER_SUPPORTS_QMOE_AVX512
+    )
+    set(CMAKE_REQUIRED_FLAGS "${_OLD_CMAKE_REQUIRED_FLAGS}")
+    unset(_OLD_CMAKE_REQUIRED_FLAGS)
+    if (MLAS_COMPILER_SUPPORTS_QMOE_AVX512)
+      set(MLAS_QMOE_AVX512_FLAGS "-mavx512f -mavx512bw -mavx512dq -mavx512vl -mfma -mf16c")
+    endif()
+  endif()
+
+  set(_MLAS_QMOE_LAYOUT_SRC "${ONNXRUNTIME_ROOT}/contrib_ops/cpu/moe/qmoe_shared_layout.cc")
+  set(_MLAS_QMOE_AVX512_SRC "${ONNXRUNTIME_ROOT}/contrib_ops/cpu/moe/qmoe_shared_layout_avx512.cc")
+  target_sources(onnxruntime_mlas PRIVATE ${_MLAS_QMOE_LAYOUT_SRC})
+  if (MLAS_COMPILER_SUPPORTS_QMOE_AVX512)
+    message(STATUS "MLAS QMoE offload: compiler supports AVX-512 (${MLAS_QMOE_AVX512_FLAGS})")
+    target_sources(onnxruntime_mlas PRIVATE ${_MLAS_QMOE_AVX512_SRC})
+    set_source_files_properties(${_MLAS_QMOE_LAYOUT_SRC} PROPERTIES
+      COMPILE_DEFINITIONS "QMOE_SHARED_USE_MLAS=1;QMOE_SHARED_SEPARATE_AVX512_TU=1;QMOE_COMPILER_SUPPORTS_AVX512=1")
+    set_source_files_properties(${_MLAS_QMOE_AVX512_SRC} PROPERTIES
+      COMPILE_FLAGS "${MLAS_QMOE_AVX512_FLAGS}"
+      COMPILE_DEFINITIONS "QMOE_SHARED_USE_MLAS=1;QMOE_SHARED_SEPARATE_AVX512_TU=1;QMOE_COMPILER_SUPPORTS_AVX512=1")
+  else()
+    message(STATUS "MLAS QMoE offload: compiler does not support AVX-512; compiling scalar QMoE CPU kernels only")
+    set_source_files_properties(${_MLAS_QMOE_LAYOUT_SRC} PROPERTIES
+      COMPILE_DEFINITIONS "QMOE_SHARED_USE_MLAS=1;QMOE_SHARED_SEPARATE_AVX512_TU=1;QMOE_COMPILER_SUPPORTS_AVX512=0")
+  endif()
 endif()
 
 set(ONNXRUNTIME_MLAS_LIBS onnxruntime_mlas)

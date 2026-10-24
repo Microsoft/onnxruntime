@@ -90,6 +90,7 @@ class QMoECPU final : public OpKernel, public MoEBaseCPU {
   int64_t fc2_expert_weight_bits_;
   int64_t fc3_expert_weight_bits_;
   int64_t block_size_;
+  bool weights_prepacked_{false};
   bool use_mlas_q4_gemm_{false};
   bool use_mlas_q4_gemm_overridden_{false};
 

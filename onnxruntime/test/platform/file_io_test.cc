@@ -147,6 +147,18 @@ TEST(FileIoTest, MapFileIntoMemory) {
   }
 
   {
+    Env::MappedMemoryPtr writable_memory{};
+    ASSERT_STATUS_OK(Env::Default().MapFileIntoMemory(tmp.path.c_str(), 0, expected_data.size(), writable_memory));
+    writable_memory[0] = static_cast<char>(expected_data[0] ^ 1);
+    std::vector<char> file_data(expected_data.size());
+    ASSERT_STATUS_OK(Env::Default().ReadFileIntoBuffer(tmp.path.c_str(), 0, file_data.size(), file_data));
+    EXPECT_EQ(file_data, expected_data);
+    Env::MappedMemoryPtr second_mapping{};
+    ASSERT_STATUS_OK(Env::Default().MapFileIntoMemory(tmp.path.c_str(), 0, expected_data.size(), second_mapping));
+    EXPECT_EQ(second_mapping[0], expected_data[0]);
+  }
+
+  {
     Env::MappedMemoryPtr mapped_memory{};
 
     // invalid - negative offset

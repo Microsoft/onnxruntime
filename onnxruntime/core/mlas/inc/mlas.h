@@ -165,6 +165,16 @@ MlasGetPreferredBufferAlignment(
     void
     );
 
+/**
+ * @brief Return whether the current CPU and OS support AVX-512 core features
+ *        (AVX512F, AVX512BW, AVX512DQ, AVX512VL) and F16C.
+ */
+bool
+MLASCALL
+MlasPlatformAvx512Supported(
+    void
+    );
+
 #ifdef MLAS_TARGET_AMD64_IX86
 
 /**

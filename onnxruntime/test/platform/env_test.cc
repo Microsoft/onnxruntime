@@ -147,6 +147,20 @@ TEST_F(RandomAccessFileTest, MappingUsesOpenedFileAfterPathReplacement) {
 #endif
 }
 
+#if !defined(_WIN32) && !defined(__wasm__)
+TEST_F(RandomAccessFileTest, MappingIsWritableWithoutChangingTheFile) {
+  RandomAccessFile::MappedMemoryPtr mapped_memory;
+  ASSERT_STATUS_OK(file_->Map(0, contents_.size(), mapped_memory));
+  mapped_memory[0] = static_cast<char>(contents_[0] ^ 1);
+  std::array<char, 1> output{};
+  ASSERT_STATUS_OK(file_->Read(0, output));
+  EXPECT_EQ(output[0], contents_[0]);
+  RandomAccessFile::MappedMemoryPtr second_mapping;
+  ASSERT_STATUS_OK(file_->Map(0, contents_.size(), second_mapping));
+  EXPECT_EQ(second_mapping[0], contents_[0]);
+}
+#endif
+
 #ifndef __wasm__
 TEST_F(RandomAccessFileTest, ConcurrentReadsDoNotShareAFilePosition) {
   constexpr size_t kReaderCount = 4;
