@@ -865,32 +865,7 @@ TEST_F(ActivationOpNoInfTest, Softsign) {
   TestActivationOp<float>(
       "Softsign",
       input_values,
-      [](float x) {
-        auto result = x / (1 + std::abs(x));
-
-#if defined(__arm__)
-        // Softsign uses Eigen inverse(), which on ARM32 results in a different value when x is FLT_MAX or -FLT_MAX
-        // 3.40282347e+38 -> 0 with ARM32 inverse() vs something like 2.939e-39#DEN with other platforms.
-        //
-        // Possibly explained by https://en.wikipedia.org/wiki/ARM_architecture#Advanced_SIMD_(Neon)
-        // 'A quirk of Neon in Armv7 devices is that it flushes all subnormal numbers to zero'
-        //
-        // c.f.
-        // cmake\external\eigen\Eigen\src\Core\arch\SSE\PacketMath.h uses _mm_div_ps for 'pdiv<Packet4f>'
-        // cmake\external\eigen\Eigen\src\Core\arch\NEON\PacketMath.h uses a custom implementation for 'pdiv<Packet4f>'
-        //
-        // Special case the expected values to allow for that. If handling FLT_MAX more consistently is required
-        // we'd need to not use Eigen for Softsign on ARM32.
-        //
-        if (x == FLT_MAX) {
-          result = 0.;
-        } else if (x == -FLT_MAX) {
-          result = -0.;
-        }
-#endif
-
-        return result;
-      },
+      [](float x) { return x / (1 + std::abs(x)); },
       {}, {}, false);  // Disable TensorRT because result mismatches
 }
 

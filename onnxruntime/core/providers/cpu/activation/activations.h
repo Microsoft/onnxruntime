@@ -224,7 +224,14 @@ struct Softsign : public ElementWiseRangedTransform<T> {
     T* output_ptr = this->output + first;
     ConstEigenVectorArrayMap<T> xm(this->input + first, len);
     EigenVectorArrayMap<T> ym(output_ptr, len);
-    ym = (1 + xm.abs()).inverse() * xm;
+    // Do not rewrite this as (1 + xm.abs()).inverse() * xm. Eigen's packet version of inverse() is
+    // internal::preciprocal(), which is a reciprocal estimate instruction plus a Newton-Raphson step
+    // rather than a real division on both x86 (rcp_ps, when built with FMA available) and ARM32
+    // (NEON). Those instructions do not produce subnormal results, so for x = +/-FLT_MAX, where
+    // 1 / (1 + |x|) ~= 2.94e-39 is subnormal, the estimate is 0 and Newton-Raphson cannot recover
+    // from it. That yields +/-0 instead of +/-1. pdiv(), which this expression maps to, is a true
+    // IEEE division on x86 and rescales its operands to avoid the same underflow on NEON.
+    ym = xm / (1 + xm.abs());
   }
 };
 
