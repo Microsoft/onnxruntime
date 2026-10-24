@@ -332,7 +332,12 @@ Status FastGeluFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level, 
         continue;
     }
 
-    nodes_to_fuse.insert(nodes_to_fuse.end(), {tanh_node, add2_node, mul6_node, mul5_node});
+    nodes_to_fuse.insert(nodes_to_fuse.end(), {tanh_node, add2_node});
+    // Preserve X * 0.5 for consumers outside the fused subgraph.
+    if (mul6_node.GetOutputEdgesCount() == 1) {
+      nodes_to_fuse.push_back(mul6_node);
+    }
+    nodes_to_fuse.push_back(mul5_node);
 
     auto type_info = *node.MutableOutputDefs()[0]->TypeAsProto();
     // TODO: re-use node arg of mul5 so that it is allowed to be graph output (Need modify CheckNode as well).

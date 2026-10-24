@@ -10302,6 +10302,99 @@ TEST_F(GraphTransformationTests, FastGeluFusionTest) {
   ASSERT_TRUE(op_to_count["com.microsoft.FastGelu"] == 1);
 }
 
+TEST_F(GraphTransformationTests, FastGeluFusionPreservesSharedHalfX) {
+  for (const auto& [use_pow, use_cast] :
+       {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}}) {
+    for (int external_consumers : {0, 1, 2}) {
+      SCOPED_TRACE(MakeString("use_pow=", use_pow, ", use_cast=", use_cast,
+                              ", external_consumers=", external_consumers));
+      std::string half_x_name;
+      auto build_test_case = [&](ModelTestBuilder& builder) {
+        auto* input = builder.MakeInput<float>({1, 4}, {-2.0f, -0.5f, 0.5f, 2.0f});
+        auto* coefficient = builder.MakeInitializer<float>({}, {0.044715f});
+        auto* sqrt_two_over_pi = builder.MakeInitializer<float>({}, {0.7978845834732056f});
+        auto* one = builder.MakeInitializer<float>({}, {1.0f});
+        auto* half = builder.MakeInitializer<float>({}, {0.5f});
+        auto* two = builder.MakeInitializer<float>({}, {2.0f});
+        NodeArg* gelu_input = input;
+        if (use_cast) {
+          gelu_input = builder.MakeIntermediate();
+          builder.AddNode("Cast", {input}, {gelu_input}).AddAttribute("to", int64_t{TensorProto_DataType_FLOAT});
+        }
+
+        auto* tanh_input = builder.MakeIntermediate();
+        auto* coefficient_output = builder.MakeIntermediate();
+        auto* add_output = builder.MakeIntermediate();
+        if (use_pow) {
+          auto* three = builder.MakeInitializer<float>({}, {3.0f});
+          auto* pow_output = builder.MakeIntermediate();
+          builder.AddNode("Pow", {gelu_input, three}, {pow_output});
+          builder.AddNode("Mul", {pow_output, coefficient}, {coefficient_output});
+          builder.AddNode("Add", {gelu_input, coefficient_output}, {add_output});
+          builder.AddNode("Mul", {add_output, sqrt_two_over_pi}, {tanh_input});
+        } else {
+          auto* square_output = builder.MakeIntermediate();
+          auto* scale_output = builder.MakeIntermediate();
+          builder.AddNode("Mul", {gelu_input, coefficient}, {coefficient_output});
+          builder.AddNode("Mul", {gelu_input, coefficient_output}, {square_output});
+          builder.AddNode("Add", {square_output, one}, {add_output});
+          builder.AddNode("Mul", {gelu_input, sqrt_two_over_pi}, {scale_output});
+          builder.AddNode("Mul", {add_output, scale_output}, {tanh_input});
+        }
+
+        auto* tanh_output = builder.MakeIntermediate();
+        auto* factor = builder.MakeIntermediate();
+        builder.AddNode("Tanh", {tanh_input}, {tanh_output});
+        builder.AddNode("Add", {tanh_output, one}, {factor});
+
+        auto* half_x = builder.MakeIntermediate();
+        half_x_name = half_x->Name();
+        builder.AddNode("Mul", {input, half}, {half_x});
+        NodeArg* half_factor = half_x;
+        if (use_cast) {
+          half_factor = builder.MakeIntermediate();
+          builder.AddNode("Cast", {half_x}, {half_factor}).AddAttribute("to", int64_t{TensorProto_DataType_FLOAT});
+        }
+
+        auto* gelu_output = builder.MakeIntermediate();
+        builder.AddNode("Mul", {factor, half_factor}, {gelu_output});
+        builder.AddNode("Add", {gelu_output, external_consumers > 0 ? half_x : one}, {builder.MakeOutput()});
+        if (external_consumers != 1) {
+          builder.AddNode("Mul", {gelu_output, two}, {builder.MakeOutput()});
+        }
+        if (external_consumers > 1) {
+          builder.AddNode("Add", {half_x, one}, {builder.MakeOutput()});
+        }
+      };
+
+      auto check_transformed_graph = [&](InferenceSessionWrapper& session) {
+        const Graph& graph = session.GetGraph();
+        EXPECT_EQ(CountOpsInGraph(graph)["com.microsoft.FastGelu"], 1);
+        const Node* half_x_producer = graph.GetProducerNode(half_x_name);
+        if (external_consumers == 0) {
+          EXPECT_EQ(half_x_producer, nullptr);
+        } else {
+          ASSERT_NE(half_x_producer, nullptr);
+          EXPECT_EQ(half_x_producer->OpType(), "Mul");
+          EXPECT_EQ(half_x_producer->GetOutputEdgesCount(), static_cast<size_t>(external_consumers));
+        }
+      };
+
+      {
+        SCOPED_TRACE("isolated FastGeluFusion");
+        TransformerTester(build_test_case, check_transformed_graph,
+                          TransformerLevel::Default, TransformerLevel::Level2, 17, 1e-6, 1e-6,
+                          std::make_unique<FastGeluFusion>());
+      }
+      for (TransformerLevel level : {TransformerLevel::Level2, TransformerLevel::MaxLevel}) {
+        SCOPED_TRACE(MakeString("optimization level=", static_cast<int>(level)));
+        TransformerTester(build_test_case, check_transformed_graph,
+                          TransformerLevel::Default, level, 17, 1e-6, 1e-6);
+      }
+    }
+  }
+}
+
 TEST_F(GraphTransformationTests, FastGeluFusionSkipsMalformedScaleMul) {
   constexpr const ORTCHAR_T* model_uri = MODEL_FOLDER "fusion/fast_gelu.onnx";
   std::shared_ptr<Model> model;
