@@ -1391,6 +1391,7 @@
       "layer-norm.jsonc",
       "leaky-relu.jsonc",
       "reduce-min.jsonc",
+      "reduce-log-opset28.jsonc",
       "relu.jsonc",
       "gelu.jsonc",
       "pad_f16.jsonc",

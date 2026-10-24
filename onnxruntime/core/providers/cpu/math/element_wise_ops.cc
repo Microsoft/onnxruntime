@@ -106,6 +106,9 @@ void Exp<float>::operator()(std::ptrdiff_t first, std::ptrdiff_t last) const {
       KernelDefBuilder().TypeConstraint("T", DataTypeImpl::GetTensorType<TYPE>()),                    \
       KERNEL_CLASS<TYPE>);
 
+REG_ELEMENTWISE_TYPED_KERNEL(SwiGLU, 28, float, SwiGLU)
+REG_ELEMENTWISE_TYPED_KERNEL(SwiGLU, 28, double, SwiGLU)
+
 #define REG_ELEMENTWISE_LOGICALOP_VERSIONED_TYPED_KERNEL(OP_TYPE, VERSION_FROM, VERSION_TO, TYPE, KERNEL_CLASS) \
   ONNX_CPU_OPERATOR_VERSIONED_TYPED_KERNEL(                                                                     \
       OP_TYPE,                                                                                                  \
@@ -2054,6 +2057,45 @@ Status Expand_8<T>::Compute(OpKernelContext* context) const {
       }};
 
   UntypedExpand(*context, funcs);
+  return Status::OK();
+}
+
+template <typename T>
+Status SwiGLU<T>::Compute(OpKernelContext* context) const {
+  const auto* gate = context->Input<Tensor>(0);
+  const auto* value = context->Input<Tensor>(1);
+  ORT_RETURN_IF_NOT(gate->Shape() == value->Shape(), "SwiGLU inputs must have identical shapes.");
+
+  auto* output = context->Output(0, gate->Shape());
+  const auto* gate_data = gate->Data<T>();
+  const auto* value_data = value->Data<T>();
+  auto* output_data = output->MutableData<T>();
+  const auto alpha = static_cast<T>(alpha_);
+
+  const auto element_count = onnxruntime::narrow<std::ptrdiff_t>(gate->Shape().Size());
+  constexpr std::ptrdiff_t length_per_task = 4096;
+  const auto task_count = (element_count + length_per_task - 1) / length_per_task;
+  concurrency::ThreadPool::TryBatchParallelFor(
+      context->GetOperatorThreadPool(), task_count,
+      [&](std::ptrdiff_t task_idx) {
+        const auto start = task_idx * length_per_task;
+        const auto end = std::min(start + length_per_task, element_count);
+        const auto count = onnxruntime::narrow<size_t>(end - start);
+        if constexpr (std::is_same_v<T, float>) {
+          if (alpha_ == 1.0f) {
+            MlasComputeSilu(gate_data + start, output_data + start, count);
+            MlasEltwiseMul(output_data + start, value_data + start, output_data + start, count);
+            return;
+          }
+        }
+
+        for (auto i = start; i < end; ++i) {
+          const auto a = gate_data[i];
+          output_data[i] = a / (static_cast<T>(1) + std::exp(-alpha * a)) * value_data[i];
+        }
+      },
+      0);
+
   return Status::OK();
 }
 

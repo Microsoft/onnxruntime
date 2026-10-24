@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "gtest/gtest.h"
+#include <cmath>
 #include "test/providers/provider_test_utils.h"
 #include "test/util/include/default_providers.h"
 #include "test/util/include/current_test_name.h"
@@ -24,6 +25,30 @@
 
 namespace onnxruntime {
 namespace test {
+
+TEST(SwiGLUTest, Double) {
+  OpTester test("SwiGLU", 28);
+  test.SetAllowUnreleasedOnnxOpset();
+  test.AddAttribute<float>("alpha", 0.5f);
+  test.AddInput<double>("A", {2, 2}, {-2.0, -1.0, 0.0, 2.0});
+  test.AddInput<double>("B", {2, 2}, {0.5, 2.0, -3.0, 4.0});
+  test.AddOutput<double>("Y", {2, 2},
+                         {-1.0 / (1.0 + std::exp(1.0)),
+                          -2.0 / (1.0 + std::exp(0.5)),
+                          0.0, 8.0 / (1.0 + std::exp(-1.0))});
+  test.ConfigEp(DefaultCpuExecutionProvider()).RunWithConfig();
+}
+
+TEST(SwiGLUTest, EmptyTensor) {
+  for (const auto& dims : {std::vector<int64_t>{0}, std::vector<int64_t>{2, 0}}) {
+    OpTester test("SwiGLU", 28);
+    test.SetAllowUnreleasedOnnxOpset();
+    test.AddInput<float>("A", dims, std::vector<float>{});
+    test.AddInput<float>("B", dims, std::vector<float>{});
+    test.AddOutput<float>("Y", dims, std::vector<float>{});
+    test.ConfigEp(DefaultCpuExecutionProvider()).RunWithConfig();
+  }
+}
 
 std::vector<MLFloat16> MakeMLFloat16(const std::initializer_list<float>& input) {
   std::vector<MLFloat16> output;

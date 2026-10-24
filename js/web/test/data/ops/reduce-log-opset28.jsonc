@@ -1,0 +1,66 @@
+[
+  {
+    "name": "ReduceLogSum opset 27 with axes input",
+    "operator": "ReduceLogSum",
+    "opset": { "domain": "", "version": 27 },
+    "attributes": [{ "name": "keepdims", "data": 0, "type": "int" }],
+    "cases": [
+      {
+        "name": "float32",
+        "inputs": [
+          { "data": [1, 3, 2, 4], "dims": [2, 2], "type": "float32" },
+          { "data": [1], "dims": [1], "type": "int64" }
+        ],
+        "outputs": [{ "data": [1.38629436, 1.79175949], "dims": [2], "type": "float32" }]
+      }
+    ]
+  },
+  {
+    "name": "ReduceLogSumExp opset 27 with axes input",
+    "operator": "ReduceLogSumExp",
+    "opset": { "domain": "", "version": 27 },
+    "attributes": [{ "name": "keepdims", "data": 0, "type": "int" }],
+    "cases": [
+      {
+        "name": "float32",
+        "inputs": [
+          { "data": [1, 3, 2, 4], "dims": [2, 2], "type": "float32" },
+          { "data": [1], "dims": [1], "type": "int64" }
+        ],
+        "outputs": [{ "data": [3.12692801, 4.12692801], "dims": [2], "type": "float32" }]
+      }
+    ]
+  },
+  {
+    "name": "ReduceLogSum opset 28 with axes input",
+    "operator": "ReduceLogSum",
+    "opset": { "domain": "", "version": 28 },
+    "attributes": [{ "name": "keepdims", "data": 0, "type": "int" }],
+    "cases": [
+      {
+        "name": "float32",
+        "inputs": [
+          { "data": [1, 3, 2, 4], "dims": [2, 2], "type": "float32" },
+          { "data": [1], "dims": [1], "type": "int64" }
+        ],
+        "outputs": [{ "data": [1.38629436, 1.79175949], "dims": [2], "type": "float32" }]
+      }
+    ]
+  },
+  {
+    "name": "ReduceLogSumExp opset 28 with axes input",
+    "operator": "ReduceLogSumExp",
+    "opset": { "domain": "", "version": 28 },
+    "attributes": [{ "name": "keepdims", "data": 0, "type": "int" }],
+    "cases": [
+      {
+        "name": "float32",
+        "inputs": [
+          { "data": [1, 3, 2, 4], "dims": [2, 2], "type": "float32" },
+          { "data": [1], "dims": [1], "type": "int64" }
+        ],
+        "outputs": [{ "data": [3.12692801, 4.12692801], "dims": [2], "type": "float32" }]
+      }
+    ]
+  }
+]

@@ -13,6 +13,11 @@
 #include "core/providers/cpu/reduction/reduction_ops.h"
 #include "test/util/include/default_providers.h"
 
+#if defined(USE_DML)
+#include "core/framework/kernel_registry.h"
+#include "test/test_environment.h"
+#endif
+
 namespace onnxruntime {
 namespace test {
 
@@ -751,6 +756,129 @@ TEST(ReductionOpTest, ReduceLogSum) {
                          2.48490667f, 2.6390574f,
                          2.99573231f, 3.09104252f});
   test.Run();
+}
+
+TEST(ReductionOpTest, ReduceLogOps_Opset28_FloatAxesInput) {
+  const std::vector<std::pair<std::string, std::vector<float>>> cases{
+      {"ReduceLogSum", {1.38629436f, 1.79175949f}},
+      {"ReduceLogSumExp", {3.12692801f, 4.12692801f}},
+  };
+
+  for (const auto& [op, expected] : cases) {
+    OpTester test(op, 28);
+    test.SetAllowUnreleasedOnnxOpset();
+    test.AddInput<float>("data", {2, 2}, {1.0f, 3.0f, 2.0f, 4.0f});
+    test.AddInput<int64_t>("axes", {1}, {1});
+    test.AddAttribute<int64_t>("keepdims", 0);
+    test.AddOutput<float>("reduced", {2}, expected);
+    test.ConfigEp(DefaultCpuExecutionProvider()).RunWithConfig();
+  }
+}
+
+#if defined(USE_CUDA)
+TEST(ReductionOpTest, ReduceLogOps_Opset28_Cuda) {
+  for (int opset : {27, 28}) {
+    for (const auto& [op, expected] :
+         std::vector<std::pair<std::string, std::vector<float>>>{
+             {"ReduceLogSum", {1.38629436f, 1.79175949f}},
+             {"ReduceLogSumExp", {3.12692801f, 4.12692801f}}}) {
+      auto provider = DefaultCudaExecutionProvider();
+      if (!provider) {
+        GTEST_SKIP() << "CUDA execution provider is not available.";
+      }
+      OpTester test(op, opset);
+      test.SetAllowUnreleasedOnnxOpset();
+      test.AddInput<float>("data", {2, 2}, {1.0f, 3.0f, 2.0f, 4.0f});
+      test.AddInput<int64_t>("axes", {1}, {1});
+      test.AddAttribute<int64_t>("keepdims", 0);
+      test.AddOutput<float>("reduced", {2}, expected);
+      SessionOptions options;
+      ASSERT_STATUS_OK(options.config_options.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1"));
+      test.Config(options).ConfigEp(std::move(provider)).RunWithConfig();
+    }
+  }
+}
+#endif
+
+TEST(ReductionOpTest, ReduceLogOps_Opset28_Scalar) {
+  for (const auto& [op, expected] :
+       std::vector<std::pair<std::string, float>>{{"ReduceLogSum", std::log(2.0f)}, {"ReduceLogSumExp", 2.0f}}) {
+    OpTester test(op, 28);
+    test.SetAllowUnreleasedOnnxOpset();
+    test.AddInput<float>("data", {}, {2.0f});
+    test.AddOptionalInputEdge<int64_t>();
+    test.AddOutput<float>("reduced", {}, {expected});
+    test.ConfigEp(DefaultCpuExecutionProvider()).RunWithConfig();
+  }
+}
+
+#if defined(USE_DML)
+TEST(ReductionOpTest, ReduceLogOps_Opset28_Dml) {
+  for (int opset : {27, 28}) {
+    for (const auto& [op, expected] :
+         std::vector<std::pair<std::string, std::vector<float>>>{
+             {"ReduceLogSum", {1.38629436f, 1.79175949f}},
+             {"ReduceLogSumExp", {3.12692801f, 4.12692801f}}}) {
+      auto provider = DefaultDmlExecutionProvider();
+      if (!provider) {
+        GTEST_SKIP() << "DML execution provider is not available.";
+      }
+      const auto registry = provider->GetKernelRegistry();
+      ASSERT_NE(registry, nullptr);
+      const KernelCreateInfo* kernel_info = nullptr;
+      const KernelRegistry::TypeConstraintMap type_constraints{{"T", DataTypeImpl::GetTensorType<float>()}};
+      const int since_version = opset == 28 ? 28 : 18;
+      ASSERT_STATUS_OK(registry->TryFindKernel(kDmlExecutionProvider, op, kOnnxDomain, since_version, type_constraints,
+                                               DefaultLoggingManager().DefaultLogger(), &kernel_info));
+      ASSERT_NE(kernel_info, nullptr);
+      EXPECT_EQ(kernel_info->kernel_def->SinceVersion().first, since_version);
+      if (opset == 28) {
+        EXPECT_EQ(kernel_info->kernel_def->TypeConstraints().at("T"),
+                  (std::vector<MLDataType>{DataTypeImpl::GetTensorType<float>(),
+                                           DataTypeImpl::GetTensorType<MLFloat16>()}));
+      }
+      OpTester test(op, opset);
+      test.SetAllowUnreleasedOnnxOpset();
+      test.AddInput<float>("data", {2, 2}, {1.0f, 3.0f, 2.0f, 4.0f});
+      test.AddInput<int64_t>("axes", {1}, {1});
+      test.AddAttribute<int64_t>("keepdims", 0);
+      test.AddOutput<float>("reduced", {2}, expected);
+      SessionOptions options;
+      ASSERT_STATUS_OK(options.config_options.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1"));
+      test.Config(options).ConfigEp(std::move(provider)).RunWithConfig();
+    }
+  }
+}
+#endif
+
+TEST(ReductionOpTest, ReduceLogOps_Opset28_RejectIntegerData) {
+  for (const char* op : {"ReduceLogSum", "ReduceLogSumExp"}) {
+    OpTester test(op, 28);
+    test.SetAllowUnreleasedOnnxOpset();
+    test.AddInput<int32_t>("data", {2, 2}, {1, 3, 2, 4});
+    test.AddInput<int64_t>("axes", {1}, {1});
+    test.AddAttribute<int64_t>("keepdims", 0);
+    test.AddOutput<int32_t>("reduced", {2}, {0, 0});
+    test.Config(OpTester::ExpectResult::kExpectFailure, "Type Error")
+        .ConfigEp(DefaultCpuExecutionProvider())
+        .RunWithConfig();
+  }
+}
+
+TEST(ReductionOpTest, ReduceLogOps_Opset27_AcceptsIntegerData) {
+  const std::vector<std::pair<std::string, std::vector<int32_t>>> cases{
+      {"ReduceLogSum", {1, 1}},
+      {"ReduceLogSumExp", {3, 4}},
+  };
+
+  for (const auto& [op, expected] : cases) {
+    OpTester test(op, 27);
+    test.AddInput<int32_t>("data", {2, 2}, {1, 3, 2, 4});
+    test.AddInput<int64_t>("axes", {1}, {1});
+    test.AddAttribute<int64_t>("keepdims", 0);
+    test.AddOutput<int32_t>("reduced", {2}, expected);
+    test.ConfigEp(DefaultCpuExecutionProvider()).RunWithConfig();
+  }
 }
 
 TEST(ReductionOpTest, ReduceLogSum_double) {

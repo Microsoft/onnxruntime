@@ -40,6 +40,15 @@ namespace webgpu {
       (*KernelDefBuilder::Create()).TypeConstraint("T", WebGpuSupportedNumberTypes()).InputMemoryType(OrtMemTypeCPUInput, 1), \
       ReduceOp);
 
+#define REGISTER_REDUCE_FLOAT_KERNEL(ReduceOp, version)                                                                      \
+  ONNX_OPERATOR_KERNEL_EX(                                                                                                   \
+      ReduceOp,                                                                                                              \
+      kOnnxDomain,                                                                                                           \
+      version,                                                                                                               \
+      kWebGpuExecutionProvider,                                                                                              \
+      (*KernelDefBuilder::Create()).TypeConstraint("T", WebGpuSupportedFloatTypes()).InputMemoryType(OrtMemTypeCPUInput, 1), \
+      ReduceOp);
+
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceMean, 1, 10);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceMean, 11, 12);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceMean, 13, 17);
@@ -114,7 +123,8 @@ REGISTER_REDUCE_KERNEL(ReduceL2, 18);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSum, 1, 10);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSum, 11, 12);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSum, 13, 17);
-REGISTER_REDUCE_KERNEL(ReduceLogSum, 18);
+REGISTER_REDUCE_VERSIONED_KERNEL_WITH_AXIS_IN_INPUT(ReduceLogSum, 18, 27);
+REGISTER_REDUCE_FLOAT_KERNEL(ReduceLogSum, 28);
 
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceSumSquare, 1, 10);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceSumSquare, 11, 12);
@@ -124,7 +134,8 @@ REGISTER_REDUCE_KERNEL(ReduceSumSquare, 18);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSumExp, 1, 10);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSumExp, 11, 12);
 REGISTER_REDUCE_VERSIONED_KERNEL(ReduceLogSumExp, 13, 17);
-REGISTER_REDUCE_KERNEL(ReduceLogSumExp, 18);
+REGISTER_REDUCE_VERSIONED_KERNEL_WITH_AXIS_IN_INPUT(ReduceLogSumExp, 18, 27);
+REGISTER_REDUCE_FLOAT_KERNEL(ReduceLogSumExp, 28);
 
 REGISTER_REDUCE_VERSIONED_KERNEL(ArgMax, 1, 10);
 REGISTER_REDUCE_VERSIONED_KERNEL(ArgMax, 11, 12);

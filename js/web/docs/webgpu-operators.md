@@ -85,8 +85,8 @@ Do not modify directly.*
 | Reciprocal | ai.onnx(6-12,13+) |  |
 | ReduceL1 | ai.onnx(1-10,11-12,13-17,18+) |  |
 | ReduceL2 | ai.onnx(1-10,11-12,13-17,18+) |  |
-| ReduceLogSum | ai.onnx(1-10,11-12,13-17,18+) |  |
-| ReduceLogSumExp | ai.onnx(1-10,11-12,13-17,18+) |  |
+| ReduceLogSum | ai.onnx(1-10,11-12,13-17,18-27,28+) |  |
+| ReduceLogSumExp | ai.onnx(1-10,11-12,13-17,18-27,28+) |  |
 | ReduceMax | ai.onnx(1-10,11,12,13-17,18-19,20+) |  |
 | ReduceMean | ai.onnx(1-10,11-12,13-17,18+) |  |
 | ReduceMin | ai.onnx(1-10,11,12,13-17,18-19,20+) |  |

@@ -169,10 +169,8 @@
         // TODO: Remove this test when ReduceMax(28) supports an empty bool input.
         "^test_reduce_max_empty_set_bool_cpu$",
         "^test_reduce_max_empty_set_bool_cuda$",
-        // TODO(#32381): Remove the exact Swish(24) function-dependency failures when SwiGLU is supported.
-        "^test_swiglu_alpha_cpu$",
+        // TODO(#32381): Remove these skips when Swish(24) and float16 SwiGLU have CPU kernels.
         "^test_swiglu_alpha_expanded_cpu$",
-        "^test_swiglu_cpu$",
         "^test_swiglu_expanded_cpu$",
         "^test_swiglu_float16_cpu$",
         "^test_swiglu_float16_expanded_cpu$",

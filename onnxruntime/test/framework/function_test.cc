@@ -102,7 +102,7 @@ static void Check(const char* source,
   }
 }
 
-static Status LoadModel(const char* source) {
+static Status LoadModel(const char* source, bool allow_released_opsets_only = true) {
   ONNX_NAMESPACE::OnnxParser parser(source);
   ONNX_NAMESPACE::ModelProto model;
   auto parse_status = parser.Parse(model);
@@ -127,7 +127,7 @@ static Status LoadModel(const char* source) {
   SessionOptions session_options;
   InferenceSession session_object{session_options, GetEnvironment()};
   std::istringstream sstr(serialized_model);
-  return session_object.Load(sstr);
+  return session_object.Load(sstr, allow_released_opsets_only);
 }
 
 static ONNX_NAMESPACE::ModelProto CreateFunctionExpansionModel(size_t body_node_count, size_t call_count) {
@@ -732,6 +732,108 @@ const char* basic_code = R"(
 
 TEST(FunctionTest, Basic) {
   Check(basic_code, "x", {1.0, 2.0, 3.0}, "y", {2.0, 4.0, 6.0});
+}
+
+TEST(FunctionTest, SwiGLUOpset28FunctionAndNumerics) {
+  constexpr const char* code = R"(
+        <
+        ir_version: 13,
+        opset_import: [ "" : 28 ]
+        >
+        agraph (float[2, 2] A, float[2, 2] B) => (float[2, 2] Y, float[2, 2] YDefault)
+        {
+            Y = SwiGLU <alpha = 0.5> (A, B)
+            YDefault = SwiGLU (A, B)
+        }
+        )";
+
+  std::string serialized_model;
+  ParseOnnxSource(code, serialized_model);
+
+  SessionOptions session_options;
+  InferenceSessionWrapper expansion_session{session_options, GetEnvironment()};
+  std::stringstream expansion_model_stream(serialized_model);
+  // Opset 28 is under development in ONNX 1.23, so allow it for focused function coverage.
+  ASSERT_STATUS_OK(expansion_session.Load(expansion_model_stream, false));
+
+  auto& expansion_graph = expansion_session.GetMutableGraph();
+  const auto loaded_ops = CountOpsInGraph(expansion_graph);
+  ASSERT_EQ(loaded_ops.at("SwiGLU"), 2);
+  while (true) {
+    Node* swiglu_node = nullptr;
+    for (auto& node : expansion_graph.Nodes()) {
+      if (node.OpType() == "SwiGLU") {
+        swiglu_node = &node;
+        break;
+      }
+    }
+
+    if (swiglu_node == nullptr) {
+      break;
+    }
+
+    const auto* op_schema = swiglu_node->Op();
+    ASSERT_NE(op_schema, nullptr);
+    EXPECT_TRUE(op_schema->HasFunction());
+    ASSERT_STATUS_OK(expansion_graph.InlineFunction(*swiglu_node));
+  }
+  ASSERT_STATUS_OK(expansion_graph.Resolve());
+  const auto expanded_ops = CountOpsInGraph(expansion_graph);
+  EXPECT_EQ(expanded_ops.count("SwiGLU"), 0);
+  EXPECT_EQ(expanded_ops.at("Swish"), 2);
+  EXPECT_EQ(expanded_ops.at("Mul"), 2);
+
+  InferenceSessionWrapper execution_session{session_options, GetEnvironment()};
+  std::stringstream execution_model_stream(serialized_model);
+  ASSERT_STATUS_OK(execution_session.Load(execution_model_stream, false));
+  ASSERT_STATUS_OK(execution_session.Initialize());
+  EXPECT_EQ(CountOpsInGraph(execution_session.GetGraph()).at("SwiGLU"), 2);
+
+  auto provider = std::make_unique<CPUExecutionProvider>(CPUExecutionProviderInfo());
+  const auto allocator = provider->CreatePreferredAllocators()[0];
+  OrtValue a;
+  OrtValue b;
+  CreateMLValue<float>(allocator, {2, 2}, {-2.0f, -1.0f, 0.0f, 2.0f}, &a);
+  CreateMLValue<float>(allocator, {2, 2}, {0.5f, 2.0f, -3.0f, 4.0f}, &b);
+
+  const std::string input_names[] = {"A", "B"};
+  const std::string output_names[] = {"Y", "YDefault"};
+  std::vector<OrtValue> fetches;
+  ASSERT_STATUS_OK(execution_session.Run(RunOptions{}, AsSpan(input_names), AsSpan({a, b}),
+                                         AsSpan(output_names), &fetches));
+
+  ASSERT_EQ(fetches.size(), 2);
+  const std::vector<std::vector<float>> expected{
+      {-0.26894143f, -0.75508136f, 0.0f, 5.8484688f},
+      {-0.11920292f, -0.53788286f, 0.0f, 7.0463767f},
+  };
+  for (size_t output_index = 0; output_index < fetches.size(); ++output_index) {
+    const auto& output = fetches[output_index].Get<Tensor>();
+    EXPECT_THAT(output.Shape().GetDims(), testing::ElementsAre(2, 2));
+    const auto output_data = output.DataAsSpan<float>();
+    ASSERT_EQ(output_data.size(), expected[output_index].size());
+    for (size_t i = 0; i < expected[output_index].size(); ++i) {
+      EXPECT_NEAR(output_data[i], expected[output_index][i], 1e-6f);
+    }
+  }
+}
+
+TEST(FunctionTest, SwiGLUOpset28RejectsMismatchedShapes) {
+  constexpr const char* code = R"(
+        <
+        ir_version: 13,
+        opset_import: [ "" : 28 ]
+        >
+        agraph (float[2, 2] A, float[2, 3] B) => (float[2, 2] Y)
+        {
+            Y = SwiGLU (A, B)
+        }
+        )";
+
+  // Opset 28 is under development in ONNX 1.23, so allow shape inference to validate the model.
+  const auto status = LoadModel(code, false);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_THAT(status.ErrorMessage(), testing::HasSubstr("Can't merge shape info"));
 }
 
 // Check that variables are renamed to avoid conflicts when multiple

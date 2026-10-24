@@ -1017,6 +1017,19 @@ void UntypedBroadcastTwo(OpKernelContext& context, const ProcessBroadcastSpanFun
 void UntypedBroadcastTwo(OpKernelContext& context, const ProcessBroadcastSpanFuncs& funcs, double unit_cost,
                          void* user_data = nullptr);
 
+template <typename T>
+class SwiGLU final : public OpKernel {
+ public:
+  explicit SwiGLU(const OpKernelInfo& info) : OpKernel(info) {
+    info.GetAttrOrDefault<float>("alpha", &alpha_, 1.0f);
+  }
+
+  Status Compute(OpKernelContext* context) const override;
+
+ private:
+  float alpha_;
+};
+
 // Helper to provide the looping logic with optimization for parallelizing within a single span if the
 // TBroadcastHelper instance was setup to enable that.
 template <typename TBroadcastHelper>
