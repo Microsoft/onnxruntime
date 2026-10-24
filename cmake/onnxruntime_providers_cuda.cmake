@@ -405,7 +405,7 @@
 
     include(cutlass)
     target_include_directories(${target} PRIVATE ${cutlass_SOURCE_DIR}/include ${cutlass_SOURCE_DIR}/examples ${cutlass_SOURCE_DIR}/tools/util/include)
-    if(ORT_HAS_SM90_OR_LATER AND NOT WIN32 AND NOT onnxruntime_CUDA_MINIMAL AND NOT onnxruntime_DISABLE_CONTRIB_OPS)
+    if(ORT_HAS_SM90 AND NOT WIN32 AND NOT onnxruntime_CUDA_MINIMAL AND NOT onnxruntime_DISABLE_CONTRIB_OPS)
       include(deep_gemm)
       target_include_directories(${target} PRIVATE ${deep_gemm_SOURCE_DIR}/deep_gemm/include)
       target_compile_definitions(${target} PRIVATE USE_DEEP_GEMM)
@@ -422,7 +422,7 @@
     if(ORT_HAS_SM90_OR_LATER)
       target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-w>)
       target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-DCUTLASS_ENABLE_GDC_FOR_SM90=1>)
-      if(NOT MSVC)
+      if(NOT MSVC AND ORT_HAS_SM90)
         # The native SM90 (Hopper) TMA/WGMMA launchers pass CUTLASS TMA descriptor types through
         # NVCC-generated host stubs. With CUDA 13 + MSVC those stubs contain 128-byte over-aligned
         # by-value formal parameters, which triggers MSVC C2719 ("formal parameter with requested
@@ -439,8 +439,7 @@
       endif()
     endif()
 
-    if(("120" IN_LIST CMAKE_CUDA_ARCHITECTURES_ORIG OR "121" IN_LIST CMAKE_CUDA_ARCHITECTURES_ORIG) AND
-       (NOT MSVC OR onnxruntime_USE_FP4_QMOE))
+    if(ORT_HAS_SM12X AND (NOT MSVC OR onnxruntime_USE_FP4_QMOE))
       target_compile_definitions(${target} PRIVATE COMPILE_BLACKWELL_SM120_TMA_GROUPED_GEMMS)
     endif()
 
@@ -567,7 +566,10 @@
       if(onnxruntime_cuda_sm90_tma_srcs OR onnxruntime_cuda_llm_sm90_srcs)
         set(_ort_sm90_all_srcs ${onnxruntime_cuda_sm90_tma_srcs} ${onnxruntime_cuda_llm_sm90_srcs})
         onnxruntime_filter_cuda_archs(_ort_sm90_check MIN_SM 90)
-        if(_ort_sm90_check)
+        # Nothing references these sources unless SM90 is targeted: COMPILE_HOPPER_TMA_* and
+        # USE_DEEP_GEMM are only defined then, and the fpA_intB SM90 launchers are compiled out
+        # by EXCLUDE_SM_90 otherwise.
+        if(_ort_sm90_check AND ORT_HAS_SM90)
           onnxruntime_add_cuda_object_library(
             NAME onnxruntime_providers_cuda_sm90_tma
             PARENT onnxruntime_providers_cuda
