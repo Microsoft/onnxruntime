@@ -119,7 +119,9 @@ def build_model(k, n, block_size, bits, onnx_dtype, with_zero_point=True):
         inits,
     )
     model = helper.make_model(
-        graph, opset_imports=[helper.make_opsetid("com.microsoft", 1), helper.make_opsetid("", 17)]
+        graph,
+        opset_imports=[helper.make_opsetid("com.microsoft", 1), helper.make_opsetid("", 17)],
+        ir_version=8,  # Match opset 17 instead of inheriting the installed ONNX package's newest IR.
     )
     return model.SerializeToString()
 
