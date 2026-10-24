@@ -9,6 +9,8 @@
 #include "core/providers/cuda/cuda_execution_provider.h"
 #include "core/providers/cuda/cudnn_loader.h"
 #include "core/providers/cuda/cuda_fwd.h"
+#include "core/providers/cuda/bounded_pinned_pool.h"
+#include "core/providers/cuda/qmoe_session_controller.h"
 #include <mutex>
 #include "core/providers/cuda/cuda_stream_handle.h"
 
@@ -118,6 +120,22 @@ class CudaKernel : public OpKernel {
     provider_->RetainBufferForGraphCapture(
         std::shared_ptr<void>(buffer.release(),
                               [deleter](void* p) { deleter(static_cast<T*>(p)); }));
+  }
+
+  inline std::shared_ptr<onnxruntime::cuda::QMoESessionController> GetQMoESessionController() const {
+    return provider_ ? provider_->GetQMoESessionController() : nullptr;
+  }
+
+  inline IAllocatorUniquePtr<uint8_t> AllocateReusableQMoEPinnedBuffer(
+      size_t bytes, size_t limit, std::shared_ptr<bool> completed) const {
+    auto controller = GetQMoESessionController();
+    ORT_ENFORCE(controller != nullptr, "QMoE pinned pool requires a valid QMoESessionController.");
+    auto pool = controller->GetOrCreatePinnedPool(limit);
+    ORT_ENFORCE(pool != nullptr && pool->Limit() == limit, "QMoE pinned-pool limits conflict within one provider.");
+    auto* pointer = static_cast<uint8_t*>(pool->Acquire(bytes));
+    return IAllocatorUniquePtr<uint8_t>(pointer, [pool, completed = std::move(completed)](uint8_t* buffer) {
+      pool->Release(buffer, *completed);
+    });
   }
 
   const cudaDeviceProp& GetDeviceProp() const { return provider_->GetDeviceProp(); }

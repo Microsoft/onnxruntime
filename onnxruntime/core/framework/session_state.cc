@@ -25,6 +25,7 @@
 #include "core/framework/utils.h"
 #include "core/framework/max_shape_override.h"
 #include "core/framework/max_shape_inference.h"
+#include "core/framework/moe_offload_plan.h"
 #include "core/framework/node_shape_resolver.h"
 #include "core/providers/cpu/controlflow/utils.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
@@ -1702,6 +1703,276 @@ Status SessionState::FinalizeSessionState(const std::basic_string<PATH_CHAR_TYPE
   return status;
 }
 
+namespace {
+
+bool IsMoeOffloadExpertInputIndex(std::string_view op_type, size_t input_idx) noexcept {
+  if (op_type == "MoE") {
+    return input_idx >= 2 && input_idx <= 7;
+  }
+  if (op_type == "QMoE") {
+    return (input_idx >= 2 && input_idx <= 13) || input_idx == 15 || input_idx == 16;
+  }
+  return false;
+}
+
+bool ValidateNodeForMoeOffload(const Node& node,
+                               const InitializedTensorSet& initialized_tensors,
+                               const InlinedHashSet<std::string_view>& graph_output_names,
+                               std::string& out_reason) {
+  if (node.OpType() != "QMoE") {
+    out_reason = "operator '" + node.OpType() + "' does not support the QMoE offload backend";
+    return false;
+  }
+  const auto& attrs = node.GetAttributes();
+  auto get_str_attr = [&](const char* key, std::string_view def_val = {}) -> std::string {
+    auto it = attrs.find(key);
+    if (it != attrs.end() && it->second.has_s()) return it->second.s();
+    return std::string(def_val);
+  };
+  auto get_int_attr = [&](const char* key, int64_t def_val) -> int64_t {
+    auto it = attrs.find(key);
+    if (it != attrs.end() && it->second.has_i()) return it->second.i();
+    return def_val;
+  };
+
+  const std::string quant_type = moe_offload::MoeOffloadSessionPolicy::ToLowerAscii(get_str_attr("quant_type", "int"));
+  if (quant_type != "nvfp4" && quant_type != "fp4" && quant_type != "mxfp4") {
+    out_reason = "unsupported quant_type='" + quant_type + "' (expected 'nvfp4' or 'fp4')";
+    return false;
+  }
+  const int64_t weight_bits = get_int_attr("expert_weight_bits", 8);
+  if (weight_bits != 4) {
+    out_reason = "unsupported expert_weight_bits=" + std::to_string(weight_bits) + " (expected 4)";
+    return false;
+  }
+  const int64_t prepacked = get_int_attr("weights_prepacked", 0);
+  if (prepacked != 1) {
+    out_reason = "requires weights_prepacked=1 (offline K-packed row-major FP4)";
+    return false;
+  }
+  const int64_t expected_blk = (quant_type == "nvfp4") ? 16 : 32;
+  const int64_t blk = get_int_attr("block_size", -1);
+  if (blk != -1 && blk != expected_blk) {
+    out_reason = "invalid block_size=" + std::to_string(blk) + " for quant_type='" + quant_type + "'";
+    return false;
+  }
+  const std::string act_type = moe_offload::MoeOffloadSessionPolicy::ToLowerAscii(get_str_attr("activation_type", ""));
+  if (act_type != "swiglu") {
+    out_reason = "unsupported activation_type='" + act_type + "' (expected 'swiglu')";
+    return false;
+  }
+  const int64_t swiglu_fusion = get_int_attr("swiglu_fusion", 0);
+  if (swiglu_fusion != 0 && swiglu_fusion != 1) {
+    out_reason = "unsupported swiglu_fusion=" + std::to_string(swiglu_fusion) + " (expected interleaved SwiGLU)";
+    return false;
+  }
+  const int64_t sparse_mixer = get_int_attr("use_sparse_mixer", 0);
+  if (sparse_mixer != 0) {
+    out_reason = "use_sparse_mixer=1 is not supported by the QMoE offload backend";
+    return false;
+  }
+  const int64_t top_k = get_int_attr("k", 0);
+  if (top_k <= 0) {
+    out_reason = "attribute k must be positive";
+    return false;
+  }
+
+  const auto& input_defs = node.InputDefs();
+  auto input_exists = [&](size_t idx) -> bool {
+    return idx < input_defs.size() && input_defs[idx] != nullptr && input_defs[idx]->Exists() &&
+           !input_defs[idx]->Name().empty();
+  };
+  for (size_t bad_slot : {size_t{8}, size_t{9}, size_t{10}, size_t{11}, size_t{12}, size_t{13},
+                          size_t{14}, size_t{17}, size_t{18}, size_t{19}, size_t{20}}) {
+    if (input_exists(bad_slot)) {
+      out_reason = "unsupported optional input slot " + std::to_string(bad_slot) + " is present";
+      return false;
+    }
+  }
+  for (size_t req_slot : {size_t{2}, size_t{3}, size_t{5}, size_t{6}}) {
+    if (!input_exists(req_slot)) {
+      out_reason = "missing required expert weight/scale input at slot " + std::to_string(req_slot);
+      return false;
+    }
+    const std::string& name = input_defs[req_slot]->Name();
+    auto it = initialized_tensors.find(name);
+    if (it == initialized_tensors.end() || it->second == nullptr) {
+      out_reason = "expert input slot " + std::to_string(req_slot) + " ('" + name + "') must be a constant initializer";
+      return false;
+    }
+    if (it->second->dims_size() != 3) {
+      out_reason = "expert input slot " + std::to_string(req_slot) + " ('" + name + "') must be 3D";
+      return false;
+    }
+    if (graph_output_names.find(name) != graph_output_names.end()) {
+      out_reason = "expert initializer '" + name + "' is also a graph output";
+      return false;
+    }
+  }
+  if (quant_type == "nvfp4") {
+    for (size_t g_slot : {size_t{15}, size_t{16}}) {
+      if (!input_exists(g_slot)) {
+        out_reason = "NVFP4 requires constant global scale at slot " + std::to_string(g_slot);
+        return false;
+      }
+      const std::string& name = input_defs[g_slot]->Name();
+      if (initialized_tensors.find(name) == initialized_tensors.end()) {
+        out_reason = "NVFP4 global scale slot " + std::to_string(g_slot) + " ('" + name + "') must be a constant initializer";
+        return false;
+      }
+      if (graph_output_names.find(name) != graph_output_names.end()) {
+        out_reason = "expert initializer '" + name + "' is also a graph output";
+        return false;
+      }
+    }
+  }
+  for (size_t opt_slot : {size_t{4}, size_t{7}, size_t{15}, size_t{16}}) {
+    if (input_exists(opt_slot)) {
+      const std::string& name = input_defs[opt_slot]->Name();
+      if (initialized_tensors.find(name) == initialized_tensors.end()) {
+        out_reason = "optional expert slot " + std::to_string(opt_slot) + " ('" + name + "') must be a constant initializer";
+        return false;
+      }
+      if (graph_output_names.find(name) != graph_output_names.end()) {
+        out_reason = "expert initializer '" + name + "' is also a graph output";
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+Status PlaceMoeOffloadInitializersOnCpu(const GraphViewer& graph_viewer,
+                                        const moe_offload::MoeOffloadSessionPolicy& policy,
+                                        const OrtValueNameIdxMap& ort_value_name_idx_map,
+                                        const OrtMemoryInfo& cpu_mem_info,
+                                        SequentialExecutionPlan& exec_plan,
+                                        const logging::Logger& logger) {
+  const auto& initialized_tensors = graph_viewer.GetAllInitializedTensors();
+  InlinedHashSet<std::string_view> graph_output_names;
+  for (const auto* out_arg : graph_viewer.GetOutputs()) {
+    if (out_arg != nullptr && out_arg->Exists() && !out_arg->Name().empty()) {
+      graph_output_names.insert(out_arg->Name());
+    }
+  }
+
+  InlinedHashSet<const Node*> eligible_moe_nodes;
+  InlinedHashSet<std::string_view> non_offload_consumed_initializers;
+
+  for (const auto& node : graph_viewer.Nodes()) {
+    if (policy.mode == moe_offload::OffloadMode::kRequired && node.ContainsSubgraph()) {
+      for (const auto& [attr_name, subgraph_ptr] : node.GetAttributeNameToSubgraphMap()) {
+        ORT_UNUSED_PARAMETER(attr_name);
+        if (subgraph_ptr == nullptr) continue;
+        for (const auto& sub_node : subgraph_ptr->Nodes()) {
+          if (sub_node.Domain() == kMSDomain && (sub_node.OpType() == "QMoE" || sub_node.OpType() == "MoE")) {
+            return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                                   "MoE offload mode='required' does not support MoE/QMoE nodes inside subgraph node '",
+                                   node.Name(), "'.");
+          }
+        }
+      }
+    }
+
+    const bool is_cuda_moe_node = (node.Domain() == kMSDomain) &&
+                                  (node.OpType() == "QMoE" || node.OpType() == "MoE") &&
+                                  (node.GetExecutionProviderType() == kCudaExecutionProvider);
+    bool node_eligible = false;
+    if (is_cuda_moe_node) {
+      std::string reason;
+      node_eligible = ValidateNodeForMoeOffload(node, initialized_tensors, graph_output_names, reason);
+      if (!node_eligible && policy.mode == moe_offload::OffloadMode::kRequired) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                               "MoE offload mode='required' rejected node '", node.Name(),
+                               "' (", node.OpType(), "): ", reason, ".");
+      }
+      if (node_eligible) {
+        eligible_moe_nodes.insert(&node);
+      }
+    }
+
+    const auto& input_defs = node.InputDefs();
+    for (size_t i = 0; i < input_defs.size(); ++i) {
+      const NodeArg* arg = input_defs[i];
+      if (arg == nullptr || !arg->Exists() || arg->Name().empty()) {
+        continue;
+      }
+      if (initialized_tensors.find(arg->Name()) == initialized_tensors.end()) {
+        continue;
+      }
+      const bool is_eligible_expert_slot = node_eligible && IsMoeOffloadExpertInputIndex(node.OpType(), i);
+      if (!is_eligible_expert_slot) {
+        non_offload_consumed_initializers.insert(arg->Name());
+      }
+    }
+  }
+
+  // A node that shares an expert initializer with a non-offload consumer cannot relocate it. Rejecting the node makes
+  // all of its other expert initializers non-offload consumed too, which can in turn reject other nodes that share
+  // them, so iterate until no more nodes are rejected.
+  for (;;) {
+    InlinedVector<const Node*> rejected_nodes;
+    for (const Node* node : eligible_moe_nodes) {
+      const auto& input_defs = node->InputDefs();
+      for (size_t i = 0; i < input_defs.size(); ++i) {
+        if (!IsMoeOffloadExpertInputIndex(node->OpType(), i)) continue;
+        const NodeArg* arg = input_defs[i];
+        if (arg == nullptr || !arg->Exists() || arg->Name().empty()) continue;
+        if (non_offload_consumed_initializers.find(arg->Name()) == non_offload_consumed_initializers.end()) continue;
+        if (policy.mode == moe_offload::OffloadMode::kRequired) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                                 "MoE offload mode='required' rejected node '", node->Name(),
+                                 "': expert initializer '", arg->Name(),
+                                 "' is shared with a non-offload consumer.");
+        }
+        rejected_nodes.push_back(node);
+        break;
+      }
+    }
+    if (rejected_nodes.empty()) break;
+    for (const Node* node : rejected_nodes) {
+      eligible_moe_nodes.erase(node);
+      const auto& input_defs = node->InputDefs();
+      for (size_t i = 0; i < input_defs.size(); ++i) {
+        const NodeArg* arg = input_defs[i];
+        if (arg == nullptr || !arg->Exists() || arg->Name().empty()) continue;
+        if (initialized_tensors.find(arg->Name()) != initialized_tensors.end()) {
+          non_offload_consumed_initializers.insert(arg->Name());
+        }
+      }
+    }
+  }
+
+  InlinedHashSet<std::string_view> initializers_to_place_on_cpu;
+  for (const Node* node : eligible_moe_nodes) {
+    const auto& input_defs = node->InputDefs();
+    for (size_t i = 0; i < input_defs.size(); ++i) {
+      if (!IsMoeOffloadExpertInputIndex(node->OpType(), i)) continue;
+      const NodeArg* arg = input_defs[i];
+      if (arg == nullptr || !arg->Exists() || arg->Name().empty()) continue;
+      if (initialized_tensors.find(arg->Name()) != initialized_tensors.end()) {
+        initializers_to_place_on_cpu.insert(arg->Name());
+      }
+    }
+  }
+
+  size_t placed_on_cpu_count = 0;
+  for (std::string_view name : initializers_to_place_on_cpu) {
+    int ort_value_idx = -1;
+    ORT_RETURN_IF_ERROR(ort_value_name_idx_map.GetIdx(std::string(name), ort_value_idx));
+    exec_plan.SetLocation(static_cast<size_t>(ort_value_idx), cpu_mem_info.device);
+    ++placed_on_cpu_count;
+  }
+
+  if (placed_on_cpu_count > 0) {
+    LOGS(logger, INFO) << "PlaceMoeOffloadInitializersOnCpu placed " << placed_on_cpu_count
+                       << " MoE/QMoE expert initializer tensor(s) on CPU prior to SaveInitializedTensors.";
+  }
+  return Status::OK();
+}
+
+}  // namespace
+
 bool SessionState::GetSaveModeForPrepacks(bool saving_model, bool saving_ort_format) {
   bool save_prepacked_constant_initializers =
       sess_options_.config_options.GetConfigOrDefault(kOrtSessionOptionsSavePrePackedConstantInitializers,
@@ -1974,6 +2245,25 @@ Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_
   if (session_options.IsLoadCancellationFlagSet()) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_LOAD_CANCELED,
                            "SessionState finalize is canceled due to user request");
+  }
+
+  moe_offload::MoeOffloadSessionPolicy moe_offload_policy;
+  ORT_RETURN_IF_ERROR(moe_offload::MoeOffloadSessionPolicy::ParseFromConfigOptions(
+      session_options.config_options, std::filesystem::path(graph_location), moe_offload_policy));
+  if (moe_offload_policy.mode != moe_offload::OffloadMode::kDisabled && !moe_offload::kExpertRelocationBackendAvailable) {
+    // Relocating expert weights to CPU is only valid when the consuming kernel understands offloaded weights;
+    // otherwise it would hand host pointers to GPU execution.
+    if (moe_offload_policy.mode == moe_offload::OffloadMode::kRequired) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, NOT_IMPLEMENTED,
+                             "MoE offload mode='required' is not available: no offload-capable MoE/QMoE kernel "
+                             "backend is present in this build.");
+    }
+    LOGS(logger_, INFO) << "MoE offload mode='auto' ignored: no offload-capable MoE/QMoE kernel backend is present.";
+  } else if (moe_offload_policy.mode != moe_offload::OffloadMode::kDisabled) {
+    auto cpu_alloc = GetAllocator(OrtDevice());
+    ORT_ENFORCE(cpu_alloc != nullptr, "Default CPU allocator is required for MoE offload initializer placement.");
+    ORT_RETURN_IF_ERROR(PlaceMoeOffloadInitializersOnCpu(
+        *graph_viewer_, moe_offload_policy, ort_value_name_idx_map_, cpu_alloc->Info(), *p_seq_exec_plan_, logger_));
   }
 
   // Record the allocation plan

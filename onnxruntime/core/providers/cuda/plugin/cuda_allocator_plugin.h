@@ -9,6 +9,7 @@
 #pragma once
 
 #include "cuda_plugin_utils.h"
+#include "core/providers/cuda/cuda_allocator.h"
 
 #include <algorithm>
 #include <mutex>
@@ -99,7 +100,8 @@ struct AllocatorStats {
 /// Lifetime is managed by the EP factory (ReleaseAllocatorImpl), not by a Release callback.
 class CudaDeviceAllocator final : public CudaAllocatorBase {
  public:
-  CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int device_id);
+  CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int device_id, const OrtApi& api,
+                      std::shared_ptr<SessionBudgetAccount> account = nullptr);
   ~CudaDeviceAllocator() = default;
 
  private:
@@ -107,8 +109,11 @@ class CudaDeviceAllocator final : public CudaAllocatorBase {
   static void ORT_API_CALL FreeImpl(OrtAllocator* this_ptr, void* p) noexcept;
   static const OrtMemoryInfo* ORT_API_CALL InfoImpl(const OrtAllocator* this_ptr) noexcept;
   static void* ORT_API_CALL ReserveImpl(OrtAllocator* this_ptr, size_t size) noexcept;
+  static OrtStatus* ORT_API_CALL GetStatsImpl(const OrtAllocator* this_ptr, OrtKeyValuePairs** stats) noexcept;
 
   int device_id_;
+  const OrtApi& api_;
+  CUDAAllocator allocator_;
 };
 
 /// CUDA device memory allocator using external user-provided function pointers.

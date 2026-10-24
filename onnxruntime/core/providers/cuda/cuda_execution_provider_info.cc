@@ -18,6 +18,7 @@ constexpr const char* kDeviceId = "device_id";
 constexpr const char* kHasUserComputeStream = "has_user_compute_stream";
 constexpr const char* kUserComputeStream = "user_compute_stream";
 constexpr const char* kMemLimit = "gpu_mem_limit";
+constexpr const char* kDeviceMemLimit = "gpu_device_mem_limit";
 constexpr const char* kArenaExtendStrategy = "arena_extend_strategy";
 constexpr const char* kCudnnConvAlgoSearch = "cudnn_conv_algo_search";
 constexpr const char* kDoCopyInDefaultStream = "do_copy_in_default_stream";
@@ -108,6 +109,13 @@ CUDAExecutionProviderInfo CUDAExecutionProviderInfo::FromProviderOptions(const P
                 return Status::OK();
               })
           .AddAssignmentToReference(cuda::provider_option_names::kMemLimit, info.gpu_mem_limit)
+          .AddValueParser(
+              cuda::provider_option_names::kDeviceMemLimit,
+              [&info](const std::string& value_str) -> Status {
+                ORT_RETURN_IF_NOT(!value_str.empty() && value_str.front() != '-',
+                                  "gpu_device_mem_limit must be a nonnegative byte count");
+                return ParseStringWithClassicLocale(value_str, info.gpu_device_mem_limit);
+              })
           .AddAssignmentToEnumReference(
               cuda::provider_option_names::kArenaExtendStrategy,
               arena_extend_strategy_mapping, info.arena_extend_strategy)
@@ -181,6 +189,7 @@ ProviderOptions CUDAExecutionProviderInfo::ToProviderOptions(const CUDAExecution
       {cuda::provider_option_names::kHasUserComputeStream, MakeStringWithClassicLocale(info.has_user_compute_stream)},
       {cuda::provider_option_names::kUserComputeStream, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.user_compute_stream))},
       {cuda::provider_option_names::kMemLimit, MakeStringWithClassicLocale(info.gpu_mem_limit)},
+      {cuda::provider_option_names::kDeviceMemLimit, MakeStringWithClassicLocale(info.gpu_device_mem_limit)},
       {cuda::provider_option_names::kGpuExternalAlloc, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.external_allocator_info.alloc))},
       {cuda::provider_option_names::kGpuExternalFree, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.external_allocator_info.free))},
       {cuda::provider_option_names::kGpuExternalEmptyCache, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.external_allocator_info.empty_cache))},
@@ -214,6 +223,7 @@ ProviderOptions CUDAExecutionProviderInfo::ToProviderOptions(const OrtCUDAProvid
       {cuda::provider_option_names::kHasUserComputeStream, MakeStringWithClassicLocale(info.has_user_compute_stream)},
       {cuda::provider_option_names::kUserComputeStream, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.user_compute_stream))},
       {cuda::provider_option_names::kMemLimit, MakeStringWithClassicLocale(info.gpu_mem_limit)},
+      {cuda::provider_option_names::kDeviceMemLimit, MakeStringWithClassicLocale(info.gpu_device_mem_limit)},
       {cuda::provider_option_names::kArenaExtendStrategy, EnumToName(arena_extend_strategy_mapping, info.arena_extend_strategy)},
       {cuda::provider_option_names::kCudnnConvAlgoSearch, EnumToName(ort_cudnn_conv_algo_search_mapping, info.cudnn_conv_algo_search)},
       {cuda::provider_option_names::kDoCopyInDefaultStream, MakeStringWithClassicLocale(info.do_copy_in_default_stream)},

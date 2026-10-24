@@ -42,6 +42,8 @@ class CudaEp : public onnxruntime::ep::adapter::Ep {
     void* external_alloc = nullptr;                  ///< External GPU memory allocation function pointer.
     void* external_free = nullptr;                   ///< External GPU memory deallocation function pointer.
     void* external_empty_cache = nullptr;            ///< External GPU memory cache-clear function pointer.
+    size_t device_mem_limit = 0;                     ///< Session/device allocation budget in bytes (0 = unlimited).
+    std::shared_ptr<SessionBudgetAccount> budget_account;
   };
 
   CudaEp(CudaEpFactory& factory, const Config& config, const OrtLogger& logger);
@@ -84,6 +86,9 @@ class CudaEp : public onnxruntime::ep::adapter::Ep {
       OrtEp* this_ptr, bool* is_supported) noexcept;
 
   // CUDA Graph callback implementations
+  static OrtStatus* ORT_API_CALL OnSessionInitializationEndImpl(
+      OrtEp* this_ptr) noexcept;
+
   static OrtStatus* ORT_API_CALL OnRunStartImpl(
       OrtEp* this_ptr, const OrtRunOptions* run_options) noexcept;
 

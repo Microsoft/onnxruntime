@@ -3867,6 +3867,50 @@ Status InferenceSession::RunImpl(const RunOptions& run_options,
         ORT_CHECK_AND_SET_RETVAL(start_func());
       }
 
+      // Exact-once scoped cleanup for every provider whose OnRunStart succeeded (v3 Section 5.1 / F2).
+      bool providers_stopped = false;
+      auto stop_providers_once = [&]() noexcept {
+        if (providers_stopped) return;
+        providers_stopped = true;
+        const bool synchronize_execution_providers =
+            run_options.config_options.GetConfigOrDefault(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "0") == "0";
+        const bool run_succeeded = retval.IsOK() && !run_options.terminate && (std::uncaught_exceptions() == 0);
+        RunOptions failed_run_options;
+        const RunOptions* effective_run_options = &run_options;
+        if (!run_succeeded) {
+          ORT_TRY {
+            failed_run_options = run_options;
+            ORT_IGNORE_RETURN_VALUE(failed_run_options.config_options.AddConfigEntry("__ort.run_outcome", "failed"));
+            effective_run_options = &failed_run_options;
+          }
+          ORT_CATCH(...) {
+            effective_run_options = &run_options;
+          }
+        }
+        for (auto* xp : exec_providers_to_stop) {
+          ORT_TRY {
+            auto status = xp->OnRunEnd(synchronize_execution_providers, *effective_run_options);
+            ORT_CHECK_AND_SET_RETVAL(status);
+          }
+          ORT_CATCH(const std::exception& ex) {
+            ORT_HANDLE_EXCEPTION([&]() {
+              if (retval.IsOK()) {
+                retval = Status(common::ONNXRUNTIME, common::FAIL, ex.what());
+              }
+            });
+          }
+          ORT_CATCH(...) {
+            if (retval.IsOK()) {
+              retval = Status(common::ONNXRUNTIME, common::RUNTIME_EXCEPTION, "Exception in OnRunEnd()");
+            }
+          }
+        }
+      };
+      struct ProvidersStopGuard {
+        decltype(stop_providers_once)& fn;
+        ~ProvidersStopGuard() { fn(); }
+      } providers_stop_guard{stop_providers_once};
+
 #ifdef ENABLE_TRAINING
       if (run_options.only_execute_path_to_fetches) {
         // TODO: this method is not thread safe, if multiple Run happened in parallel we might hit race condition issue.
@@ -3906,11 +3950,7 @@ Status InferenceSession::RunImpl(const RunOptions& run_options,
       }
 
       // info all execution providers InferenceSession:Run ended
-      for (auto* xp : exec_providers_to_stop) {
-        bool synchronize_execution_providers = run_options.config_options.GetConfigOrDefault(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "0") == "0";
-        auto status = xp->OnRunEnd(synchronize_execution_providers, run_options);
-        ORT_CHECK_AND_SET_RETVAL(status);
-      }
+      stop_providers_once();
 
 #if !defined(ORT_MINIMAL_BUILD)
       if (moe_run_active) {
@@ -4594,16 +4634,18 @@ common::Status InferenceSession::ValidateAndParseShrinkArenaString(const std::st
     // Shrink if it is an arena allocator.
     // Both in-tree arenas (BFCArena) and plugin EP arenas (IArenaImplWrappingOrtAllocator)
     // inherit IArena, so AsArena() returns non-null for both.
+    bool found_arena = false;
     for (const auto& [device, allocator_ptr] : session_state_->GetAllocators()) {
       if (device.Type() == device_type && device.MemType() == memory_type && device.Id() == device_id) {
         if (allocator_ptr->AsArena() != nullptr) {
           arenas_to_shrink.push_back(allocator_ptr);
+          found_arena = true;
           break;
         }
       }
     }
 
-    if (arenas_to_shrink.empty()) {
+    if (!found_arena) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
                              "Did not find an arena based allocator registered for device-id ",
                              "combination in the memory arena shrink list: ", device_id_pair);

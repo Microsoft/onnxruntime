@@ -408,6 +408,21 @@ OrtStatus* ArenaImpl::GetStats(OrtKeyValuePairs** stats) {
   api_.CreateKeyValuePairs(stats);
   stats_.ToKeyValuePairs(api_, *stats);
 
+  if (device_allocator_->GetStats != nullptr) {
+    OrtKeyValuePairs* device_stats = nullptr;
+    auto* status = device_allocator_->GetStats(device_allocator_.get(), &device_stats);
+    if (status != nullptr) {
+      api_.ReleaseKeyValuePairs(*stats);
+      *stats = nullptr;
+      return status;
+    }
+    for (const char* key : {"DeviceLimit", "DeviceCommitted", "DevicePending", "DevicePeak"}) {
+      const char* value = api_.GetKeyValue(device_stats, key);
+      if (value != nullptr) api_.AddKeyValuePair(*stats, key, value);
+    }
+    api_.ReleaseKeyValuePairs(device_stats);
+  }
+
   return nullptr;
 }
 
@@ -417,6 +432,7 @@ OrtStatus* ArenaImpl::Shrink() {
   if (abandoned_) {
     return nullptr;
   }
+  shrink_enabled_.store(true, std::memory_order_release);
 
   // Note: Reserved memory (via Reserve()) is allocated directly through the device
   // allocator and stored in reserved_chunks_, bypassing the region/chunk system.

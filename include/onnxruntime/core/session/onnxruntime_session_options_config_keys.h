@@ -950,3 +950,25 @@ static const char* const kOrtSessionOptionsConfigUsePerSessionThreads = "session
 // "0": disable; "1": enable.
 // Equivalent to OrtApi::SetDeterministicCompute.
 static const char* const kOrtSessionOptionsConfigUseDeterministicCompute = "session.use_deterministic_compute";
+
+// ---------------------------------------------------------------------------
+// Portable MoE / QMoE Offload v4 Session Configuration Keys
+// ---------------------------------------------------------------------------
+static const char* const kOrtSessionOptionsMoeOffloadMode = "session.moe.offload.mode";
+static const char* const kOrtSessionOptionsMoeOffloadCpuExecution = "session.moe.offload.cpu_execution";
+static const char* const kOrtSessionOptionsMoeOffloadPlacement = "session.moe.offload.placement";
+static const char* const kOrtSessionOptionsMoeOffloadDeviceExpertBytes = "session.moe.offload.device_expert_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadHostExpertBytes = "session.moe.offload.host_expert_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadDeviceWorkingBytes = "session.moe.offload.device_working_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadHostWorkingBytes = "session.moe.offload.host_working_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadPinnedBytes = "session.moe.offload.pinned_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadReserveDeviceBytes = "session.moe.offload.reserve_device_bytes";
+static const char* const kOrtSessionOptionsMoeOffloadBudgetGroup = "session.moe.offload.budget_group";
+static const char* const kOrtSessionOptionsMoeOffloadAllowFileBacking = "session.moe.offload.allow_file_backing";
+static const char* const kOrtSessionOptionsMoeOffloadCpuThreads = "session.moe.offload.cpu_threads";
+static const char* const kOrtSessionOptionsMoeOffloadAsyncMaxTokens = "session.moe.offload.async_max_tokens";
+static const char* const kOrtSessionOptionsMoeOffloadPrefillWaveExperts = "session.moe.offload.prefill_wave_experts";
+static const char* const kOrtSessionOptionsMoeOffloadPopularityFile = "session.moe.offload.popularity_file";
+static const char* const kOrtSessionOptionsMoeOffloadNodeOverrides = "session.moe.offload.node_overrides";
+static const char* const kOrtSessionOptionsMoeOffloadSourceRoot = "session.moe.offload.source_root";
+static const char* const kOrtSessionOptionsMoeOffloadDerivedCacheDir = "session.moe.offload.derived_cache_dir";

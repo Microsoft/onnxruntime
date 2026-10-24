@@ -28,15 +28,18 @@ void RestoreDeviceIfKnown(bool restore_prev_device, int prev_device) noexcept {
 // memory pool/arena is injected or configured by the application.
 // ---------------------------------------------------------------------------
 
-CudaDeviceAllocator::CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int device_id)
+CudaDeviceAllocator::CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int device_id, const OrtApi& api,
+                                         std::shared_ptr<SessionBudgetAccount> account)
     : CudaAllocatorBase(CudaAllocatorKind::kDevice, memory_info),
-      device_id_(device_id) {
+      device_id_(device_id),
+      api_(api),
+      allocator_(static_cast<OrtDevice::DeviceId>(device_id), CUDA, std::move(account)) {
   version = ORT_API_VERSION;
   Alloc = AllocImpl;
   Free = FreeImpl;
   Info = InfoImpl;
   Reserve = ReserveImpl;
-  GetStats = nullptr;
+  GetStats = GetStatsImpl;
   AllocOnStream = nullptr;
 }
 
@@ -52,11 +55,13 @@ CudaDeviceAllocator::CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int d
     RestoreDeviceIfKnown(restore_prev_device, prev_device);
     return nullptr;
   }
-  cudaError_t err = cudaMalloc(&p, size);
-  RestoreDeviceIfKnown(restore_prev_device, prev_device);
-  if (err != cudaSuccess) {
+  try {
+    p = alloc->allocator_.Alloc(size);
+  } catch (...) {
+    RestoreDeviceIfKnown(restore_prev_device, prev_device);
     return nullptr;
   }
+  RestoreDeviceIfKnown(restore_prev_device, prev_device);
   return p;
 }
 
@@ -70,7 +75,7 @@ CudaDeviceAllocator::CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int d
       return;
     }
 
-    static_cast<void>(cudaFree(p));
+    alloc->allocator_.Free(p);
     RestoreDeviceIfKnown(restore_prev_device, prev_device);
   }
 }
@@ -83,6 +88,35 @@ CudaDeviceAllocator::CudaDeviceAllocator(const OrtMemoryInfo* memory_info, int d
 /*static*/ void* ORT_API_CALL CudaDeviceAllocator::ReserveImpl(OrtAllocator* this_ptr, size_t size) noexcept {
   // Reserve currently delegates to Alloc (no separate reservation pool).
   return AllocImpl(this_ptr, size);
+}
+
+/*static*/ OrtStatus* ORT_API_CALL CudaDeviceAllocator::GetStatsImpl(
+    const OrtAllocator* this_ptr, OrtKeyValuePairs** stats) noexcept {
+  const auto* allocator = static_cast<const CudaDeviceAllocator*>(this_ptr);
+  try {
+    const auto phys_snapshot = allocator->allocator_.GetPhysicalStats();
+    const auto sess_snapshot = allocator->allocator_.GetAccountStats();
+    const size_t eff_limit = std::min(phys_snapshot.limit, sess_snapshot.limit);
+    allocator->api_.CreateKeyValuePairs(stats);
+    allocator->api_.AddKeyValuePair(*stats, "DeviceLimit", std::to_string(eff_limit).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "DeviceCommitted", std::to_string(phys_snapshot.committed).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "DevicePending", std::to_string(phys_snapshot.pending).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "DevicePeak", std::to_string(phys_snapshot.peak).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "DeviceFreeing", std::to_string(phys_snapshot.freeing).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "DeviceQuarantined", std::to_string(phys_snapshot.quarantined).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "SessionLimit", std::to_string(sess_snapshot.limit).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "SessionCommitted", std::to_string(sess_snapshot.committed).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "SessionPending", std::to_string(sess_snapshot.pending).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "SessionPeak", std::to_string(sess_snapshot.peak).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "PhysicalLimit", std::to_string(phys_snapshot.limit).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "PhysicalCommitted", std::to_string(phys_snapshot.committed).c_str());
+    allocator->api_.AddKeyValuePair(*stats, "PhysicalPeak", std::to_string(phys_snapshot.peak).c_str());
+    return nullptr;
+  } catch (const std::exception& error) {
+    return allocator->api_.CreateStatus(ORT_FAIL, error.what());
+  } catch (...) {
+    return allocator->api_.CreateStatus(ORT_FAIL, "Failed to read CUDA device memory budget");
+  }
 }
 
 // ---------------------------------------------------------------------------

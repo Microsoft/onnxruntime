@@ -113,6 +113,19 @@ const OrtMemoryInfo* OrtAllocatorImplWrappingIAllocator::Info() const {
 }
 
 std::unordered_map<std::string, std::string> OrtAllocatorImplWrappingIAllocator::Stats() const {
+  const auto* ort_allocator = i_allocator_->GetWrappedOrtAllocator();
+  if (ort_allocator != nullptr && ort_allocator->version >= kOrtAllocatorStatsMinVersion && ort_allocator->GetStats) {
+    Ort::UnownedAllocator allocator(const_cast<OrtAllocator*>(ort_allocator));
+    Ort::KeyValuePairs kvps = allocator.GetStats();
+    std::vector<const char*> keys, values;
+    kvps.GetKeyValuePairs(keys, values);
+    std::unordered_map<std::string, std::string> entries;
+    for (size_t index = 0; index < keys.size(); ++index) {
+      entries.emplace(keys[index], values[index]);
+    }
+    return entries;
+  }
+
   AllocatorStats stats{};
   i_allocator_->GetStats(&stats);
 

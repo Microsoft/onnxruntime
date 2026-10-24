@@ -205,18 +205,45 @@ PluginExecutionProvider::PluginExecutionProvider(UniqueOrtEp ep, const OrtSessio
         continue;
       }
 
+      const std::string bare_key = key.substr(ep_prefix.size());
       if (key.compare(0, arena_prefix.size(), arena_prefix) == 0) {
         if (extract_arena) {
           if (!session_arena_options_) {
             session_arena_options_.emplace();
           }
-          session_arena_options_->Add(key.substr(ep_prefix.size()).c_str(), value.c_str());
+          session_arena_options_->Add(bare_key.c_str(), value.c_str());
         }
         continue;
       }
 
+      // Also map standard CUDA EP arena option names (e.g. "arena_extend_strategy") into session_arena_options_.
+      if (extract_arena) {
+        const char* mapped_arena_key = nullptr;
+        if (bare_key == "arena_extend_strategy") {
+          mapped_arena_key = "arena.extend_strategy";
+        } else if (bare_key == "initial_chunk_size_bytes") {
+          mapped_arena_key = "arena.initial_chunk_size_bytes";
+        } else if (bare_key == "max_dead_bytes_per_chunk") {
+          mapped_arena_key = "arena.max_dead_bytes_per_chunk";
+        } else if (bare_key == "initial_growth_chunk_size_bytes") {
+          mapped_arena_key = "arena.initial_growth_chunk_size_bytes";
+        } else if (bare_key == "max_power_of_two_extend_bytes") {
+          mapped_arena_key = "arena.max_power_of_two_extend_bytes";
+        } else if (bare_key == "max_mem") {
+          mapped_arena_key = "arena.max_mem";
+        } else if (bare_key == "gpu_device_mem_limit") {
+          mapped_arena_key = "gpu_device_mem_limit";
+        }
+        if (mapped_arena_key != nullptr) {
+          if (!session_arena_options_) {
+            session_arena_options_.emplace();
+          }
+          session_arena_options_->Add(mapped_arena_key, value.c_str());
+        }
+      }
+
       // Store the bare option name (strip the EP-specific prefix) for GetProviderOptions().
-      provider_options_[key.substr(ep_prefix.size())] = value;
+      provider_options_[bare_key] = value;
     }
   }
 
@@ -914,7 +941,15 @@ std::vector<AllocatorPtr> PluginExecutionProvider::CreatePreferredAllocators() {
   std::vector<AllocatorPtr> allocators;
   allocators.reserve(allocator_mem_infos_.size());
 
-  const OrtKeyValuePairs* allocator_options = session_arena_options_ ? &*session_arena_options_ : nullptr;
+  // Identify the OrtEp the allocators are created for so a factory shared by several sessions can bind each allocator
+  // to the right session state instead of guessing from device-wide queues.
+  OrtKeyValuePairs allocator_options_storage;
+  if (session_arena_options_) {
+    allocator_options_storage = *session_arena_options_;
+  }
+  allocator_options_storage.Add("ep_instance_id",
+                                std::to_string(reinterpret_cast<uintptr_t>(ort_ep_.get())).c_str());
+  const OrtKeyValuePairs* allocator_options = &allocator_options_storage;
 
   auto* ep_factory = &ep_factory_;
 

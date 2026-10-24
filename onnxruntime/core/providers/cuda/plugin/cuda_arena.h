@@ -110,9 +110,9 @@ struct ArenaConfig {
 
     if (value = api.GetKeyValue(&kvps, ConfigKeyNames::ArenaExtendStrategy); value) {
       const std::string sval(value);
-      if (sval == "0") {
+      if (sval == "0" || sval == "kNextPowerOfTwo") {
         config.arena_extend_strategy = kNextPowerOfTwo;
-      } else if (sval == "1") {
+      } else if (sval == "1" || sval == "kSameAsRequested") {
         config.arena_extend_strategy = kSameAsRequested;
       } else {
         config.arena_extend_strategy = static_cast<ArenaExtendStrategy>(-2);  // invalid — will fail IsValid()
@@ -265,6 +265,10 @@ class ArenaImpl {
   OrtStatus* QuarantineChunksUsingStream(const OrtSyncStreamImpl* stream_impl, bool& quarantined);
 
   void Abandon();
+
+  bool IsShrinkEnabled() const noexcept {
+    return shrink_enabled_.load(std::memory_order_acquire);
+  }
 
  private:
   void* AllocateRawInternal(size_t num_bytes, OrtSyncStream* stream, bool dump_log_on_failure);
@@ -557,6 +561,7 @@ class ArenaImpl {
   std::unordered_map<const OrtSyncStreamImpl*, const OrtSyncStream*> impl_to_stream_;
 
   AllocatorStats stats_{};
+  std::atomic<bool> shrink_enabled_{false};
 
   const OrtApi& api_;
   const OrtEpApi& ep_api_;
@@ -634,6 +639,10 @@ class CudaArenaAllocator final : public CudaAllocatorBase {
     }
     ORT_CATCH(...) {
     }
+  }
+
+  bool IsShrinkEnabled() const noexcept {
+    return impl_->IsShrinkEnabled();
   }
 
  private:

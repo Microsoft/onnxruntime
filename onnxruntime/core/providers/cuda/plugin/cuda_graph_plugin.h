@@ -81,6 +81,8 @@ class CudaGraphManager {
   /// Tracks the number of regular (non-captured) runs per annotation ID.
   /// Graph capture is deferred until the count reaches `min_num_runs_before_cuda_graph_capture`.
   std::unordered_map<CudaGraphAnnotation_t, int> run_count_;
+  bool has_captured_any_ = false;
+  bool recapture_immediately_ = false;
 };
 
 }  // namespace cuda_plugin

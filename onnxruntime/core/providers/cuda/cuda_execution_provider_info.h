@@ -48,7 +48,8 @@ struct TunableOpInfo {
 
 struct CUDAExecutionProviderInfo {
   OrtDevice::DeviceId device_id{0};
-  size_t gpu_mem_limit{std::numeric_limits<size_t>::max()};                         // Will be over-ridden by contents of `default_memory_arena_cfg` (if specified)
+  size_t gpu_mem_limit{std::numeric_limits<size_t>::max()};  // Will be over-ridden by contents of `default_memory_arena_cfg` (if specified)
+  size_t gpu_device_mem_limit{0};
   ArenaExtendStrategy arena_extend_strategy{ArenaExtendStrategy::kNextPowerOfTwo};  // Will be over-ridden by contents of `default_memory_arena_cfg` (if specified)
   OrtCudnnConvAlgoSearch cudnn_conv_algo_search{OrtCudnnConvAlgoSearchExhaustive};
   bool do_copy_in_default_stream{true};
@@ -118,6 +119,7 @@ struct std::hash<::onnxruntime::CUDAExecutionProviderInfo> {
     onnxruntime::HashCombine(data, value);
 
     onnxruntime::HashCombine(info.gpu_mem_limit, value);
+    onnxruntime::HashCombine(info.gpu_device_mem_limit, value);
     onnxruntime::HashCombine(info.tunable_op.max_tuning_duration_ms, value);
     onnxruntime::HashCombine(info.sdpa_kernel, value);
     onnxruntime::HashCombine(info.enable_cudnn, value);

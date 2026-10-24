@@ -21,6 +21,10 @@
 namespace onnxruntime {
 namespace cuda_plugin {
 
+/// Allocator option that carries the address of the OrtEp (as a decimal integer) for which an allocator is created,
+/// so the factory can bind the allocator to that session's budget account.
+inline constexpr const char* kEpInstanceIdOptionKey = "ep_instance_id";
+
 class CudaEp;
 
 /// CUDA EP factory implementing OrtEpFactory.
@@ -46,6 +50,17 @@ class CudaEpFactory : public OrtEpFactory {
 
   /// Abandon every device arena of a device when chunk-level detachment cannot be guaranteed.
   void AbandonDeviceArena(int device_id) noexcept;
+
+  /// Shrink the device arena(s) owned by `owner` on the specified device that have had Shrink() enabled via
+  /// RunOptions. Arenas of other sessions, and arenas of sessions that have started a CUDA graph capture (whose
+  /// graphs reference arena addresses), are never shrunk.
+  void ShrinkEligibleDeviceArenas(int device_id, const SessionBudgetAccount* owner) noexcept;
+
+  /// Records that the session owning `owner` is capturing a CUDA graph, which pins its arena regions.
+  void MarkSessionGraphCapture(int device_id, const SessionBudgetAccount* owner) noexcept;
+
+  /// Drops a session account queued by CreateEp that never reached CreateAllocator.
+  void ForgetPendingSessionAccount(const OrtEp* ep) noexcept;
 
   /// Get or create the shared kernel registry for this factory.
   /// Lazily created on first call; subsequent calls return the cached instance.
@@ -111,6 +126,9 @@ class CudaEpFactory : public OrtEpFactory {
     std::unique_ptr<CudaArenaAllocator> allocator;
     bool has_quarantine = false;
     bool abandoned = false;
+    // Identity of the session whose budget account backs this arena (null for arenas without a session).
+    const SessionBudgetAccount* owner = nullptr;
+    bool graph_capture_started = false;
   };
 
   struct DeviceCacheEntry {
@@ -122,6 +140,8 @@ class CudaEpFactory : public OrtEpFactory {
     std::mutex arena_mutex;
     // One arena per CreateAllocator call: captured CUDA graphs keep using chunks their session freed.
     std::vector<DeviceArena> device_arenas;
+    // Accounts queued by CreateEp, keyed by the OrtEp that owns them until its allocator is created.
+    std::unordered_map<const OrtEp*, std::shared_ptr<SessionBudgetAccount>> pending_session_accounts;
     std::unique_ptr<CudaArenaAllocator> pinned_arena;
     std::unique_ptr<CudaMempoolOrtAllocator> mempool_allocator;
     int num_pinned_arena_users = 0;

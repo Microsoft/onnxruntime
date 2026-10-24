@@ -2,6 +2,10 @@
 // Copyright (c) 2023 NVIDIA Corporation.
 // Licensed under the MIT License.
 
+#if defined(_MSC_VER)
+#pragma warning(disable : 4996)
+#endif
+
 // provider_api.h must be first to set SHARED_PROVIDER
 #include "core/providers/shared_library/provider_api.h"
 
@@ -162,6 +166,17 @@ AllocatorPtr CUDAExecutionProvider::CreateCudaAllocator(const CUDAAllocatorParam
   ORT_ENFORCE(cuda_allocator_params.external_alloc_info != nullptr,
               "CUDAAllocatorParams.external_alloc_info is nullptr.");
   const auto& external_allocator_info = *(cuda_allocator_params.external_alloc_info);
+  const bool device_budget_enabled =
+      (cuda_allocator_params.provider_info != nullptr &&
+       cuda_allocator_params.provider_info->gpu_device_mem_limit > 0 &&
+       cuda_allocator_params.provider_info->gpu_device_mem_limit != std::numeric_limits<size_t>::max()) ||
+      (cuda_allocator_params.budget_account != nullptr &&
+       cuda_allocator_params.budget_account->GetAccountStats().limit != std::numeric_limits<size_t>::max());
+  ORT_ENFORCE(!device_budget_enabled || !external_allocator_info.UseExternalAllocator(),
+              "gpu_device_mem_limit does not support external CUDA allocators");
+  ORT_ENFORCE(!device_budget_enabled || cuda_allocator_params.arena_cfg == nullptr ||
+                  cuda_allocator_params.arena_cfg->use_cuda_mempool != 1,
+              "gpu_device_mem_limit does not support CUDA memory pools");
   if (external_allocator_info.UseExternalAllocator()) {
     AllocatorCreationInfo default_memory_info(
         [external_allocator_info](OrtDevice::DeviceId id) {
@@ -209,9 +224,10 @@ AllocatorPtr CUDAExecutionProvider::CreateCudaAllocator(const CUDAAllocatorParam
 
       return mempool_allocator;
     } else {
+      auto budget_account = cuda_allocator_params.budget_account;
       AllocatorCreationInfo default_memory_info(
-          [](OrtDevice::DeviceId id) {
-            return std::make_unique<CUDAAllocator>(id, CUDA);
+          [budget_account](OrtDevice::DeviceId id) {
+            return std::make_unique<CUDAAllocator>(id, CUDA, budget_account);
           },
           cuda_allocator_params.device_id,
           true,
@@ -351,8 +367,17 @@ CUDAExecutionProvider::CUDAExecutionProvider(const CUDAExecutionProviderInfo& in
     : IExecutionProvider{onnxruntime::kCudaExecutionProvider,
                          OrtDevice(OrtDevice::GPU, OrtDevice::MemType::DEFAULT, OrtDevice::VendorIds::NVIDIA,
                                    info.device_id)},
+      qmoe_controller_{std::make_shared<onnxruntime::cuda::QMoESessionController>(info.device_id)},
+      session_budget_account_{std::make_shared<SessionBudgetAccount>(
+          GetCudaDeviceMemoryBudget(info.device_id),
+          info.gpu_device_mem_limit > 0 ? info.gpu_device_mem_limit : std::numeric_limits<size_t>::max())},
       info_{info},
       tuning_context_(this, &info_.tunable_op) {
+  if (qmoe_controller_) {
+    qmoe_controller_->SetBudgetAccount(session_budget_account_);
+  }
+  ORT_ENFORCE(info_.gpu_device_mem_limit == 0 || !info_.external_allocator_info.UseExternalAllocator(),
+              "gpu_device_mem_limit does not support external CUDA allocators");
 #ifndef ENABLE_CUDA_NHWC_OPS
   ORT_ENFORCE(info_.prefer_nhwc == 0, "This build does not support NHWC layout");
 #endif
@@ -422,6 +447,9 @@ CUDAExecutionProvider::~CUDAExecutionProvider() {
   // No-op in builds without onnxruntime_USE_FPA_INTB_GEMM. The plugin EP flushes from ~CudaEp.
   onnxruntime::contrib::cuda::FlushMatMulNBitsTacticCaches();
 
+  if (qmoe_controller_) {
+    qmoe_controller_->Shutdown();
+  }
   // clean up thread local context caches
   {
     std::lock_guard<std::mutex> lock(context_state_.mutex);
@@ -518,27 +546,103 @@ Status CUDAExecutionProvider::Sync() const {
   return Status::OK();
 }
 
+Status CUDAExecutionProvider::OnSessionInitializationEnd() {
+  if (qmoe_controller_) {
+    ORT_RETURN_IF_ERROR(qmoe_controller_->PlanAndAdmitSession());
+  }
+  return Status::OK();
+}
+
+namespace {
+// Ends a controller run on scope exit unless released; ORT does not call OnRunEnd for a provider whose OnRunStart failed.
+class QMoEControllerRunRollback {
+ public:
+  QMoEControllerRunRollback() = default;
+  QMoEControllerRunRollback(const QMoEControllerRunRollback&) = delete;
+  QMoEControllerRunRollback& operator=(const QMoEControllerRunRollback&) = delete;
+  ~QMoEControllerRunRollback() {
+    if (controller_ != nullptr) {
+      try {
+        static_cast<void>(controller_->OnRunEnd(/*sync_stream=*/false, /*run_succeeded=*/false));
+      } catch (...) {
+      }
+    }
+  }
+  void Arm(onnxruntime::cuda::QMoESessionController* controller) { controller_ = controller; }
+  void Release() { controller_ = nullptr; }
+
+ private:
+  onnxruntime::cuda::QMoESessionController* controller_ = nullptr;
+};
+}  // namespace
+
 Status CUDAExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_options) {
+  QMoEControllerRunRollback controller_rollback;
+  if (qmoe_controller_ && qmoe_controller_->HasOffloadNodes()) {
+    const char* strict_env = std::getenv("ORT_QMOE_REJECT_DISABLE_SYNC");
+    if (strict_env != nullptr && std::strcmp(strict_env, "1") == 0 &&
+        run_options.GetConfigOptions().GetConfigOrDefault(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "0") == "1") {
+      return ORT_MAKE_STATUS(
+          ONNXRUNTIME, INVALID_ARGUMENT,
+          "QMoEOffload does not support disable_synchronize_execution_providers=1; required completion sync cannot be skipped.");
+    }
+    ORT_RETURN_IF_ERROR(qmoe_controller_->OnRunStart());
+    controller_rollback.Arm(qmoe_controller_.get());
+    if (IsGraphCaptureEnabled()) {
+      const uint64_t cur_gen = qmoe_controller_->GraphGeneration();
+      if (cur_gen != GetPerThreadContext().LastQMoEGraphGen()) {
+        GetPerThreadContext().ResetForQMoEGraphGen(cur_gen);
+      }
+    }
+  }
   CudaGraphAnnotation_t cuda_graph_annotation_id = GetPerThreadContext().GetCudaGraphAnnotationId(run_options);
   if (IsGraphCaptureEnabled() && !GetPerThreadContext().IsGraphCaptured(cuda_graph_annotation_id) &&
       GetPerThreadContext().IsGraphCaptureAllowed(cuda_graph_annotation_id)) {
     LOGS(*GetLogger(), INFO) << "Capturing the cuda graph for this model";
     GetPerThreadContext().CaptureBegin(cuda_graph_annotation_id);
   }
+  controller_rollback.Release();
   return Status::OK();
 }
 
 Status CUDAExecutionProvider::OnRunEnd(bool sync_stream, const onnxruntime::RunOptions& run_options) {
+  const bool has_offload = qmoe_controller_ && qmoe_controller_->HasOffloadNodes();
+  // Every exit below (error status or exception) must still end the controller run, otherwise the controller stays
+  // active and rejects later runs as overlapping.
+  QMoEControllerRunRollback controller_rollback;
+  if (has_offload) controller_rollback.Arm(qmoe_controller_.get());
+
+  Status capture_status = Status::OK();
   CudaGraphAnnotation_t cuda_graph_annotation_id = GetPerThreadContext().GetCudaGraphAnnotationId(run_options);
   if (IsGraphCaptureEnabled() && !GetPerThreadContext().IsGraphCaptured(cuda_graph_annotation_id)) {
     if (GetPerThreadContext().IsGraphCaptureAllowed(cuda_graph_annotation_id)) {
       GetPerThreadContext().CaptureEnd(cuda_graph_annotation_id);
-      // CUDA work issued to a capturing stream doesn’t actually run on the GPU,
-      // so run the captured graph here to actually execute the work.
-      ORT_RETURN_IF_ERROR(GetPerThreadContext().ReplayGraph(cuda_graph_annotation_id, sync_stream));
+      capture_status = [&]() -> Status {
+        if (has_offload) {
+          ORT_RETURN_IF_ERROR(qmoe_controller_->OnBeforeGraphReplay(static_cast<cudaStream_t>(stream_)));
+        }
+        // CUDA work issued to a capturing stream doesn’t actually run on the GPU,
+        // so run the captured graph here to actually execute the work.
+        ORT_RETURN_IF_ERROR(GetPerThreadContext().ReplayGraph(cuda_graph_annotation_id, sync_stream));
+        if (has_offload) {
+          ORT_RETURN_IF_ERROR(qmoe_controller_->OnAfterGraphReplay(static_cast<cudaStream_t>(stream_), sync_stream));
+        }
+        return Status::OK();
+      }();
     } else {
       GetPerThreadContext().IncrementRegularRunCountBeforeGraphCapture(cuda_graph_annotation_id);
     }
+  }
+  if (has_offload) {
+    controller_rollback.Release();
+    const bool run_succeeded =
+        capture_status.IsOK() &&
+        run_options.GetConfigOptions().GetConfigOrDefault("__ort.run_outcome", "ok") == "ok";
+    auto controller_status = qmoe_controller_->OnRunEnd(sync_stream, run_succeeded);
+    ORT_RETURN_IF_ERROR(capture_status);
+    ORT_RETURN_IF_ERROR(controller_status);
+  } else {
+    ORT_RETURN_IF_ERROR(capture_status);
   }
 
   if (sync_stream) {
@@ -567,10 +671,34 @@ bool CUDAExecutionProvider::IsGraphCaptureEnabled() const {
 }
 
 bool CUDAExecutionProvider::IsGraphCaptured(int graph_annotation_id) const {
+  if (qmoe_controller_ && qmoe_controller_->HasOffloadNodes()) {
+    const uint64_t cur_gen = qmoe_controller_->GraphGeneration();
+    if (cur_gen != GetPerThreadContext().LastQMoEGraphGen()) {
+      GetPerThreadContext().ResetForQMoEGraphGen(cur_gen);
+    }
+  }
   return GetPerThreadContext().IsGraphCaptured(graph_annotation_id);
 }
 
 Status CUDAExecutionProvider::ReplayGraph(int graph_annotation_id, bool sync) {
+  if (qmoe_controller_ && qmoe_controller_->HasOffloadNodes()) {
+    ORT_RETURN_IF_ERROR(qmoe_controller_->OnRunStart());
+    auto prep_st = qmoe_controller_->OnBeforeGraphReplay(static_cast<cudaStream_t>(stream_));
+    if (!prep_st.IsOK()) {
+      static_cast<void>(qmoe_controller_->OnRunEnd(/*sync_stream=*/false, /*run_succeeded=*/false));
+      return prep_st;
+    }
+    auto replay_st = GetPerThreadContext().ReplayGraph(graph_annotation_id, /*sync=*/true);
+    if (!replay_st.IsOK()) {
+      static_cast<void>(qmoe_controller_->OnRunEnd(/*sync_stream=*/false, /*run_succeeded=*/false));
+      return replay_st;
+    }
+    auto after_st = qmoe_controller_->OnAfterGraphReplay(static_cast<cudaStream_t>(stream_), sync);
+    auto end_st = qmoe_controller_->OnRunEnd(sync, after_st.IsOK());
+    ORT_RETURN_IF_ERROR(after_st);
+    ORT_RETURN_IF_ERROR(end_st);
+    return Status::OK();
+  }
   return GetPerThreadContext().ReplayGraph(graph_annotation_id, sync);
 }
 
@@ -589,6 +717,9 @@ void CUDAExecutionProvider::SetSessionModelPath(std::filesystem::path path) cons
   }
   std::lock_guard<std::mutex> lock(model_path_mutex_);
   model_path_ = std::move(path);
+  if (qmoe_controller_) {
+    qmoe_controller_->SetModelPath(model_path_);
+  }
 }
 
 std::filesystem::path CUDAExecutionProvider::GetSessionModelPath() const {
@@ -3874,6 +4005,7 @@ std::vector<AllocatorPtr> CUDAExecutionProvider::CreatePreferredAllocators() {
   params.external_alloc_info = &info_.external_allocator_info;
   params.arena_cfg = info_.default_memory_arena_cfg;
   params.logger = GetLogger();
+  params.budget_account = session_budget_account_;
 
   return std::vector<AllocatorPtr>{
       CreateCudaAllocator(params),

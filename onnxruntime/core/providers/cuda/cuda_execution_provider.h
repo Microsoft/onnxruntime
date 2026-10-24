@@ -14,6 +14,7 @@
 #include "core/providers/cuda/cuda_execution_provider_info.h"
 #include "core/providers/cuda/cuda_graph.h"
 #include "core/providers/cuda/cuda_pch.h"
+#include "core/providers/cuda/qmoe_session_controller.h"
 #include "core/providers/cuda/shared_inc/cuda_utils.h"
 #include "core/providers/cuda/shared_inc/cuda_call.h"
 #include "core/providers/cuda/tunable/cuda_tuning_context.h"
@@ -34,6 +35,8 @@ class CUDAExecutionProvider : public IExecutionProvider {
   Status OnRunStart(const onnxruntime::RunOptions& run_options) override;
 
   Status OnRunEnd(bool sync_stream, const onnxruntime::RunOptions& run_options) override;
+
+  Status OnSessionInitializationEnd() override;
 
   DataLayout GetPreferredLayout() const override;
 
@@ -105,6 +108,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
     const CUDAExecutionProviderExternalAllocatorInfo* external_alloc_info = nullptr;
     const OrtArenaCfg* arena_cfg = nullptr;
     const logging::Logger* logger = nullptr;
+    std::shared_ptr<SessionBudgetAccount> budget_account = nullptr;
   };
 
   static AllocatorPtr CreateCudaAllocator(const CUDAAllocatorParams& cuda_allocator_params);
@@ -114,6 +118,10 @@ class CUDAExecutionProvider : public IExecutionProvider {
   ITuningContext* GetTuningContext() const override;
 
   std::unique_ptr<profiling::EpProfiler> GetProfiler() override;
+
+  bool ConcurrentRunSupported() const override {
+    return !(qmoe_controller_ && qmoe_controller_->HasOffloadNodes());
+  }
 
   bool IsGraphCaptureEnabled() const override;
   bool IsGraphCaptured(CudaGraphAnnotation_t graph_annotation_id) const override;
@@ -136,9 +144,15 @@ class CUDAExecutionProvider : public IExecutionProvider {
   void SetSessionModelPath(std::filesystem::path path) const;
   std::filesystem::path GetSessionModelPath() const;
 
+  const std::shared_ptr<onnxruntime::cuda::QMoESessionController>& GetQMoESessionController() const {
+    return qmoe_controller_;
+  }
+
  private:
   mutable std::mutex captured_host_buffers_mutex_;
   mutable std::vector<std::shared_ptr<void>> captured_host_buffers_;
+  std::shared_ptr<onnxruntime::cuda::QMoESessionController> qmoe_controller_;
+  std::shared_ptr<SessionBudgetAccount> session_budget_account_;
 
   mutable std::mutex model_path_mutex_;
   mutable std::filesystem::path model_path_;
@@ -183,6 +197,12 @@ class CUDAExecutionProvider : public IExecutionProvider {
     CudaGraphAnnotation_t GetCudaGraphAnnotationId(const onnxruntime::RunOptions& run_options) const;
     Status ReplayGraph(CudaGraphAnnotation_t cuda_graph_annotation_id, bool sync = true);
     void IncrementRegularRunCountBeforeGraphCapture(CudaGraphAnnotation_t cuda_graph_annotation_id);
+    uint64_t LastQMoEGraphGen() const noexcept { return last_qmoe_graph_gen_; }
+    void ResetForQMoEGraphGen(uint64_t new_gen) {
+      cuda_graph_.Reset();
+      graph_id_to_run_count_.clear();
+      last_qmoe_graph_gen_ = new_gen;
+    }
 
    private:
     cublasHandle_t cublas_handle_ = nullptr;
@@ -194,6 +214,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
     CUDAGraph cuda_graph_;
     // Map of graph id to regular_run_count_before_graph_capture
     std::unordered_map<CudaGraphAnnotation_t, int> graph_id_to_run_count_;
+    uint64_t last_qmoe_graph_gen_ = 0;
 
     // There is chance that the second regular run allocates GPU memory for causes like:
     // (1) memory pattern is enabled. (2) arena allocation for stream.

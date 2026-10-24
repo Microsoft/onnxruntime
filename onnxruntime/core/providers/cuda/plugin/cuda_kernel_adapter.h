@@ -32,6 +32,8 @@
 
 #include <cublas_v2.h>
 #include <cudnn.h>
+#include "core/providers/cuda/bounded_pinned_pool.h"
+#include "core/providers/cuda/qmoe_session_controller.h"
 #include "core/providers/cuda/shared_inc/cuda_call.h"
 #include "core/providers/cuda/cudnn_loader.h"
 #include "core/providers/cuda/cufft_loader.h"
@@ -543,6 +545,10 @@ struct CudaKernelAdapterRuntimeConfig {
   onnxruntime::AttentionKernelOptions attention_kernel_options;
   std::mutex captured_host_buffers_mutex;
   std::vector<std::shared_ptr<void>> captured_host_buffers;
+  std::mutex qmoe_pinned_pool_mutex;
+  std::shared_ptr<onnxruntime::cuda::BoundedPinnedPool> qmoe_pinned_pool;
+  std::shared_ptr<onnxruntime::cuda::QMoESessionController> qmoe_controller =
+      std::make_shared<onnxruntime::cuda::QMoESessionController>();
 
   void RetainBufferForGraphCapture(std::shared_ptr<void> buffer) {
     std::lock_guard<std::mutex> lock(captured_host_buffers_mutex);
@@ -784,6 +790,14 @@ inline void SetCudaKernelAdapterRuntimeConfigForProvider(
   config->device_id = init_config.device_id;
   config->do_copy_in_default_stream = init_config.do_copy_in_default_stream;
   config->enable_cuda_graph = init_config.enable_cuda_graph;
+  if (init_config.qmoe_controller && init_config.qmoe_controller->DeviceId() == init_config.device_id) {
+    config->qmoe_controller = init_config.qmoe_controller;
+  } else {
+    config->qmoe_controller = std::make_shared<onnxruntime::cuda::QMoESessionController>(init_config.device_id);
+    if (init_config.qmoe_controller && init_config.qmoe_controller->BudgetAccount()) {
+      config->qmoe_controller->SetBudgetAccount(init_config.qmoe_controller->BudgetAccount());
+    }
+  }
   PL_CUDA_CALL_THROW(cudaGetDeviceProperties(&config->device_prop, config->device_id));
 }
 
@@ -1292,6 +1306,34 @@ class CudaKernel : public OpKernel {
     runtime_config_->RetainBufferForGraphCapture(
         std::shared_ptr<void>(buffer.release(),
                               [deleter](void* p) { deleter(static_cast<T*>(p)); }));
+  }
+
+  inline IAllocatorUniquePtr<uint8_t> AllocateReusableQMoEPinnedBuffer(
+      size_t bytes, size_t limit, std::shared_ptr<bool> completed) const {
+    std::shared_ptr<onnxruntime::cuda::BoundedPinnedPool> pool;
+    if (runtime_config_->qmoe_controller) {
+      pool = runtime_config_->qmoe_controller->GetOrCreatePinnedPool(limit);
+      ORT_ENFORCE(pool != nullptr && pool->Limit() == limit, "QMoE pinned-pool limits conflict within one provider.");
+    } else {
+      std::lock_guard<std::mutex> lock(runtime_config_->qmoe_pinned_pool_mutex);
+      if (!runtime_config_->qmoe_pinned_pool) {
+        runtime_config_->qmoe_pinned_pool = std::make_shared<onnxruntime::cuda::BoundedPinnedPool>(
+            limit, [](size_t size) -> void* {
+              void* pointer = nullptr;
+              return cudaHostAlloc(&pointer, size, cudaHostAllocDefault) == cudaSuccess ? pointer : nullptr; },
+            [](void* pointer) { cudaFreeHost(pointer); });
+      }
+      pool = runtime_config_->qmoe_pinned_pool;
+      ORT_ENFORCE(pool->Limit() == limit, "QMoE pinned-pool limits conflict within one provider.");
+    }
+    auto* pointer = static_cast<uint8_t*>(pool->Acquire(bytes));
+    return IAllocatorUniquePtr<uint8_t>(pointer, [pool, completed = std::move(completed)](uint8_t* buffer) {
+      pool->Release(buffer, *completed);
+    });
+  }
+
+  inline std::shared_ptr<onnxruntime::cuda::QMoESessionController> GetQMoESessionController() const {
+    return runtime_config_->qmoe_controller;
   }
 
   template <typename T>

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "cuda_data_transfer_plugin.h"
+#include "core/providers/cuda/cuda_allocator.h"
 
 namespace onnxruntime {
 namespace cuda_plugin {
@@ -78,6 +79,19 @@ CudaDataTransfer::CudaDataTransfer(const OrtApi& ort_api, const OrtEpApi& ep_api
     auto src_dev_type = dt->ep_api_.MemoryDevice_GetDeviceType(src_dev);
     auto dst_dev_type = dt->ep_api_.MemoryDevice_GetDeviceType(dst_dev);
     auto src_mem_type = dt->ep_api_.MemoryDevice_GetMemoryType(src_dev);
+
+    if (src_data == nullptr || dst_data == nullptr) {
+      int device_id = 0;
+      const auto* gpu_info = dst_dev_type == OrtMemoryInfoDeviceType_GPU ? dst_mem_info : src_mem_info;
+      auto* id_status = dt->ort_api_.MemoryInfoGetId(gpu_info, &device_id);
+      if (id_status != nullptr) return id_status;
+      const auto budget = GetCudaDeviceMemoryBudget(static_cast<OrtDevice::DeviceId>(device_id))->GetStats();
+      return dt->ort_api_.CreateStatus(
+          ORT_FAIL, ("CUDA tensor allocation failed before copy: requested " + std::to_string(bytes) +
+                     " bytes; device memory budget limit " + std::to_string(budget.limit) +
+                     ", committed " + std::to_string(budget.committed) + " bytes")
+                        .c_str());
+    }
 
     cudaMemcpyKind copy_kind;
     if (src_dev_type == OrtMemoryInfoDeviceType_CPU && dst_dev_type == OrtMemoryInfoDeviceType_GPU) {

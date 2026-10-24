@@ -191,6 +191,9 @@ struct OpKernelContext {
   void* GetGPUComputeStream() const {
     return context_.GetGPUComputeStream();
   }
+  void ParallelFor(void (*callback)(void*, size_t), size_t total, void* user_data) const {
+    context_.ParallelFor(callback, total, 0, user_data);
+  }
   OrtSyncStream* GetSyncStream() const {
     static constexpr uint32_t kOrtKernelContextGetSyncStreamMinVersion = 28;
     if (CurrentOrtApiVersion() < kOrtKernelContextGetSyncStreamMinVersion) {

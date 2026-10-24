@@ -233,6 +233,7 @@ struct CUDA_Provider : Provider {
     CUDAExecutionProviderInfo info{};
     info.device_id = gsl::narrow<OrtDevice::DeviceId>(params->device_id);
     info.gpu_mem_limit = params->gpu_mem_limit;
+    info.gpu_device_mem_limit = params->gpu_device_mem_limit;
     info.arena_extend_strategy = params->arena_extend_strategy;
     info.cudnn_conv_algo_search = params->cudnn_conv_algo_search;
     info.do_copy_in_default_stream = params->do_copy_in_default_stream != 0;
@@ -269,6 +270,7 @@ struct CUDA_Provider : Provider {
     cuda_options.device_id = internal_options.device_id;
     cuda_options.cudnn_conv_algo_search = internal_options.cudnn_conv_algo_search;
     cuda_options.gpu_mem_limit = internal_options.gpu_mem_limit;
+    cuda_options.gpu_device_mem_limit = internal_options.gpu_device_mem_limit;
     cuda_options.arena_extend_strategy = internal_options.arena_extend_strategy;
     cuda_options.do_copy_in_default_stream = internal_options.do_copy_in_default_stream;
     cuda_options.has_user_compute_stream = internal_options.has_user_compute_stream;

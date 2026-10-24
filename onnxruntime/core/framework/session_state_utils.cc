@@ -390,6 +390,9 @@ common::Status SaveInitializedTensors(
       continue;
     }
 #endif
+    if (exec_plan.GetLocation(entry.first) == default_cpu_device && utils::HasExternalData(*entry.second)) {
+      continue;
+    }
     ORT_RETURN_IF_ERROR(planner.Trace(entry.first, entry.second));
   }
 
