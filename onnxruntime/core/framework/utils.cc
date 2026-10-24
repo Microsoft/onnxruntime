@@ -988,6 +988,10 @@ int32_t ONNXTensorElementDataTypeToProtoTensorType(ONNXTensorElementDataType onn
       return onnx::TensorProto_DataType::TensorProto_DataType_FLOAT16;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16:
       return onnx::TensorProto_DataType::TensorProto_DataType_BFLOAT16;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E2M3:
+      return onnx::TensorProto_DataType::TensorProto_DataType_FLOAT6E2M3;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E3M2:
+      return onnx::TensorProto_DataType::TensorProto_DataType_FLOAT6E3M2;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64:
       return onnx::TensorProto_DataType::TensorProto_DataType_COMPLEX64;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128:

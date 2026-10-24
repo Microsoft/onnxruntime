@@ -24,3 +24,5 @@ class TensorDataType(object):
     FLOAT8E4M3FNUZ = 18
     FLOAT8E5M2 = 19
     FLOAT8E5M2FNUZ = 20
+    FLOAT6E2M3 = 27
+    FLOAT6E3M2 = 28

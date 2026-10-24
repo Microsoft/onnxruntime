@@ -233,6 +233,16 @@ constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float8E8M0>() {
 #endif
 
 template <>
+constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float6E2M3>() {
+  return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E2M3;
+}
+
+template <>
+constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float6E3M2>() {
+  return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E3M2;
+}
+
+template <>
 constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Int4x2>() {
   return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4;
 }

@@ -62,6 +62,21 @@ namespace onnxruntime {
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+static bool IsFloat6Tensor(const TensorProto& tensor_proto) {
+  return tensor_proto.data_type() == TensorProto_DataType_FLOAT6E2M3 ||
+         tensor_proto.data_type() == TensorProto_DataType_FLOAT6E3M2;
+}
+
+static void PackFloat6InitializerData(const TensorProto& initializer, std::vector<uint8_t>& data) {
+  if (!IsFloat6Tensor(initializer)) return;
+
+  const auto* type = DataTypeImpl::TensorTypeFromONNXEnum(initializer.data_type())->GetElementType();
+  Tensor tensor(type, utils::GetTensorShapeFromTensorProto(initializer), data.data(),
+                OrtMemoryInfo(CPU, OrtAllocatorType::OrtDeviceAllocator));
+  const auto packed_proto = utils::TensorToTensorProto(tensor, initializer.name(), false);
+  data.assign(packed_proto.raw_data().begin(), packed_proto.raw_data().end());
+}
+
 #define NO_CHANGE_ON_SYNC_FLAG(...)                  \
   do {                                               \
     const bool sync_needed = GraphProtoSyncNeeded(); \
@@ -4061,6 +4076,7 @@ Status Graph::ConvertInitializersIntoOrtValues() {
                                "': ", unpack_status.ErrorMessage());
       }
 
+      PackFloat6InitializerData(tensor_proto, buffer);
       tensor_proto.clear_external_data();
       tensor_proto.set_data_location(ONNX_NAMESPACE::TensorProto_DataLocation_DEFAULT);
       utils::SetRawDataInTensorProto(tensor_proto, buffer.data(), buffer.size());
@@ -4425,6 +4441,8 @@ Status Graph::InjectExternalInitializedTensors(const InlinedHashMap<std::string,
     // String tensors cannot use the raw buffer in-memory optimization because their raw data
     // contains std::string objects (with internal pointers), not serializable content.
     if (!user_tensor.IsDataTypeString() &&
+        user_tensor.GetElementType() != TensorProto_DataType_FLOAT6E2M3 &&
+        user_tensor.GetElementType() != TensorProto_DataType_FLOAT6E3M2 &&
         user_tensor.SizeInBytes() > utils::kSmallTensorExternalDataThreshold) {
       if (user_tensor.OwnsBuffer()) {
         // If the user tensor has its own memory, we avoid copying
@@ -4463,13 +4481,17 @@ Status Graph::InjectExternalInitializersFromFilesInMemory(
       const size_t external_data_length = external_data_info->GetLength();
       SafeInt<size_t> tensor_byte_size;
       ORT_RETURN_IF_ERROR(utils::GetSizeInBytesFromTensorProto<0>(*tensor_proto, &tensor_byte_size));
+      const bool is_float6 = IsFloat6Tensor(*tensor_proto);
+      const size_t file_byte_size = is_float6
+                                        ? static_cast<size_t>((SafeInt<size_t>(tensor_byte_size) * 6 + 7) / 8)
+                                        : static_cast<size_t>(tensor_byte_size);
 
-      ORT_RETURN_IF_NOT(external_data_length == 0 || external_data_length == tensor_byte_size,
+      ORT_RETURN_IF_NOT(external_data_length == 0 || external_data_length == file_byte_size,
                         "TensorProto: ", tensor_name, " external data size mismatch. Computed size: ",
-                        *&tensor_byte_size, ", external_data.length: ", external_data_length);
+                        file_byte_size, ", external_data.length: ", external_data_length);
 
       SafeInt<FileOffsetType> end_of_read(file_offset);
-      end_of_read += tensor_byte_size;
+      end_of_read += file_byte_size;
 
       auto user_provided_entry = external_initializer_files.find(ExternalDataInfo::NormalizeFileName(external_file));
       ORT_RETURN_IF(user_provided_entry == external_initializer_files.end(),
@@ -4498,7 +4520,7 @@ Status Graph::InjectExternalInitializersFromFilesInMemory(
       if constexpr (endian::native == endian::little) {
         const bool is_naturally_aligned =
             reinterpret_cast<uintptr_t>(user_provided_tensor_buffer) % element_size == 0;
-        if (use_buffers_directly && !utils::HasString(old_initializer) &&
+        if (use_buffers_directly && !is_float6 && !utils::HasString(old_initializer) &&
             tensor_byte_size > utils::kSmallTensorExternalDataThreshold && is_naturally_aligned) {
           Tensor tensor{type, tensor_shape, user_provided_tensor_buffer,
                         OrtMemoryInfo(CPU, OrtAllocatorType::OrtDeviceAllocator)};
@@ -4521,6 +4543,21 @@ Status Graph::InjectExternalInitializersFromFilesInMemory(
       ORT_ENFORCE(existing_entry != mutable_initializers.pointer_end(),
                   "graph_proto_ is not in sync with name_to_initial_tensor_");
       (**existing_entry).clear_data_location();
+
+      if (is_float6) {
+        Tensor tensor{type, tensor_shape, CPUAllocator::DefaultInstance()};
+        if (old_initializer.data_type() == TensorProto_DataType_FLOAT6E2M3) {
+          ORT_RETURN_IF_ERROR(utils::UnpackTensor(old_initializer, user_provided_tensor_buffer, file_byte_size,
+                                                  tensor.MutableData<Float6E2M3>(),
+                                                  static_cast<size_t>(tensor_shape.Size())));
+        } else {
+          ORT_RETURN_IF_ERROR(utils::UnpackTensor(old_initializer, user_provided_tensor_buffer, file_byte_size,
+                                                  tensor.MutableData<Float6E3M2>(),
+                                                  static_cast<size_t>(tensor_shape.Size())));
+        }
+        **existing_entry = utils::TensorToTensorProto(tensor, tensor_name, false);
+        continue;
+      }
 
       // Convert data from little endian before assigning it to tensor.
       // It would have been better to byteswap it right after loading from file,
@@ -5415,6 +5452,7 @@ Status Graph::AddExternalInitializersToGraphProtoImpl(
       TensorProto* output_proto = output_graph_proto.add_initializer();
       std::vector<uint8_t> raw_data;
       ORT_RETURN_IF_ERROR(utils::UnpackInitializerData(initializer, model_path, raw_data));
+      PackFloat6InitializerData(initializer, raw_data);
       size_t tensor_bytes_size = raw_data.size();
       ORT_RETURN_IF_NOT(tensor_bytes_size <= static_cast<size_t>(std::numeric_limits<int64_t>::max()),
                         "External initializer length exceeds the ONNX signed 64-bit limit: ", initializer.name());

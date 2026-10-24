@@ -18,6 +18,7 @@
 #include "core/framework/int4.h"
 #include "core/framework/int2.h"
 #include "core/framework/float4.h"
+#include "core/framework/float6.h"
 #include "core/graph/onnx_protobuf.h"
 #include "core/framework/to_tensor_proto_element_type.h"
 
@@ -214,6 +215,7 @@ class DataTypeImpl {
   static const std::vector<MLDataType>& AllTensorTypesIRv10();
   static const std::vector<MLDataType>& AllTensorTypesIRv11();
   static const std::vector<MLDataType>& AllTensorTypesIRv13();
+  static const std::vector<MLDataType>& AllTensorTypesIRv14();
 
   static const std::vector<MLDataType>& AllFixedSizeTensorTypes();  // up to IR4 (no float 8), deprecated
   static const std::vector<MLDataType>& AllFixedSizeTensorTypesIRv4();
@@ -288,7 +290,8 @@ template <typename T>
 struct IsTensorContainedType : public IsAnyOf<T, float, uint8_t, int8_t, uint16_t, int16_t,
                                               int32_t, int64_t, std::string, bool, MLFloat16,
                                               double, uint32_t, uint64_t, BFloat16,
-                                              Int4x2, UInt4x2, Int2x4, UInt2x4
+                                              Int4x2, UInt4x2, Int2x4, UInt2x4,
+                                              Float6E2M3, Float6E3M2
 #if !defined(DISABLE_FLOAT8_TYPES)
                                               ,
                                               Float8E4M3FN, Float8E4M3FNUZ, Float8E5M2, Float8E5M2FNUZ, Float8E8M0

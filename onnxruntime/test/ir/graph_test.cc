@@ -12,6 +12,7 @@
 #include "core/framework/tensor_type_and_shape.h"
 #include "core/framework/tensorprotoutils.h"
 #include "core/graph/graph_flatbuffers_utils.h"
+#include "core/graph/graph_proto_serializer.h"
 #include "core/graph/graph_viewer.h"
 #include "core/graph/graph_utils.h"
 #include "core/graph/model.h"
@@ -24,6 +25,7 @@
 #include "core/session/environment.h"
 #include "test/providers/provider_test_utils.h"
 #include "test/test_environment.h"
+#include "test/util/include/temp_dir.h"
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 #include "onnx/defs/function.h"
@@ -354,6 +356,114 @@ TEST_F(GraphTest, ModelEditorPreservesTensorElementTypes) {
     ASSERT_EQ(graph_proto.output_size(), 1);
     EXPECT_EQ(graph_proto.input(0).type().tensor_type().elem_type(), proto_type);
     EXPECT_EQ(graph_proto.output(0).type().tensor_type().elem_type(), proto_type);
+  }
+}
+
+TEST_F(GraphTest, ModelEditorFloat6ExternalInitializerSavesToOrtFormat) {
+  for (const auto data_type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    constexpr int64_t count = 132;
+    std::vector<uint8_t> bits(count);
+    for (size_t i = 0; i < bits.size(); ++i) {
+      bits[i] = static_cast<uint8_t>((i * 7 + 1) % 64);
+    }
+
+    auto editor_graph = std::make_unique<ModelEditorGraph>();
+    auto value_info = std::make_unique<ModelEditorValueInfo>();
+    value_info->name = "float6";
+    const TensorShape shape{count};
+    const auto ort_type = static_cast<ONNXTensorElementDataType>(data_type);
+    value_info->type_info = std::make_unique<OrtTypeInfo>(
+        ONNX_TYPE_TENSOR, OrtTensorTypeAndShapeInfo::GetTensorShapeAndTypeHelper(ort_type, &shape, nullptr));
+    editor_graph->outputs.emplace_back(value_info.release());
+
+    auto value = std::unique_ptr<OrtValue, OrtValueDeleter>(new OrtValue());
+    const auto* type = DataTypeImpl::TensorTypeFromONNXEnum(data_type)->GetElementType();
+    Tensor::InitOrtValue(type, shape, bits.data(), OrtMemoryInfo(CPU, OrtAllocatorType::OrtDeviceAllocator), *value);
+    editor_graph->external_initializers.emplace("float6", std::move(value));
+
+    OrtModel editor_model;
+    editor_model.graph.reset(editor_graph.release());
+    editor_model.domain_to_version[kOnnxDomain] = 21;
+    std::unique_ptr<Model> model;
+    ASSERT_STATUS_OK(Model::LoadFromModelEditorApiModel(editor_model, nullptr, ModelOptions{}, *logger_, model));
+    ASSERT_STATUS_OK(model->MainGraph().Resolve());
+
+    GraphProto exported_graph;
+    GraphViewerToProto(GraphViewer(model->MainGraph()), exported_graph, true, false);
+    ASSERT_EQ(exported_graph.initializer_size(), 1);
+    const auto& exported_initializer = exported_graph.initializer(0);
+    ASSERT_EQ(exported_initializer.raw_data().size(), count * 6 / 8);
+    std::vector<uint8_t> exported_bits;
+    ASSERT_STATUS_OK(utils::UnpackInitializerData(exported_initializer, exported_bits));
+    EXPECT_EQ(exported_bits, bits);
+
+    flatbuffers::FlatBufferBuilder builder;
+    flatbuffers::Offset<fbs::Model> offset;
+    ASSERT_STATUS_OK(model->SaveToOrtFormat(builder, offset));
+    builder.Finish(offset);
+
+    const auto* saved_graph = flatbuffers::GetRoot<fbs::Model>(builder.GetBufferPointer())->graph();
+    ASSERT_NE(saved_graph, nullptr);
+    ASSERT_NE(saved_graph->initializers(), nullptr);
+    ASSERT_EQ(saved_graph->initializers()->size(), 1U);
+    const auto* saved_initializer = saved_graph->initializers()->Get(0);
+    ASSERT_NE(saved_initializer->raw_data(), nullptr);
+    EXPECT_EQ(saved_initializer->raw_data()->size(), count * 6 / 8);
+    TensorProto loaded;
+    OrtFormatLoadOptions options;
+    ASSERT_STATUS_OK(fbs::utils::LoadInitializerOrtFormat(*saved_initializer, loaded, options));
+    std::vector<uint8_t> decoded;
+    ASSERT_STATUS_OK(utils::UnpackInitializerData(loaded, decoded));
+    EXPECT_EQ(decoded, bits);
+  }
+}
+
+TEST_F(GraphTest, GraphViewerExportsFileBackedFloat6Initializer) {
+  TemporaryDirectory temp_dir{ORT_TSTR("float6_graph_export")};
+  const auto model_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("model.onnx");
+  const auto data_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("float6.bin");
+  constexpr int64_t count = 132;
+  std::string packed_data;
+  std::vector<uint8_t> expected;
+  for (int64_t i = 0; i < count / 4; ++i) {
+    packed_data.append("\x01\x42\xc3", 3);
+    expected.insert(expected.end(), {1, 8, 52, 48});
+  }
+  {
+    std::ofstream output(data_path, std::ios::binary);
+    output.write(packed_data.data(), packed_data.size());
+  }
+
+  for (const auto data_type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    ModelProto source;
+    source.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    source.add_opset_import()->set_version(21);
+    auto* graph = source.mutable_graph();
+    graph->set_name("float6_export");
+    auto* output = graph->add_output();
+    output->set_name("float6");
+    output->mutable_type()->mutable_tensor_type()->set_elem_type(data_type);
+    output->mutable_type()->mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(count);
+    auto* initializer = graph->add_initializer();
+    initializer->set_name("float6");
+    initializer->set_data_type(data_type);
+    initializer->add_dims(count);
+    ExternalDataInfo::SetExternalLocationToProto("float6.bin", 0, packed_data.size(), *initializer);
+
+    std::shared_ptr<Model> model;
+    ASSERT_STATUS_OK(Model::Load(std::move(source), model_path.native(), model, nullptr, *logger_));
+    GraphProto exported_graph;
+    GraphViewerToProto(GraphViewer(model->MainGraph()), exported_graph, true, false);
+    ASSERT_EQ(exported_graph.initializer_size(), 1);
+    const auto& exported_initializer = exported_graph.initializer(0);
+    EXPECT_TRUE(utils::HasExternalData(exported_initializer));
+    TensorProto inlined;
+    ASSERT_STATUS_OK(
+        utils::TensorProtoWithExternalDataToTensorProto(exported_initializer, data_path.parent_path(), inlined));
+    EXPECT_EQ(inlined.raw_data(), packed_data);
+    std::vector<uint8_t> decoded;
+    ASSERT_STATUS_OK(utils::UnpackInitializerData(inlined, decoded));
+    EXPECT_EQ(decoded, expected);
   }
 }
 
@@ -2135,6 +2245,116 @@ TEST_F(GraphTest, InjectExternalInitializedTensors) {
     // Fail the test because with_data shouldn't be nullptr.
     // This if-else is added for suppressing warning C6011: dereferencing NULL pointer.
     ASSERT_TRUE(false);
+  }
+}
+
+TEST_F(GraphTest, InjectFloat6ExternalInitializedTensors) {
+  for (const auto data_type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    for (const bool owned : {false, true}) {
+      constexpr size_t count = 132;
+      const std::string name = "float6";
+      Model model{"float6_injection", false, *logger_};
+      Graph& graph = model.MainGraph();
+      TensorProto initializer;
+      initializer.set_name(name);
+      initializer.set_data_type(data_type);
+      initializer.add_dims(count);
+      ExternalDataInfo::SetExternalLocationToProto("float6.bin", 0, count * 6 / 8, initializer);
+      graph.AddInitializedTensor(initializer);
+
+      const auto* type = DataTypeImpl::TensorTypeFromONNXEnum(data_type)->GetElementType();
+      TensorShape shape{count};
+      std::vector<uint8_t> bits(count);
+      for (size_t i = 0; i < count; ++i) bits[i] = static_cast<uint8_t>(i % 64);
+      OrtValue value;
+      if (owned) {
+        Tensor::InitOrtValue(type, shape, CPUAllocator::DefaultInstance(), value);
+        std::copy(bits.begin(), bits.end(),
+                  static_cast<uint8_t*>(value.GetMutable<Tensor>()->MutableDataRaw()));
+      } else {
+        Tensor::InitOrtValue(type, shape, bits.data(),
+                             OrtMemoryInfo(CPU, OrtAllocatorType::OrtDeviceAllocator), value);
+      }
+
+      ASSERT_STATUS_OK(graph.InjectExternalInitializedTensors({{name, value}}));
+      const TensorProto* replaced = nullptr;
+      ASSERT_TRUE(graph.GetInitializedTensor(name, replaced));
+      ASSERT_NE(replaced, nullptr);
+      EXPECT_FALSE(utils::HasExternalData(*replaced));
+      ASSERT_EQ(replaced->raw_data().size(), count * 6 / 8);
+      std::vector<uint8_t> decoded;
+      ASSERT_STATUS_OK(utils::UnpackInitializerData(*replaced, decoded));
+      EXPECT_EQ(decoded, bits);
+    }
+  }
+}
+
+TEST_F(GraphTest, InjectFloat6ExternalInitializersFromFilesInMemory) {
+  for (const auto data_type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    for (const bool use_buffers_directly : {false, true}) {
+      constexpr size_t count = 132;
+      Model model{"float6_file_injection", false, *logger_};
+      Graph& graph = model.MainGraph();
+      TensorProto initializer;
+      initializer.set_name("float6");
+      initializer.set_data_type(data_type);
+      initializer.add_dims(count);
+      ExternalDataInfo::SetExternalLocationToProto("float6.bin", 1, count * 6 / 8, initializer);
+      graph.AddInitializedTensor(initializer);
+
+      std::string data(1, '\0');
+      std::vector<uint8_t> expected;
+      for (size_t i = 0; i < count / 4; ++i) {
+        data.append("\x01\x42\xc3", 3);
+        expected.insert(expected.end(), {1, 8, 52, 48});
+      }
+      InlinedHashMap<PathString, std::pair<char*, size_t>> files{
+          {ORT_TSTR("float6.bin"), {data.data(), data.size()}}};
+      files.at(ORT_TSTR("float6.bin")).second = data.size() - 1;
+      EXPECT_FALSE(graph.InjectExternalInitializersFromFilesInMemory(files, use_buffers_directly).IsOK());
+      files.at(ORT_TSTR("float6.bin")).second = data.size();
+      ASSERT_STATUS_OK(graph.InjectExternalInitializersFromFilesInMemory(files, use_buffers_directly));
+      const TensorProto* replaced = nullptr;
+      ASSERT_TRUE(graph.GetInitializedTensor("float6", replaced));
+      ASSERT_NE(replaced, nullptr);
+      EXPECT_FALSE(utils::HasExternalData(*replaced));
+      ASSERT_EQ(replaced->raw_data().size(), count * 6 / 8);
+      EXPECT_EQ(replaced->raw_data(), data.substr(1));
+      std::vector<uint8_t> decoded;
+      ASSERT_STATUS_OK(utils::UnpackInitializerData(*replaced, decoded));
+      EXPECT_EQ(decoded, expected);
+    }
+  }
+}
+
+TEST_F(GraphTest, InlineFloat6ExternalTensorAttribute) {
+  TemporaryDirectory temp_dir{ORT_TSTR("float6_attribute_test")};
+  const auto model_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("model.onnx");
+  const auto data_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("attribute.bin");
+  for (const auto type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    {
+      std::ofstream output(data_path, std::ios::binary);
+      output.write("\x01\x42\xc3", 3);
+    }
+    ModelProto source;
+    source.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    source.mutable_graph()->set_name("float6_attribute");
+    source.add_opset_import()->set_version(17);
+    TensorProto tensor;
+    tensor.set_data_type(type);
+    tensor.add_dims(4);
+    ExternalDataInfo::SetExternalLocationToProto("attribute.bin", 0, 3, tensor);
+    std::shared_ptr<Model> model;
+    ASSERT_STATUS_OK(Model::Load(std::move(source), model_path.native(), model, nullptr, *logger_));
+    auto& graph = model->MainGraph();
+    NodeAttributes attributes;
+    attributes.emplace("value", ONNX_NAMESPACE::MakeAttribute("value", tensor));
+    graph.AddNode("attribute_node", "Custom", "", {}, {}, &attributes, "test");
+    ASSERT_STATUS_OK(graph.ConvertInitializersIntoOrtValues());
+    ASSERT_EQ(graph.NumberOfNodes(), 1);
+    const auto& inlined = graph.Nodes().begin()->GetAttributes().at("value").t();
+    EXPECT_FALSE(utils::HasExternalData(inlined));
+    EXPECT_EQ(inlined.raw_data(), std::string("\x01\x42\xc3", 3));
   }
 }
 #endif

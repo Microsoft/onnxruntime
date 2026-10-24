@@ -8,6 +8,7 @@
 #include "core/common/narrow.h"
 #include "core/framework/element_type_lists.h"
 #include "core/common/float8.h"
+#include "core/framework/float6.h"
 #include "core/framework/int4.h"
 #include <cmath>
 #include <limits>
@@ -15,6 +16,34 @@
 #include "absl/base/attributes.h"
 
 namespace onnxruntime {
+
+template <typename T>
+constexpr bool IsFloatQuantizationType =
+#if !defined(DISABLE_FLOAT8_TYPES)
+    boost::mp11::mp_contains<element_type_lists::AllFloat8, T>::value ||
+#endif
+    std::is_same_v<T, Float6E2M3> ||
+    std::is_same_v<T, Float6E3M2>;
+
+template <typename T>
+T FloatQuantize(float value, bool saturate) {
+  if constexpr (std::is_same_v<T, Float6E2M3> || std::is_same_v<T, Float6E3M2>) {
+    ORT_UNUSED_PARAMETER(saturate);
+    return T(value);
+  } else {
+    return T(value, saturate);
+  }
+}
+
+template <typename T>
+T FloatQuantizeWithZeroPoint(float value, const T* zero_point, bool saturate) {
+  if constexpr (std::is_same_v<T, Float6E2M3> || std::is_same_v<T, Float6E3M2>) {
+    return FloatQuantize<T>(value + (zero_point ? static_cast<float>(*zero_point) : 0.0f), saturate);
+  } else {
+    ORT_UNUSED_PARAMETER(zero_point);
+    return FloatQuantize<T>(value, saturate);
+  }
+}
 
 inline float RoundHalfToEven(float input) {
   if (!std::isfinite(input)) {
@@ -146,11 +175,7 @@ void GetQuantizationParameter(const float* data, int64_t num_of_elements, float&
  */
 
 template <typename OutputType>
-#if !defined(DISABLE_FLOAT8_TYPES)
-typename std::enable_if<!boost::mp11::mp_contains<element_type_lists::AllFloat8, OutputType>::value, void>::type
-#else
-void
-#endif
+typename std::enable_if<!IsFloatQuantizationType<OutputType>, void>::type
 ParQuantizeLinearStd(const float* Input,
                      OutputType* Output,
                      size_t N,
@@ -385,11 +410,7 @@ DEFINE_PAR_QUANT_LINEAR_STD_2BIT_GENERIC(ParQuantizeLinearStdU2, UInt2x4)
 // This implementation could be more efficient however the cast from float16 to other types
 // usually happens on GPU.
 template <typename OutputType>
-#if !defined(DISABLE_FLOAT8_TYPES)
-typename std::enable_if<!boost::mp11::mp_contains<element_type_lists::AllFloat8, OutputType>::value, void>::type
-#else
-void
-#endif
+typename std::enable_if<!IsFloatQuantizationType<OutputType>, void>::type
 ParQuantizeLinearStd(const MLFloat16* Input,
                      OutputType* Output,
                      size_t N,
@@ -419,15 +440,13 @@ ParQuantizeLinearStd(const MLFloat16* Input,
   });
 }
 
-#if !defined(DISABLE_FLOAT8_TYPES)
-
-template <typename OutputFloat8Type>
-typename std::enable_if<boost::mp11::mp_contains<element_type_lists::AllFloat8, OutputFloat8Type>::value, void>::type
+template <typename OutputFloatType>
+typename std::enable_if<IsFloatQuantizationType<OutputFloatType>, void>::type
 ParQuantizeLinearSat(const float* Input,
-                     OutputFloat8Type* Output,
+                     OutputFloatType* Output,
                      size_t N,
                      float Scale,
-                     const OutputFloat8Type& /* ORT_UNUSED_PARAMETER(ZeroPoint) */,
+                     const OutputFloatType& ZeroPoint,
                      bool saturate,
                      concurrency::ThreadPool* thread_pool, bool half_precision = false) {
   constexpr std::ptrdiff_t block_size = 128;
@@ -437,7 +456,8 @@ ParQuantizeLinearSat(const float* Input,
     auto begin_idx = begin * block_size;
     auto end_idx = std::min(static_cast<std::ptrdiff_t>(N), end * block_size);
     for (; begin_idx < end_idx; ++begin_idx) {
-      Output[begin_idx] = OutputFloat8Type(QuantizeLinearDivide(Input[begin_idx], Scale, half_precision), saturate);
+      Output[begin_idx] = FloatQuantizeWithZeroPoint<OutputFloatType>(
+          QuantizeLinearDivide(Input[begin_idx], Scale, half_precision), &ZeroPoint, saturate);
     }
   });
 }
@@ -445,13 +465,13 @@ ParQuantizeLinearSat(const float* Input,
 // The implementation converts float16 to float and then do a quantization.
 // This is not efficient and is mostly added to enable unittest on CPU.
 // This case usually happens on GPU.
-template <typename OutputFloat8Type>
-typename std::enable_if<boost::mp11::mp_contains<element_type_lists::AllFloat8, OutputFloat8Type>::value, void>::type
+template <typename OutputFloatType>
+typename std::enable_if<IsFloatQuantizationType<OutputFloatType>, void>::type
 ParQuantizeLinearSat(const MLFloat16* Input,
-                     OutputFloat8Type* Output,
+                     OutputFloatType* Output,
                      size_t N,
                      float Scale,
-                     const OutputFloat8Type& /* ORT_UNUSED_PARAMETER(ZeroPoint) */,
+                     const OutputFloatType& ZeroPoint,
                      bool saturate,
                      concurrency::ThreadPool* thread_pool, bool half_precision = false) {
   constexpr std::ptrdiff_t block_size = 128;
@@ -461,12 +481,11 @@ ParQuantizeLinearSat(const MLFloat16* Input,
     auto begin_idx = begin * block_size;
     auto end_idx = std::min(static_cast<std::ptrdiff_t>(N), end * block_size);
     for (; begin_idx < end_idx; ++begin_idx) {
-      Output[begin_idx] = OutputFloat8Type(QuantizeLinearDivide(Input[begin_idx].ToFloat(), Scale, half_precision), saturate);
+      Output[begin_idx] = FloatQuantizeWithZeroPoint<OutputFloatType>(
+          QuantizeLinearDivide(Input[begin_idx].ToFloat(), Scale, half_precision), &ZeroPoint, saturate);
     }
   });
 }
-
-#endif
 
 /**
  * @brief  compute blocked quantization
@@ -474,7 +493,7 @@ ParQuantizeLinearSat(const MLFloat16* Input,
  * @tparam TIn
  * @tparam TOut
  * @tparam output_type_group        0: int other than int4.
- *                                  1: float8
+ *                                  1: float8 or float6
  *                                  2: int4
  * @method op0                      baseline implementation. Single thread. Scalar instructions.
  * @method op1                      multi-threading implementation. Vector instructions.
@@ -1213,15 +1232,12 @@ struct BlockedQuantizeLinear<MLFloat16, TOut, 3> {
   }
 };
 
-#if !defined(DISABLE_FLOAT8_TYPES)
-
 template <typename TOut>
 struct BlockedQuantizeLinear<float, TOut, 1> {
   static void opNotLastAxis(concurrency::ThreadPool* thread_pool, const float* input, QuantizeLinearScale scale,
                             const TOut* zero_point, TOut* output, std::ptrdiff_t M, std::ptrdiff_t K,
                             std::ptrdiff_t N, const std::ptrdiff_t quant_block_size,
                             const std::ptrdiff_t thread_block_size, bool saturate, bool half_precision = false) {
-    ORT_UNUSED_PARAMETER(zero_point);
     const auto num_thread_block_N = (N + thread_block_size - 1) / thread_block_size;
     const auto num_thread_block = M * K * num_thread_block_N;
     const TensorOpCost unit_cost{static_cast<double>(thread_block_size * sizeof(float) * 2),
@@ -1245,7 +1261,9 @@ struct BlockedQuantizeLinear<float, TOut, 1> {
           for (; begin < end; ++begin) {
             auto n_end = std::min(N, n + thread_block_size);
             for (; n < n_end; ++n, ++output_idx, ++quant_param_idx_t) {
-              output[output_idx] = TOut(QuantizeLinearDivide(input[output_idx], scale[quant_param_idx_t], half_precision), saturate);
+              output[output_idx] = FloatQuantizeWithZeroPoint<TOut>(
+                  QuantizeLinearDivide(input[output_idx], scale[quant_param_idx_t], half_precision),
+                  zero_point ? zero_point + quant_param_idx_t : nullptr, saturate);
             }
 
             if (n == N) {
@@ -1267,7 +1285,6 @@ struct BlockedQuantizeLinear<float, TOut, 1> {
   static void opLastAxis(concurrency::ThreadPool* thread_pool, const float* input, QuantizeLinearScale scale,
                          const TOut* zero_point, TOut* output, std::ptrdiff_t M, std::ptrdiff_t K,
                          const std::ptrdiff_t quant_block_size, bool saturate, bool half_precision = false) {
-    ORT_UNUSED_PARAMETER(zero_point);
     // quant block size is used as thread block size
     const auto num_thread_block_K = (K + quant_block_size - 1) / quant_block_size;
     const auto num_thread_block = num_thread_block_K * M;
@@ -1286,7 +1303,9 @@ struct BlockedQuantizeLinear<float, TOut, 1> {
             auto sc = scale[begin];
             auto output_idx_end = std::min(K - k, quant_block_size) + output_idx;
             for (; output_idx < output_idx_end; ++output_idx) {
-              output[output_idx] = TOut(QuantizeLinearDivide(input[output_idx], sc, half_precision), saturate);
+              output[output_idx] = FloatQuantizeWithZeroPoint<TOut>(
+                  QuantizeLinearDivide(input[output_idx], sc, half_precision),
+                  zero_point ? zero_point + begin : nullptr, saturate);
             }
             k = output_idx % K;
           }
@@ -1300,7 +1319,6 @@ struct BlockedQuantizeLinear<MLFloat16, TOut, 1> {
                             const TOut* zero_point, TOut* output, std::ptrdiff_t M, std::ptrdiff_t K,
                             std::ptrdiff_t N, const std::ptrdiff_t quant_block_size,
                             const std::ptrdiff_t thread_block_size, bool saturate, bool half_precision = false) {
-    ORT_UNUSED_PARAMETER(zero_point);
     const auto num_thread_block_N = (N + thread_block_size - 1) / thread_block_size;
     const auto num_thread_block = M * K * num_thread_block_N;
     const TensorOpCost unit_cost{static_cast<double>(thread_block_size * sizeof(MLFloat16) * 2),
@@ -1324,7 +1342,9 @@ struct BlockedQuantizeLinear<MLFloat16, TOut, 1> {
           for (; begin < end; ++begin) {
             auto n_end = std::min(N, n + thread_block_size);
             for (; n < n_end; ++n, ++output_idx, ++quant_param_idx_t) {
-              output[output_idx] = TOut(QuantizeLinearDivide(input[output_idx].ToFloat(), scale[quant_param_idx_t], half_precision), saturate);
+              output[output_idx] = FloatQuantizeWithZeroPoint<TOut>(
+                  QuantizeLinearDivide(input[output_idx].ToFloat(), scale[quant_param_idx_t], half_precision),
+                  zero_point ? zero_point + quant_param_idx_t : nullptr, saturate);
             }
 
             if (n == N) {
@@ -1346,7 +1366,6 @@ struct BlockedQuantizeLinear<MLFloat16, TOut, 1> {
   static void opLastAxis(concurrency::ThreadPool* thread_pool, const MLFloat16* input, QuantizeLinearScale scale,
                          const TOut* zero_point, TOut* output, std::ptrdiff_t M, std::ptrdiff_t K,
                          const std::ptrdiff_t quant_block_size, bool saturate, bool half_precision = false) {
-    ORT_UNUSED_PARAMETER(zero_point);
     const auto num_thread_block_K = (K + quant_block_size - 1) / quant_block_size;
     const auto num_thread_block = num_thread_block_K * M;
     const TensorOpCost unit_cost{static_cast<double>(quant_block_size * sizeof(MLFloat16)),
@@ -1364,15 +1383,15 @@ struct BlockedQuantizeLinear<MLFloat16, TOut, 1> {
             auto sc = scale[begin];
             auto output_idx_end = std::min(K - k, quant_block_size) + output_idx;
             for (; output_idx < output_idx_end; ++output_idx) {
-              output[output_idx] = TOut(QuantizeLinearDivide(input[output_idx].ToFloat(), sc, half_precision), saturate);
+              output[output_idx] = FloatQuantizeWithZeroPoint<TOut>(
+                  QuantizeLinearDivide(input[output_idx].ToFloat(), sc, half_precision),
+                  zero_point ? zero_point + begin : nullptr, saturate);
             }
             k = output_idx % K;
           }
         });
   }
 };
-
-#endif
 
 /**
  * @brief Run MlasDequantizeLinear in parallel, with provided thread pool

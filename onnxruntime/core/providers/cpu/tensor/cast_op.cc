@@ -46,13 +46,16 @@ using AllIRv10WithInt2 =
 #else
 using AllIRv10WithInt2 = AllIRv10WithInt2Base;
 #endif
+
+using AllIRv10WithInt2AndFloat6 =
+    boost::mp11::mp_push_back<AllIRv10WithInt2, Float6E2M3, Float6E3M2>;
 }  // namespace
 
 namespace op_kernel_type_control {
-// Type list for all opsets of Cast (includes Float8E8M0 for runtime dispatch).
+// Type list for all opsets of Cast (includes Float8E8M0 and Float6 types for runtime dispatch).
 ORT_SPECIFY_OP_KERNEL_ARG_DEFAULT_TYPE_LIST_ALL_OPSETS(
     kCpuExecutionProvider, kOnnxDomain, Cast, Input, 0,
-    AllIRv10WithInt2);
+    AllIRv10WithInt2AndFloat6);
 
 ORT_SPECIFY_OP_KERNEL_ARG_REQUIRED_TYPES_ALL_OPSETS(
     kCpuExecutionProvider, kOnnxDomain, Cast, Input, 0,
@@ -60,7 +63,7 @@ ORT_SPECIFY_OP_KERNEL_ARG_REQUIRED_TYPES_ALL_OPSETS(
 
 ORT_SPECIFY_OP_KERNEL_ARG_DEFAULT_TYPE_LIST_ALL_OPSETS(
     kCpuExecutionProvider, kOnnxDomain, Cast, Output, 0,
-    AllIRv10WithInt2);
+    AllIRv10WithInt2AndFloat6);
 
 ORT_SPECIFY_OP_KERNEL_ARG_REQUIRED_TYPES_ALL_OPSETS(
     kCpuExecutionProvider, kOnnxDomain, Cast, Output, 0,
@@ -73,16 +76,25 @@ using EnabledSrcTypes = ORT_OP_KERNEL_ARG_ENABLED_TYPE_LIST_ALL_OPSETS(kCpuExecu
 using EnabledDstTypes = ORT_OP_KERNEL_ARG_ENABLED_TYPE_LIST_ALL_OPSETS(kCpuExecutionProvider, kOnnxDomain,
                                                                        Cast, Output, 0);
 
-// Pre-opset-24 type lists (without Float8E8M0) for kernel registration TypeConstraints.
-// Float8E8M0 was introduced in opset 24.
+// Pre-opset-24 type lists exclude types introduced after opset 23.
 #if !defined(DISABLE_FLOAT8_TYPES)
-using EnabledSrcTypesPreOpset24 = boost::mp11::mp_remove<EnabledSrcTypes, Float8E8M0>;
-using EnabledDstTypesPreOpset24 = boost::mp11::mp_remove<EnabledDstTypes, Float8E8M0>;
+using EnabledSrcTypesPreOpset24 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledSrcTypes, Float8E8M0>, Float6E2M3>,
+                           Float6E3M2>;
+using EnabledDstTypesPreOpset24 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledDstTypes, Float8E8M0>, Float6E2M3>,
+                           Float6E3M2>;
 #else
-// When float8 types are disabled, Float8E8M0 is not in the type lists, so no removal needed.
-using EnabledSrcTypesPreOpset24 = EnabledSrcTypes;
-using EnabledDstTypesPreOpset24 = EnabledDstTypes;
+using EnabledSrcTypesPreOpset24 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledSrcTypes, Float6E2M3>, Float6E3M2>;
+using EnabledDstTypesPreOpset24 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledDstTypes, Float6E2M3>, Float6E3M2>;
 #endif
+
+using EnabledSrcTypesPreOpset28 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledSrcTypes, Float6E2M3>, Float6E3M2>;
+using EnabledDstTypesPreOpset28 =
+    boost::mp11::mp_remove<boost::mp11::mp_remove<EnabledDstTypes, Float6E2M3>, Float6E3M2>;
 
 template <typename T>
 using IsOrtFloat16Type = boost::mp11::mp_contains<TypeList<BFloat16, MLFloat16>, T>;
@@ -94,6 +106,9 @@ using IsOrtFloat8Type = boost::mp11::mp_contains<element_type_lists::AllFloat8, 
 template <typename T>
 struct IsOrtFloat8Type : std::false_type {};
 #endif
+
+template <typename T>
+using IsOrtFloat6Type = boost::mp11::mp_contains<TypeList<Float6E2M3, Float6E3M2>, T>;
 
 template <typename T>
 using IsOrtInt4Type = boost::mp11::mp_contains<TypeList<Int4x2, UInt4x2>, T>;
@@ -119,7 +134,8 @@ struct IsOrtInt4NumericConversionType {
       IsStandardIntegerType<T>::value ||
       std::is_floating_point_v<T> ||
       IsOrtFloat16Type<T>::value ||
-      IsOrtFloat8Type<T>::value;
+      IsOrtFloat8Type<T>::value ||
+      IsOrtFloat6Type<T>::value;
 };
 
 template <typename T>
@@ -139,7 +155,8 @@ struct IsOrtInt2NumericConversionType {
       IsStandardIntegerType<T>::value ||
       std::is_floating_point_v<T> ||
       IsOrtFloat16Type<T>::value ||
-      IsOrtFloat8Type<T>::value;
+      IsOrtFloat8Type<T>::value ||
+      IsOrtFloat6Type<T>::value;
 };
 
 template <typename T>
@@ -202,7 +219,9 @@ CastToString(const SrcType& input, std::string& output) {
 }
 
 template <typename SrcType>
-typename std::enable_if<IsOrtFloat16Type<SrcType>::value || IsOrtFloat8Type<SrcType>::value, void>::type
+typename std::enable_if<IsOrtFloat16Type<SrcType>::value || IsOrtFloat8Type<SrcType>::value ||
+                            IsOrtFloat6Type<SrcType>::value,
+                        void>::type
 CastToString(const SrcType& input, std::string& output) {
   CastToString(static_cast<float>(input), output);
 }
@@ -239,6 +258,14 @@ CastFromString(const std::string& input, DstType& output) {
   output = DstType(intermediate);
 }
 
+template <typename DstType>
+typename std::enable_if<IsOrtFloat6Type<DstType>::value, void>::type
+CastFromString(const std::string& input, DstType& output) {
+  double intermediate;
+  CastFromString(input, intermediate);
+  output = DstType(intermediate);
+}
+
 // type that is usable with Eigen cast
 template <typename T>
 struct EigenCastType {
@@ -268,6 +295,8 @@ struct FromInt4Converter {
       return DstType(static_cast<float>(val));
     } else if constexpr (IsOrtFloat8Type<DstType>::value) {
       return DstType(static_cast<float>(val), true);
+    } else if constexpr (IsOrtFloat6Type<DstType>::value) {
+      return DstType(static_cast<float>(val));
     } else if constexpr (std::is_same_v<bool, DstType>) {
       return val != 0;
     } else if constexpr (std::is_same_v<std::string, DstType>) {
@@ -375,6 +404,14 @@ struct ToInt4Converter<SrcType, DstType,
   }
 };
 
+template <typename SrcType, typename DstType>
+struct ToInt4Converter<SrcType, DstType,
+                       std::enable_if_t<IsOrtFloat6Type<SrcType>::value && IsOrtInt4Type<DstType>::value>> {
+  static typename DstType::UnpackedType Convert(const SrcType& val) {
+    return ToInt4Converter<int, DstType>::Convert(static_cast<int>(static_cast<float>(val)));
+  }
+};
+
 // string -> (U)Int4x2
 template <typename DstType>
 struct ToInt4Converter<std::string, DstType,
@@ -396,6 +433,8 @@ struct FromInt2Converter {
       return DstType(static_cast<float>(val));
     } else if constexpr (IsOrtFloat8Type<DstType>::value) {
       return DstType(static_cast<float>(val), true);
+    } else if constexpr (IsOrtFloat6Type<DstType>::value) {
+      return DstType(static_cast<float>(val));
     } else if constexpr (std::is_same_v<bool, DstType>) {
       return val != 0;
     } else if constexpr (std::is_same_v<std::string, DstType>) {
@@ -490,6 +529,14 @@ struct ToInt2Converter<SrcType, DstType,
   }
 };
 
+template <typename SrcType, typename DstType>
+struct ToInt2Converter<SrcType, DstType,
+                       std::enable_if_t<IsOrtFloat6Type<SrcType>::value && IsOrtInt2Type<DstType>::value>> {
+  static typename DstType::UnpackedType Convert(const SrcType& val) {
+    return ToInt2Converter<int, DstType>::Convert(static_cast<int>(static_cast<float>(val)));
+  }
+};
+
 // string -> (U)Int2x4
 template <typename DstType>
 struct ToInt2Converter<std::string, DstType,
@@ -513,6 +560,42 @@ struct TensorCaster {
     auto out_vector =
         EigenVectorMap<DstEigenCastType>(reinterpret_cast<DstEigenCastType*>(out.MutableData<DstType>()), shape_size);
     out_vector = in_vector.template cast<DstEigenCastType>();
+  }
+};
+
+// FP6 values are logical elements stored in byte-sized runtime storage. Route their
+// scalar conversions around Eigen, which cannot represent the custom FP6 formats.
+template <typename SrcType, typename DstType>
+struct TensorCaster<SrcType, DstType,
+                    std::enable_if_t<(IsOrtFloat6Type<SrcType>::value || IsOrtFloat6Type<DstType>::value) &&
+                                     !std::is_same_v<SrcType, MLFloat16> &&
+                                     !std::is_same_v<DstType, MLFloat16> &&
+                                     !IsOrtInt4Type<SrcType>::value && !IsOrtInt4Type<DstType>::value &&
+                                     !IsOrtInt2Type<SrcType>::value && !IsOrtInt2Type<DstType>::value &&
+                                     !std::is_same_v<SrcType, std::string> && !std::is_same_v<DstType, std::string>>> {
+  void Cast(const OpKernelContext&, const TensorShape& shape, const Tensor& in, Tensor& out) const {
+    const std::ptrdiff_t shape_size = narrow<std::ptrdiff_t>(shape.Size());
+    const auto* in_data = in.Data<SrcType>();
+    auto* out_data = out.MutableData<DstType>();
+    for (std::ptrdiff_t i = 0; i < shape_size; ++i) {
+      if constexpr (std::is_same_v<SrcType, double> && IsOrtFloat6Type<DstType>::value) {
+        out_data[i] = DstType(in_data[i]);
+      } else {
+        out_data[i] = DstType(static_cast<float>(in_data[i]));
+      }
+    }
+  }
+};
+
+template <typename SrcType>
+struct TensorCaster<SrcType, MLFloat16, std::enable_if_t<IsOrtFloat6Type<SrcType>::value>> {
+  void Cast(const OpKernelContext&, const TensorShape& shape, const Tensor& in, Tensor& out) const {
+    const std::ptrdiff_t shape_size = narrow<std::ptrdiff_t>(shape.Size());
+    const auto* in_data = in.Data<SrcType>();
+    auto* out_data = out.MutableData<MLFloat16>();
+    for (std::ptrdiff_t i = 0; i < shape_size; ++i) {
+      out_data[i] = MLFloat16(static_cast<float>(in_data[i]));
+    }
   }
 };
 
@@ -563,6 +646,30 @@ struct TensorCaster<float, MLFloat16> {
     auto in_data = in.Data<float>();
     const size_t shape_size = narrow<size_t>(shape.Size());
     MlasConvertFloatToHalfBufferInParallel(in_data, out_data, shape_size, ctx.GetOperatorThreadPool());
+  }
+};
+
+template <>
+struct TensorCaster<MLFloat16, Float6E2M3> {
+  void Cast(const OpKernelContext&, const TensorShape& shape, const Tensor& in, Tensor& out) const {
+    const std::ptrdiff_t shape_size = narrow<std::ptrdiff_t>(shape.Size());
+    const auto* in_data = in.Data<MLFloat16>();
+    auto* out_data = out.MutableData<Float6E2M3>();
+    for (std::ptrdiff_t i = 0; i < shape_size; ++i) {
+      out_data[i] = Float6E2M3(static_cast<float>(in_data[i]));
+    }
+  }
+};
+
+template <>
+struct TensorCaster<MLFloat16, Float6E3M2> {
+  void Cast(const OpKernelContext&, const TensorShape& shape, const Tensor& in, Tensor& out) const {
+    const std::ptrdiff_t shape_size = narrow<std::ptrdiff_t>(shape.Size());
+    const auto* in_data = in.Data<MLFloat16>();
+    auto* out_data = out.MutableData<Float6E3M2>();
+    for (std::ptrdiff_t i = 0; i < shape_size; ++i) {
+      out_data[i] = Float6E3M2(static_cast<float>(in_data[i]));
+    }
   }
 };
 
@@ -979,12 +1086,15 @@ class Cast final : public OpKernel {
                           to != ONNX_NAMESPACE::TensorProto::FLOAT8E4M3FNUZ &&
                           to != ONNX_NAMESPACE::TensorProto::FLOAT8E5M2 &&
                           to != ONNX_NAMESPACE::TensorProto::FLOAT8E5M2FNUZ &&
-                          to != ONNX_NAMESPACE::TensorProto::FLOAT8E8M0)) {
-      ORT_THROW("Attribute saturate is only used for cast to float 8 types.");
+                          to != ONNX_NAMESPACE::TensorProto::FLOAT8E8M0 &&
+                          to != ONNX_NAMESPACE::TensorProto::FLOAT6E2M3 &&
+                          to != ONNX_NAMESPACE::TensorProto::FLOAT6E3M2)) {
+      ORT_THROW("Attribute saturate is only used for cast to low-precision floating-point types.");
     }
 #else
-    if (saturate == 0) {
-      ORT_THROW("Attribute saturate is only used for cast to float 8 types.");
+    if (saturate == 0 && to != ONNX_NAMESPACE::TensorProto::FLOAT6E2M3 &&
+        to != ONNX_NAMESPACE::TensorProto::FLOAT6E3M2) {
+      ORT_THROW("Attribute saturate is only used for cast to low-precision floating-point types.");
     }
 #endif
     saturate_ = saturate == 1;
@@ -1135,6 +1245,10 @@ Status Cast::Compute(OpKernelContext* context) const {
     utils::MLTypeCallDispatcherFromTypeList<EnabledSrcTypes> dispatcher{from};
     dispatcher.Invoke<SrcDispatcher>(to_, *context, shape, *X, *Y);
 #if !defined(DISABLE_FLOAT8_TYPES)
+  } else if (to_ == ONNX_NAMESPACE::TensorProto::FLOAT6E2M3 ||
+             to_ == ONNX_NAMESPACE::TensorProto::FLOAT6E3M2) {
+    utils::MLTypeCallDispatcherFromTypeList<EnabledSrcTypes> dispatcher{from};
+    dispatcher.Invoke<SrcDispatcher>(to_, *context, shape, *X, *Y);
   } else if (to_ == ONNX_NAMESPACE::TensorProto::FLOAT8E4M3FN ||
              to_ == ONNX_NAMESPACE::TensorProto::FLOAT8E4M3FNUZ ||
              to_ == ONNX_NAMESPACE::TensorProto::FLOAT8E5M2 ||
@@ -1207,22 +1321,20 @@ ONNX_CPU_OPERATOR_VERSIONED_KERNEL(
     24,
     24,
     KernelDefBuilder()
-        .TypeConstraint("T1", BuildKernelDefConstraintsFromTypeList<EnabledSrcTypes>())
-        .TypeConstraint("T2", BuildKernelDefConstraintsFromTypeList<EnabledDstTypes>())
+        .TypeConstraint("T1", BuildKernelDefConstraintsFromTypeList<EnabledSrcTypesPreOpset28>())
+        .TypeConstraint("T2", BuildKernelDefConstraintsFromTypeList<EnabledDstTypesPreOpset28>())
         .MayInplace(0, 0),  // allocation planner will check input and output sizes match before inplacing
     Cast);
 
 ONNX_CPU_OPERATOR_VERSIONED_KERNEL(
     Cast,
-    25,
-    27,
+    25, 27,
     KernelDefBuilder()
-        .TypeConstraint("T1", BuildKernelDefConstraintsFromTypeList<EnabledSrcTypes>())
-        .TypeConstraint("T2", BuildKernelDefConstraintsFromTypeList<EnabledDstTypes>())
-        .MayInplace(0, 0),
+        .TypeConstraint("T1", BuildKernelDefConstraintsFromTypeList<EnabledSrcTypesPreOpset28>())
+        .TypeConstraint("T2", BuildKernelDefConstraintsFromTypeList<EnabledDstTypesPreOpset28>())
+        .MayInplace(0, 0),  // allocation planner will check input and output sizes match before inplacing
     Cast);
 
-// FP6 conversions are deferred; preserve the existing types for CPU fallback casts.
 ONNX_CPU_OPERATOR_KERNEL(
     Cast,
     28,

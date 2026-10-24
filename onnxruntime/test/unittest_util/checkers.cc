@@ -11,6 +11,7 @@
 #include "core/framework/int4.h"
 #include "core/framework/int2.h"
 #include "core/framework/float4.h"
+#include "core/framework/float6.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/unittest_util/conversion.h"
 
@@ -180,6 +181,37 @@ struct TensorCheck {
     }
   }
 };
+
+template <typename T>
+struct TensorCheckFloat6 {
+  void operator()(const Tensor& expected, const Tensor& actual, const ValidateOutputParams& params,
+                  const std::string& /*provider_type*/) const {
+    const auto size = static_cast<size_t>(actual.Shape().Size());
+    const auto* expected_data = expected.Data<T>();
+    const auto* actual_data = actual.Data<T>();
+    if (params.sort_output) {
+      std::vector<uint8_t> expected_bits, actual_bits;
+      expected_bits.reserve(size);
+      actual_bits.reserve(size);
+      for (size_t i = 0; i < size; ++i) {
+        expected_bits.push_back(expected_data[i].ToBits());
+        actual_bits.push_back(actual_data[i].ToBits());
+      }
+      sort_expected_and_actual_buffers(expected_bits, actual_bits);
+      EXPECT_EQ(expected_bits, actual_bits);
+    } else {
+      for (size_t i = 0; i < size; ++i) {
+        EXPECT_EQ(expected_data[i].ToBits(), actual_data[i].ToBits()) << "i:" << i;
+      }
+    }
+  }
+};
+
+template <>
+struct TensorCheck<Float6E2M3> : TensorCheckFloat6<Float6E2M3> {};
+
+template <>
+struct TensorCheck<Float6E3M2> : TensorCheckFloat6<Float6E3M2> {};
 
 #if !defined(DISABLE_FLOAT4_TYPES)
 template <>
@@ -575,7 +607,7 @@ void Check<Tensor>(std::string_view name, const OrtValue& expected, const Tensor
 
   utils::MLTypeCallDispatcher<bool, float, double, uint8_t, uint16_t, uint32_t, uint64_t,
                               int8_t, int16_t, int32_t, int64_t, std::string,
-                              Int4x2, UInt4x2, Int2x4, UInt2x4,
+                              Int4x2, UInt4x2, Int2x4, UInt2x4, Float6E2M3, Float6E3M2,
 #if !defined(DISABLE_FLOAT8_TYPES)
                               Float8E4M3FN, Float8E4M3FNUZ, Float8E5M2, Float8E5M2FNUZ, Float8E8M0,
 #endif
@@ -610,7 +642,7 @@ void Check<TensorSeq>(std::string_view name, const OrtValue& expected, const Ten
   // now check the contents of the tensors
   auto element_type = exp_seq.DataType()->AsPrimitiveDataType()->GetDataType();
   utils::MLTypeCallDispatcher<bool, float, double, uint8_t, uint16_t, uint32_t, uint64_t,
-                              int8_t, int16_t, int32_t, int64_t, std::string,
+                              int8_t, int16_t, int32_t, int64_t, std::string, Float6E2M3, Float6E3M2,
 #if !defined(DISABLE_FLOAT8_TYPES)
 
                               Float8E4M3FN, Float8E4M3FNUZ, Float8E5M2, Float8E5M2FNUZ, Float8E8M0,

@@ -5616,9 +5616,10 @@ namespace {
 struct StandaloneDequantizeKernel {
   StandaloneDequantizeKernel(const OrtKernelInfo* info, ONNXTensorElementDataType type)
       : info_(Ort::ConstKernelInfo(info).Copy()) {
-    const char* names[] = {"T1", "T2"};
-    const ONNXTensorElementDataType types[] = {type, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT};
-    op_ = Ort::Op::Create(info_, "DequantizeLinear", "", 25, names, types, 2, nullptr, 0, 2, 1);
+    const char* names[] = {"T1", "T2", "T3"};
+    const ONNXTensorElementDataType types[] = {
+        type, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT};
+    op_ = Ort::Op::Create(info_, "DequantizeLinear", "", 25, names, types, 3, nullptr, 0, 2, 1);
   }
 
   void Compute(OrtKernelContext* context) {

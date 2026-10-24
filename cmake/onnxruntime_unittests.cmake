@@ -1677,6 +1677,11 @@ block()
     DEPENDS ${onnxruntime_provider_test_deps}
   )
 
+  if (MSVC)
+    set_property(SOURCE "${TEST_SRC_DIR}/providers/cpu/tensor/cast_op_test.cc"
+                 APPEND PROPERTY COMPILE_OPTIONS "/bigobj")
+  endif()
+
   # Match the non-plugin WebGPU test-source selection above.
   if (onnxruntime_USE_WEBGPU AND NOT onnxruntime_USE_EP_API_ADAPTERS)
     target_include_directories(${onnxruntime_provider_test_target} PRIVATE ${WGSL_GENERATED_ROOT})

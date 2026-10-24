@@ -161,6 +161,48 @@ EM_ASYNC_JS(int, OrtLoadWebAssemblyExternalDataAsync,
 
 #endif
 
+common::Status ValidateWebAssemblyExternalDataRange(const std::filesystem::path& data_file_path,
+                                                    FileOffsetType data_offset,
+                                                    SafeInt<size_t> data_length) {
+  // clang-format off
+  auto err_code = EM_ASM_INT(({
+                               if (typeof Module == 'undefined' || !Module.MountedFiles) {
+                                 return 1;
+                               }
+                               let fileName = UTF8ToString(Number($0 >>> 0));
+                               if (fileName.startsWith('./')) {
+                                 fileName = fileName.substring(2);
+                               }
+                               const fileData = Module.MountedFiles.get(fileName);
+                               if (!fileData) {
+                                 return 2;
+                               }
+                               const fileSize = typeof Blob !== 'undefined' && fileData instanceof Blob
+                                                    ? fileData.size
+                                                    : fileData.byteLength;
+                               if (typeof fileSize !== 'number') {
+                                 return 4;
+                               }
+                               return Number($1 >>> 0) + Number($2 >>> 0) > fileSize ? 3 : 0;
+                             }),
+                             data_file_path.c_str(),
+                             static_cast<int32_t>(data_offset),
+                             static_cast<int32_t>(data_length));
+  // clang-format on
+  switch (err_code) {
+    case 0:
+      return Status::OK();
+    case 1:
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Module.MountedFiles is not available.");
+    case 2:
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "External data file not found: ", data_file_path);
+    case 3:
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "External data file is out of bounds: ", data_file_path);
+    default:
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Invalid mounted external data file: ", data_file_path);
+  }
+}
+
 common::Status LoadWebAssemblyExternalData(const Env& env,
                                            const std::filesystem::path& data_file_path,
                                            FileOffsetType data_offset,

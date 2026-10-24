@@ -75,7 +75,7 @@ jobs:
       run: |
         set -e -x
         BINARY_SIZE_THRESHOLD_ARGS=""
-        BINARY_SIZE_THRESHOLD_IN_BYTES=1607680
+        BINARY_SIZE_THRESHOLD_IN_BYTES=1624064
         echo "Binary size threshold in bytes: ${BINARY_SIZE_THRESHOLD_IN_BYTES}"
         BINARY_SIZE_THRESHOLD_ARGS="--threshold_size_in_bytes ${BINARY_SIZE_THRESHOLD_IN_BYTES}"
 

@@ -28,6 +28,8 @@ class FbsTypeInfo:
         fbs.TensorDataType.TensorDataType.FLOAT8E4M3FNUZ: "Float8E4M3FNUZ",
         fbs.TensorDataType.TensorDataType.FLOAT8E5M2: "Float8E5M2",
         fbs.TensorDataType.TensorDataType.FLOAT8E5M2FNUZ: "Float8E5M2FNUZ",
+        fbs.TensorDataType.TensorDataType.FLOAT6E2M3: "Float6E2M3",
+        fbs.TensorDataType.TensorDataType.FLOAT6E3M2: "Float6E3M2",
     }
 
     @staticmethod

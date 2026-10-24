@@ -41,6 +41,7 @@
 #include "core/framework/allocator.h"
 #include "core/common/float8.h"
 #include "core/common/float16.h"
+#include "core/framework/float6.h"
 #include "core/framework/int4.h"
 #include "core/framework/int2.h"
 #include "core/framework/float4.h"
@@ -95,6 +96,8 @@ enum TensorProto_DataType : int {
   TensorProto_DataType_FLOAT8E8M0 = 24,
   TensorProto_DataType_UINT2 = 25,
   TensorProto_DataType_INT2 = 26,
+  TensorProto_DataType_FLOAT6E2M3 = 27,
+  TensorProto_DataType_FLOAT6E3M2 = 28,
 };
 
 enum TensorProto_DataLocation : int {
@@ -412,6 +415,11 @@ constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float8E5M2FNUZ>
 template <>
 constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float4E2M1x2>() { return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT4E2M1; }
 #endif
+
+template <>
+constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float6E2M3>() { return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E2M3; }
+template <>
+constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Float6E3M2>() { return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT6E3M2; }
 
 template <>
 constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<Int4x2>() {

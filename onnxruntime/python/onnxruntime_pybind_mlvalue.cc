@@ -461,6 +461,8 @@ int OnnxRuntimeTensorToNumpyType(const DataTypeImpl* tensor_type) {
 #if !defined(DISABLE_FLOAT4_TYPES)
       {DataTypeImpl::GetType<Float4E2M1x2>(), NPY_UINT8},
 #endif
+      {DataTypeImpl::GetType<Float6E2M3>(), NPY_UINT8},
+      {DataTypeImpl::GetType<Float6E3M2>(), NPY_UINT8},
 #if !defined(DISABLE_FLOAT8_TYPES)
       {DataTypeImpl::GetType<Float8E4M3FN>(), NPY_UINT8},
 #endif

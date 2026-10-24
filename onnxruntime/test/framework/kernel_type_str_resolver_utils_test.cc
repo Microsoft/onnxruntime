@@ -45,6 +45,12 @@ TEST(KernelTypeStrResolverUtilsTest, VerifyLayoutTransformationRequiredOpsResolv
   ASSERT_STATUS_OK(
       kernel_type_str_resolver_utils::AddLayoutTransformationRequiredOpsToKernelTypeStrResolver(actual_resolver));
 
+  for (const auto* op_type : {"QuantizeLinear", "DequantizeLinear"}) {
+    const OpIdentifier op_id{kOnnxDomain, op_type, 28};
+    ASSERT_TRUE(expected_resolver.GetOpKernelTypeStrMap().contains(op_id));
+    ASSERT_TRUE(actual_resolver.GetOpKernelTypeStrMap().contains(op_id));
+  }
+
 #if !defined(DISABLE_CONTRIB_OPS)
   ASSERT_EQ(actual_resolver.GetOpKernelTypeStrMap(), expected_resolver.GetOpKernelTypeStrMap());
 #else   // !defined(DISABLE_CONTRIB_OPS)

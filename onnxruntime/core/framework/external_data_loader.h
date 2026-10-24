@@ -142,6 +142,11 @@ enum class ExternalDataLoadType {
 #endif
 };
 
+// Check a mounted file's range before allocating a destination buffer.
+common::Status ValidateWebAssemblyExternalDataRange(const std::filesystem::path& data_file_path,
+                                                    FileOffsetType data_offset,
+                                                    SafeInt<size_t> data_length);
+
 // Entry point for loading external data implementation using inline JavaScript.
 common::Status LoadWebAssemblyExternalData(const Env& env,
                                            const std::filesystem::path& data_file_path,

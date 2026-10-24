@@ -11,6 +11,7 @@
 #endif
 
 #include "core/framework/float4.h"
+#include "core/framework/float6.h"
 #include "core/common/float8.h"
 #include "core/common/float16.h"
 #include "core/framework/int2.h"
@@ -111,6 +112,15 @@ constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Float4E2
   return ONNX_NAMESPACE::TensorProto_DataType_FLOAT4E2M1;
 }
 #endif
+
+template <>
+constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Float6E2M3>() {
+  return ONNX_NAMESPACE::TensorProto_DataType_FLOAT6E2M3;
+}
+template <>
+constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Float6E3M2>() {
+  return ONNX_NAMESPACE::TensorProto_DataType_FLOAT6E3M2;
+}
 
 template <>
 constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Int4x2>() {

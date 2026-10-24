@@ -9,6 +9,7 @@
 #include "test/common/cuda_op_test_utils.h"
 #include "test/providers/provider_test_utils.h"
 #include "test/util/include/default_providers.h"
+#include "core/framework/float6.h"
 #include "core/framework/int4.h"
 #include "core/framework/int2.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
@@ -1700,6 +1701,198 @@ TEST(QuantizeLinearOpTest, Per_Channel_Axis_neg) {
                            0, 1, 2, 255,
                            0, 0, 1, 250});
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  // TensorRT doesn't support support UINT8 for quantization
+}
+
+template <typename F6>
+void QuantizeDequantizeLinearOp28Float6Test() {
+  const std::vector<int64_t> dims{6};
+  const std::vector<float> input{-4.0f, -1.0f, -0.25f, 0.0f, 0.25f, 4.0f};
+  constexpr float scale = 0.5f;
+  const F6 zero_point(0.0f);
+  std::vector<F6> quantized;
+  std::vector<float> dequantized;
+  quantized.reserve(input.size());
+  dequantized.reserve(input.size());
+
+  for (float value : input) {
+    const F6 quantized_value(value / scale);
+    quantized.push_back(quantized_value);
+    dequantized.push_back(static_cast<float>(quantized_value) * scale);
+  }
+
+  OpTester quantize_test("QuantizeLinear", 28);
+  quantize_test.AddAttribute<int64_t>("saturate", 0);
+  quantize_test.AddInput<float>("x", dims, input);
+  quantize_test.AddInput<float>("y_scale", {}, {scale});
+  quantize_test.AddInput<F6>("y_zero_point", {}, {zero_point});
+  quantize_test.AddOutput<F6>("y", dims, quantized);
+  quantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                    {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+
+  OpTester dequantize_test("DequantizeLinear", 28);
+  dequantize_test.AddInput<F6>("x", dims, quantized);
+  dequantize_test.AddInput<float>("x_scale", {}, {scale});
+  dequantize_test.AddInput<F6>("x_zero_point", {}, {zero_point});
+  dequantize_test.AddOutput<float>("y", dims, dequantized);
+  dequantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                      {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(QuantizeLinearOpTest, Float6E2M3) {
+  QuantizeDequantizeLinearOp28Float6Test<Float6E2M3>();
+}
+
+TEST(QuantizeLinearOpTest, Float6E3M2) {
+  QuantizeDequantizeLinearOp28Float6Test<Float6E3M2>();
+}
+
+template <typename F6>
+void QuantizeDequantizeLinearOp28Float6ScalarZeroPointTest() {
+  OpTester quantize_test("QuantizeLinear", 28);
+  quantize_test.AddInput<float>("x", {1}, {1.0f});
+  quantize_test.AddInput<float>("y_scale", {}, {0.5f});
+  quantize_test.AddInput<F6>("y_zero_point", {}, {F6(1.0f)});
+  quantize_test.AddOutput<F6>("y", {1}, {F6(3.0f)});
+  quantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                    {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+
+  OpTester dequantize_test("DequantizeLinear", 28);
+  dequantize_test.AddInput<F6>("x", {1}, {F6(1.0f)});
+  dequantize_test.AddInput<float>("x_scale", {}, {0.5f});
+  dequantize_test.AddInput<F6>("x_zero_point", {}, {F6(1.0f)});
+  dequantize_test.AddOutput<float>("y", {1}, {0.0f});
+  dequantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                      {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+template <typename F6, typename ScaleT>
+void QuantizeDequantizeLinearOp28Float6ScaleTest(bool blocked) {
+  const std::vector<int64_t> dims = blocked ? std::vector<int64_t>{2, 5} : std::vector<int64_t>{2, 3};
+  const std::vector<int64_t> scale_dims = blocked ? std::vector<int64_t>{2, 3} : std::vector<int64_t>{3};
+  const std::vector<float> scale_values = blocked ? std::vector<float>{0.5f, 1.0f, 2.0f, 1.0f, 2.0f, 0.5f}
+                                                  : std::vector<float>{0.5f, 1.0f, 2.0f};
+  const std::vector<float> input_values = blocked ? std::vector<float>{0.5f, -1.0f, 1.0f, -2.0f, 2.0f,
+                                                                       -1.0f, 2.0f, -2.0f, 4.0f, -1.0f}
+                                                  : std::vector<float>{0.5f, -1.0f, 2.0f, -1.0f, 2.0f, -4.0f};
+  const std::vector<float> expected_quantized = blocked ? std::vector<float>{1, -2, 1, -2, 1,
+                                                                             -1, 2, -1, 2, -2}
+                                                        : std::vector<float>{1, -1, 1, -2, 2, -2};
+  std::vector<ScaleT> scales, input, expected_output;
+  std::vector<F6> quantized;
+  std::vector<F6> zero_points;
+  for (float value : scale_values) {
+    scales.emplace_back(value);
+  }
+  for (size_t i = 0; i < scales.size(); ++i) {
+    zero_points.emplace_back(i % 2 == 0 ? 1.0f : -1.0f);
+  }
+  for (float value : input_values) {
+    input.emplace_back(value);
+  }
+  for (size_t i = 0; i < expected_quantized.size(); ++i) {
+    const size_t scale_index = blocked ? (i / 5) * 3 + (i % 5) / 2 : i % 3;
+    quantized.emplace_back(expected_quantized[i] + static_cast<float>(zero_points[scale_index]));
+    expected_output.emplace_back(expected_quantized[i] * scale_values[scale_index]);
+  }
+
+  OpTester quantize_test("QuantizeLinear", 28);
+  quantize_test.AddAttribute<int64_t>("axis", blocked ? 1 : -1);
+  if (blocked) {
+    quantize_test.AddAttribute<int64_t>("block_size", 2);
+  }
+  quantize_test.AddInput<ScaleT>("x", dims, input);
+  quantize_test.AddInput<ScaleT>("y_scale", scale_dims, scales);
+  quantize_test.AddInput<F6>("y_zero_point", scale_dims, zero_points);
+  quantize_test.AddOutput<F6>("y", dims, quantized);
+  quantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                    {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+
+  OpTester dequantize_test("DequantizeLinear", 28);
+  dequantize_test.AddAttribute<int64_t>("axis", blocked ? 1 : -1);
+  if (blocked) {
+    dequantize_test.AddAttribute<int64_t>("block_size", 2);
+  }
+  dequantize_test.AddInput<F6>("x", dims, quantized);
+  dequantize_test.AddInput<ScaleT>("x_scale", scale_dims, scales);
+  dequantize_test.AddInput<F6>("x_zero_point", scale_dims, zero_points);
+  dequantize_test.AddOutput<ScaleT>("y", dims, expected_output);
+  dequantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                      {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+template <typename F6>
+void QuantizeDequantizeLinearOp28Float6NonzeroZeroPointTest() {
+  const std::vector<int64_t> dims{2, 3};
+  const std::vector<F6> zero_points{F6(0.0f), F6(1.0f), F6(-1.0f)};
+  const std::vector<float> values{0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+  const std::vector<F6> quantized{F6(0.0f), F6(2.0f), F6(1.0f),
+                                  F6(3.0f), F6(5.0f), F6(4.0f)};
+
+  OpTester quantize_test("QuantizeLinear", 28);
+  quantize_test.AddAttribute<int64_t>("axis", 1);
+  quantize_test.AddInput<float>("x", dims, values);
+  quantize_test.AddInput<float>("y_scale", {3}, {1.0f, 1.0f, 1.0f});
+  quantize_test.AddInput<F6>("y_zero_point", {3}, zero_points);
+  quantize_test.AddOutput<F6>("y", dims, quantized);
+  quantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                    {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+
+  OpTester dequantize_test("DequantizeLinear", 28);
+  dequantize_test.AddAttribute<int64_t>("axis", 1);
+  dequantize_test.AddInput<F6>("x", dims, quantized);
+  dequantize_test.AddInput<float>("x_scale", {3}, {1.0f, 1.0f, 1.0f});
+  dequantize_test.AddInput<F6>("x_zero_point", {3}, zero_points);
+  dequantize_test.AddOutput<float>("y", dims, values);
+  dequantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                      {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+template <typename F6>
+void QuantizeDequantizeLinearOp28Float6BlockedNonLastAxisTest() {
+  const std::vector<int64_t> dims{3, 2};
+  const std::vector<int64_t> scale_dims{2, 2};
+  const std::vector<float> values{0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+  const std::vector<F6> zero_points{F6(1.0f), F6(-1.0f), F6(-1.0f), F6(1.0f)};
+  const std::vector<F6> quantized{F6(1.0f), F6(0.0f), F6(3.0f),
+                                  F6(2.0f), F6(3.0f), F6(6.0f)};
+
+  OpTester quantize_test("QuantizeLinear", 28);
+  quantize_test.AddAttribute<int64_t>("axis", 0);
+  quantize_test.AddAttribute<int64_t>("block_size", 2);
+  quantize_test.AddInput<float>("x", dims, values);
+  quantize_test.AddInput<float>("y_scale", scale_dims, std::vector<float>(4, 1.0f));
+  quantize_test.AddInput<F6>("y_zero_point", scale_dims, zero_points);
+  quantize_test.AddOutput<F6>("y", dims, quantized);
+  quantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                    {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+
+  OpTester dequantize_test("DequantizeLinear", 28);
+  dequantize_test.AddAttribute<int64_t>("axis", 0);
+  dequantize_test.AddAttribute<int64_t>("block_size", 2);
+  dequantize_test.AddInput<F6>("x", dims, quantized);
+  dequantize_test.AddInput<float>("x_scale", scale_dims, std::vector<float>(4, 1.0f));
+  dequantize_test.AddInput<F6>("x_zero_point", scale_dims, zero_points);
+  dequantize_test.AddOutput<float>("y", dims, values);
+  dequantize_test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+                      {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(QuantizeLinearOpTest, Float6E2M3PerAxisFloat16AndBlocked) {
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E2M3, MLFloat16>(false);
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E2M3, float>(true);
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E2M3, MLFloat16>(true);
+  QuantizeDequantizeLinearOp28Float6NonzeroZeroPointTest<Float6E2M3>();
+  QuantizeDequantizeLinearOp28Float6ScalarZeroPointTest<Float6E2M3>();
+  QuantizeDequantizeLinearOp28Float6BlockedNonLastAxisTest<Float6E2M3>();
+}
+
+TEST(QuantizeLinearOpTest, Float6E3M2PerAxisFloat16AndBlocked) {
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E3M2, MLFloat16>(false);
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E3M2, float>(true);
+  QuantizeDequantizeLinearOp28Float6ScaleTest<Float6E3M2, MLFloat16>(true);
+  QuantizeDequantizeLinearOp28Float6NonzeroZeroPointTest<Float6E3M2>();
+  QuantizeDequantizeLinearOp28Float6ScalarZeroPointTest<Float6E3M2>();
+  QuantizeDequantizeLinearOp28Float6BlockedNonLastAxisTest<Float6E3M2>();
 }
 
 #if !defined(DISABLE_FLOAT8_TYPES)

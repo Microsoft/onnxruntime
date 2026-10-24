@@ -14,6 +14,7 @@
 #include "core/framework/int4.h"
 #include "core/framework/int2.h"
 #include "core/framework/float4.h"
+#include "core/framework/float6.h"
 
 namespace onnxruntime {
 
@@ -116,6 +117,13 @@ using AllIRv13 =
         AllIRv12,
         UInt2x4,
         Int2x4>;
+
+// IR v14 adds FLOAT6E2M3 and FLOAT6E3M2 (6-bit floating-point types).
+using AllIRv14 =
+    boost::mp11::mp_push_back<
+        AllIRv13,
+        Float6E2M3,
+        Float6E3M2>;
 
 // TODO: This needs upgrade to some newer version ,buit it has been
 // at this version for a while and it needs changes at the use sites

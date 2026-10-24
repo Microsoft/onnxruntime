@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <fstream>
+
 #include "core/common/common.h"
 #include "core/common/status.h"
 #include "core/common/path_string.h"
@@ -224,6 +226,55 @@ TEST(SaveWithExternalInitializers, NestedIfInitializersAreWrittenOnce) {
 
   std::shared_ptr<Model> reloaded_model;
   ASSERT_STATUS_OK(Model::Load(model_path.native(), reloaded_model, nullptr, *logger));
+}
+
+TEST(SaveWithExternalInitializers, Float6PackedData) {
+  auto logger = DefaultLoggingManager().CreateLogger("Float6PackedData");
+  TemporaryDirectory temp_dir{ORT_TSTR("float6_external_save_test")};
+  for (const auto type : {TensorProto_DataType_FLOAT6E2M3, TensorProto_DataType_FLOAT6E3M2}) {
+    const auto input_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("input.bin");
+    const auto model_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("float6.onnx");
+    const auto external_path = std::filesystem::path(temp_dir.Path()) / ORT_TSTR("float6.bin");
+    {
+      std::ofstream input(input_path, std::ios::binary);
+      input.write("\x01\x42\xc3", 3);
+    }
+    ModelProto source;
+    source.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    source.mutable_graph()->set_name("float6_external_save");
+    source.add_opset_import()->set_version(28);
+    auto* initializer = source.mutable_graph()->add_initializer();
+    initializer->set_name("float6");
+    initializer->set_data_type(type);
+    initializer->add_dims(4);
+    ExternalDataInfo::SetExternalLocationToProto("input.bin", 0, 3, *initializer);
+    auto* output = source.mutable_graph()->add_output();
+    output->set_name("float6");
+    output->mutable_type()->mutable_tensor_type()->set_elem_type(type);
+    output->mutable_type()->mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+    std::shared_ptr<Model> model;
+    ASSERT_STATUS_OK(Model::Load(std::move(source), model_path.native(), model, nullptr, *logger,
+                                 ModelOptions(false, false)));
+    for (const bool embed : {false, true}) {
+      ModelSavingOptions options{0};
+      options.force_embed_external_ini = embed;
+      ASSERT_STATUS_OK(Model::SaveWithExternalInitializers(*model, model_path, ORT_TSTR("float6.bin"), options));
+      ModelProto saved;
+      ASSERT_STATUS_OK(Model::Load(model_path.native(), saved));
+      ASSERT_EQ(saved.graph().initializer_size(), 1);
+      const auto& result = saved.graph().initializer(0);
+      std::string written;
+      if (embed) {
+        EXPECT_EQ(result.data_location(), TensorProto_DataLocation_DEFAULT);
+        written = result.raw_data();
+      } else {
+        EXPECT_EQ(result.data_location(), TensorProto_DataLocation_EXTERNAL);
+        std::ifstream stream(external_path, std::ios::binary);
+        written.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+      }
+      EXPECT_EQ(written, std::string("\x01\x42\xc3", 3));
+    }
+  }
 }
 
 }  // namespace test

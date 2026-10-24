@@ -1608,6 +1608,10 @@ inline bool Tensor::IsDataType<Float8E8M0>() const { return g_host->Tensor__IsDa
 template <>
 inline bool Tensor::IsDataType<Float4E2M1x2>() const { return g_host->Tensor__IsDataType_Float4E2M1x2(this); }
 #endif
+template <>
+inline bool Tensor::IsDataType<Float6E2M3>() const { return g_host->Tensor__IsDataType_Float6E2M3(this); }
+template <>
+inline bool Tensor::IsDataType<Float6E3M2>() const { return g_host->Tensor__IsDataType_Float6E3M2(this); }
 
 template <>
 inline bool* Tensor::MutableData<bool>() { return g_host->Tensor__MutableData_bool(this); }
@@ -1661,6 +1665,10 @@ inline Float8E8M0* Tensor::MutableData<Float8E8M0>() { return g_host->Tensor__Mu
 template <>
 inline Float4E2M1x2* Tensor::MutableData<Float4E2M1x2>() { return g_host->Tensor__MutableData_Float4E2M1x2(this); }
 #endif
+template <>
+inline Float6E2M3* Tensor::MutableData<Float6E2M3>() { return g_host->Tensor__MutableData_Float6E2M3(this); }
+template <>
+inline Float6E3M2* Tensor::MutableData<Float6E3M2>() { return g_host->Tensor__MutableData_Float6E3M2(this); }
 
 template <>
 inline const bool* Tensor::Data<bool>() const { return g_host->Tensor__Data_bool(this); }
@@ -1672,6 +1680,10 @@ template <>
 inline const Int2x4* Tensor::Data<Int2x4>() const { return g_host->Tensor__Data_Int2x4(this); }
 template <>
 inline const UInt2x4* Tensor::Data<UInt2x4>() const { return g_host->Tensor__Data_UInt2x4(this); }
+template <>
+inline const Float6E2M3* Tensor::Data<Float6E2M3>() const { return g_host->Tensor__Data_Float6E2M3(this); }
+template <>
+inline const Float6E3M2* Tensor::Data<Float6E3M2>() const { return g_host->Tensor__Data_Float6E3M2(this); }
 template <>
 inline const int8_t* Tensor::Data<int8_t>() const { return g_host->Tensor__Data_int8(this); }
 template <>

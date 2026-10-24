@@ -185,6 +185,10 @@ MLDataType DataTypeImpl::GetType<UInt2x4>() { return Provider_GetHost()->DataTyp
 template <>
 MLDataType DataTypeImpl::GetType<Float4E2M1x2>() { return Provider_GetHost()->DataTypeImpl__GetType_Float4E2M1x2(); }
 #endif
+template <>
+MLDataType DataTypeImpl::GetType<Float6E2M3>() { return Provider_GetHost()->DataTypeImpl__GetType_Float6E2M3(); }
+template <>
+MLDataType DataTypeImpl::GetType<Float6E3M2>() { return Provider_GetHost()->DataTypeImpl__GetType_Float6E3M2(); }
 
 template <>
 MLDataType DataTypeImpl::GetType<std::string>() { return Provider_GetHost()->DataTypeImpl__GetType_string(); }
@@ -241,6 +245,10 @@ MLDataType DataTypeImpl::GetTensorType<UInt2x4>() { return Provider_GetHost()->D
 template <>
 MLDataType DataTypeImpl::GetTensorType<Float4E2M1x2>() { return Provider_GetHost()->DataTypeImpl__GetTensorType_Float4E2M1x2(); }
 #endif
+template <>
+MLDataType DataTypeImpl::GetTensorType<Float6E2M3>() { return Provider_GetHost()->DataTypeImpl__GetTensorType_Float6E2M3(); }
+template <>
+MLDataType DataTypeImpl::GetTensorType<Float6E3M2>() { return Provider_GetHost()->DataTypeImpl__GetTensorType_Float6E3M2(); }
 
 #if !defined(DISABLE_SPARSE_TENSORS)
 template <>

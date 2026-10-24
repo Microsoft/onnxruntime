@@ -17,6 +17,7 @@ const BROWSER_TEST_CASES = [
   [true, true, './browser-test-webgl.js', 'ort.all.min.js'], // webgl
   [true, true, './browser-test-webgl.js', 'ort.webgl.min.js'], // webgl
   [true, true, './browser-test-wasm.js', 'ort.wasm.min.js'], // wasm, ort.wasm
+  [true, true, './browser-test-wasm-fp6-external-data.js', 'ort.wasm.min.js'], // wasm, external FP6
   [true, true, './browser-test-wasm-multi-session-create.js', 'ort.min.js'], // wasm, multi-session create
   [true, true, './browser-test-wasm.js', 'ort.min.js', ['num_threads=1']], // wasm, 1 thread
   [true, true, './browser-test-wasm.js', 'ort.min.js', ['num_threads=2']], // wasm, 2 threads
