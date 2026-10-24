@@ -185,6 +185,7 @@ Status Slice::ComputeInternal(ComputeContext& context) const {
     int64_t start = starts_raw[i];
     int64_t end = ends_raw[i];
     int64_t step = steps_raw[i];
+    ORT_RETURN_IF(step == 0, "Slice step cannot be zero for axis ", axes_raw[i]);
     int64_t dim_value = input_shape[axes[i]];
     if (start < 0) {
       start += dim_value;

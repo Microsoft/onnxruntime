@@ -613,7 +613,7 @@ export class ShapeUtil {
    * normalize axis of range [-r, r) into [0, r).
    */
   static normalizeAxis(axis: number, tensorRank: number): number {
-    if (axis < -tensorRank && axis >= tensorRank) {
+    if (axis < -tensorRank || axis >= tensorRank) {
       throw new Error('unsupported axis for this operation.');
     }
     return axis < 0 ? axis + tensorRank : axis;
