@@ -29,6 +29,64 @@
     ]
   },
   {
+    "name": "GatherND int32 rank 5 with batch_dims",
+    "operator": "GatherND",
+    "attributes": [{ "name": "batch_dims", "data": 2, "type": "int" }],
+    "cases": [
+      {
+        "name": "packed input dimensions",
+        "inputs": [
+          {
+            "data": [0, 1, 2, 3, 4, 5, 6, 7],
+            "dims": [1, 1, 2, 2, 2],
+            "type": "int32"
+          },
+          {
+            "data": [0, 0, 1, -1],
+            "dims": [1, 1, 2, 2],
+            "type": "int64"
+          }
+        ],
+        "outputs": [
+          {
+            "data": [0, 1, 6, 7],
+            "dims": [1, 1, 2, 2],
+            "type": "int32"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "GatherND int32 index depth 5",
+    "operator": "GatherND",
+    "attributes": [],
+    "cases": [
+      {
+        "name": "packed slice strides",
+        "inputs": [
+          {
+            "data": [10, 20],
+            "dims": [1, 1, 1, 1, 2],
+            "type": "int32"
+          },
+          {
+            "data": [0, 0, 0, 0, 0, -1, -1, -1, -1, -1],
+            "dims": [1, 1, 1, 2, 5],
+            "type": "int64"
+          }
+        ],
+        "outputs": [
+          {
+            "data": [10, 20],
+            "dims": [1, 1, 1, 2],
+            "type": "int32"
+          }
+        ]
+      }
+    ]
+  },
+  {
     "name": "GatherND float32",
     "operator": "GatherND",
     "attributes": [],

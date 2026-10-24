@@ -7,7 +7,14 @@ import { ShapeUtil } from '../../util';
 import { AttributeWithCacheKey } from '../attribute-with-cache-key';
 import { ComputeContext, ProgramUniform } from '../types';
 
-import { createTensorShapeVariables, inputVariable, outputVariable, ShaderHelper, UniformsArrayType } from './common';
+import {
+  createTensorShapeVariables,
+  getElementAt,
+  inputVariable,
+  outputVariable,
+  ShaderHelper,
+  UniformsArrayType,
+} from './common';
 
 export interface GatherNDAttributes extends AttributeWithCacheKey {
   readonly batchDims: number;
@@ -63,17 +70,10 @@ const computeSliceOffsets = (
       var index = i32(indices_data[dim_idx + slice_indices_base_offset].x);
       let input_dim_idx = uniforms.batch_dims + dim_idx;
       if (index < 0) {
-        ${
-          inputDims.length === 1
-            ? 'index += i32(uniforms.input_dims);'
-            : 'index += i32(uniforms.input_dims[input_dim_idx]);'
-        }
+        index += i32(${getElementAt('uniforms.input_dims', 'input_dim_idx', inputDims.length)});
       }
-      ${
-        sizesFromSliceDimsData.length === 1
-          ? 'relative_slice_offset += index * i32(uniforms.sizes_from_slice_dims_data);'
-          : 'relative_slice_offset += index * i32(uniforms.sizes_from_slice_dims_data[dim_idx]);'
-      }
+      relative_slice_offset += index *
+          i32(${getElementAt('uniforms.sizes_from_slice_dims_data', 'dim_idx', sizesFromSliceDimsData.length)});
     }
 
     input_slice_offsets_data[global_idx] =  base_offset + u32(relative_slice_offset);
