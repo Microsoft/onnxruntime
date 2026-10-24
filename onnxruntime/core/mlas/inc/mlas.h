@@ -115,6 +115,22 @@ Abstract:
 #define MLAS_F16VEC_INTRINSICS_SUPPORTED
 
 #endif //
+
+//
+// macOS ARM64 supports the f16<->f32 cast kernel.  The conversion intrinsics
+// (vcvt_f32_f16 / vcvt_f16_f32) are baseline ARMv8-A and do not require
+// FEAT_FP16 (which governs fp16 arithmetic, not conversions).  The full fp16
+// arithmetic family (MLAS_F16VEC_INTRINSICS_SUPPORTED) stays disabled on Apple;
+// only the cast path is enabled here.
+// Guard on TARGET_OS_OSX so iOS/tvOS/visionOS are excluded.
+//
+#if defined(__APPLE__) && defined(MLAS_TARGET_ARM64)
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#define MLAS_CAST_F16_NEON_SUPPORTED
+#endif
+#endif
+
 #endif // ARM64
 #endif // Visual Studio 16 or earlier does not support fp16 intrinsic
 

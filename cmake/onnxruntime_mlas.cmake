@@ -730,6 +730,15 @@ else()
           set_source_files_properties(${MLAS_SRC_DIR}/gelu_neon_fp16.cpp PROPERTIES COMPILE_FLAGS " -march=armv8.2-a+fp16 ")
         endif()
 
+        # Enable the f16<->f32 cast kernel on macOS ARM64.  The conversion
+        # intrinsics (vcvt_f32_f16 / vcvt_f16_f32) are baseline ARMv8-A and
+        # do not require -march=armv8.2-a+fp16 (that flag is only needed for
+        # fp16 *arithmetic* on float16x8_t).  Guard on Darwin (not APPLE) so
+        # iOS/tvOS/visionOS are excluded.
+        if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+          list(APPEND mlas_platform_srcs ${MLAS_SRC_DIR}/cast_kernel_neon.cpp)
+        endif()
+
         if(ONNXRUNTIME_MLAS_MULTI_ARCH)
             onnxruntime_add_static_library(onnxruntime_mlas_arm64 ${mlas_platform_srcs})
             set_target_properties(onnxruntime_mlas_arm64 PROPERTIES OSX_ARCHITECTURES "arm64")

@@ -949,7 +949,7 @@ Return Value:
     this->ArmNeonIsQuantActivationsUnsigned = HasI8MMInstructions ? false : true;
     this->QNBitGemmDispatch = &GetMlasQNBitGemmDispatchNeon(HasDotProductInstructions, HasI8MMInstructions);
 
-#if defined(MLAS_F16VEC_INTRINSICS_SUPPORTED)
+#if defined(MLAS_F16VEC_INTRINSICS_SUPPORTED) || defined(MLAS_CAST_F16_NEON_SUPPORTED)
     this->CastF16ToF32Kernel = &MlasCastF16ToF32KernelNeon;
     this->CastF32ToF16Kernel = &MlasCastF32ToF16KernelNeon;
 #endif
