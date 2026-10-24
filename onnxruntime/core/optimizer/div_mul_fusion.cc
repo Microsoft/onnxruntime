@@ -88,9 +88,20 @@ Status DivMulFusion::Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_eff
   auto& mul_inputs = mul_node.MutableInputDefs();
 
   // get other input of mul
-  auto& mul_other_input = mul_inputs[0] == div_output[0] ? mul_inputs[1] : mul_inputs[0];
+  const int mul_other_input_idx = mul_inputs[0] == div_output[0] ? 1 : 0;
+  auto& mul_other_input = mul_inputs[mul_other_input_idx];
+
+  // If that input is produced by a node, the edge carrying it ends at mul_node and dies with it.
+  // ReplaceNodeInput rewrites the input def without adding an edge - correct only for an initializer
+  // or graph input - so div_node has to be reconnected explicitly, or it would reference the value by
+  // name alone and a later rule removing the producer would rewire only its edge-connected consumers.
+  // div_node's input 0 is a constant initializer (SatisfyCondition), so it is free of edges.
+  const Node::EdgeEnd* producer_edge = graph_utils::GetInputEdge(mul_node, mul_other_input_idx);
 
   graph_utils::ReplaceNodeInput(div_node, 0, *mul_other_input);
+  if (producer_edge != nullptr) {
+    graph.AddEdge(producer_edge->GetNode().Index(), div_node.Index(), producer_edge->GetSrcArgIndex(), 0);
+  }
   // move the output definition and edges from the mul_node to the div_node and delete the mul_node
   graph_utils::FinalizeNodeFusion(graph, div_node, mul_node);
 

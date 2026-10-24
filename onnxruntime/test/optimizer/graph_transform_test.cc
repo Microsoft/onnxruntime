@@ -14363,6 +14363,173 @@ TEST_F(GraphTransformationTests, DivMulFusion_MultiElementInitializer) {
   EXPECT_EQ(op_to_count["Mul"], 1);
 }
 
+// Regression tests for https://github.com/microsoft/onnxruntime/issues/32416 and
+// https://github.com/microsoft/onnxruntime/issues/32414.
+//
+// DivMulFusion moves the Mul's other input onto the Div. When a node produces that input, the
+// edge carrying it ends at the Mul and dies with it, so the fusion has to recreate it on the Div.
+// Otherwise the Div consumes the value by name alone, and a later rewrite rule that removes the
+// producer - rewiring only its edge-connected consumers - leaves the Div reading a value that
+// nothing produces. Both rules below run in the same Level1 pass, before the next Graph::Resolve.
+TEST_F(GraphTransformationTests, DivMulFusion_ReconnectsCastProducerEdge) {
+  // x -> Cast(to=FLOAT) -> mid; Div(one, two) -> div_out; Mul(mid, div_out) -> output.
+  // DivMulFusion rewrites this to Div(mid, two), then CastElimination drops the same-dtype Cast.
+  ONNX_NAMESPACE::ModelProto model_proto;
+  model_proto.set_ir_version(8);
+  auto* opset = model_proto.add_opset_import();
+  opset->set_version(14);
+
+  auto* graph_proto = model_proto.mutable_graph();
+  graph_proto->set_name("DivMulFusion_CastProducer");
+
+  // Scalar constants: the 1 that makes the fusion applicable, and the divisor it keeps.
+  auto* one = graph_proto->add_initializer();
+  one->set_name("one");
+  one->set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  one->add_float_data(1.0f);
+
+  auto* two = graph_proto->add_initializer();
+  two->set_name("two");
+  two->set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  two->add_float_data(2.0f);
+
+  {
+    auto* input = graph_proto->add_input();
+    input->set_name("x");
+    auto* type = input->mutable_type()->mutable_tensor_type();
+    type->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    type->mutable_shape()->add_dim()->set_dim_value(2);
+    type->mutable_shape()->add_dim()->set_dim_value(3);
+  }
+  {
+    auto* output = graph_proto->add_output();
+    output->set_name("output");
+    auto* type = output->mutable_type()->mutable_tensor_type();
+    type->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    type->mutable_shape()->add_dim()->set_dim_value(2);
+    type->mutable_shape()->add_dim()->set_dim_value(3);
+  }
+
+  auto* cast_node = graph_proto->add_node();
+  cast_node->set_op_type("Cast");
+  cast_node->set_name("cast");
+  cast_node->add_input("x");
+  cast_node->add_output("mid");
+  auto* to_attr = cast_node->add_attribute();
+  to_attr->set_name("to");
+  to_attr->set_type(ONNX_NAMESPACE::AttributeProto_AttributeType_INT);
+  to_attr->set_i(static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT));
+
+  auto* div_node = graph_proto->add_node();
+  div_node->set_op_type("Div");
+  div_node->set_name("div");
+  div_node->add_input("one");
+  div_node->add_input("two");
+  div_node->add_output("div_out");
+
+  auto* mul_node = graph_proto->add_node();
+  mul_node->set_op_type("Mul");
+  mul_node->set_name("mul");
+  mul_node->add_input("mid");
+  mul_node->add_input("div_out");
+  mul_node->add_output("output");
+
+  std::shared_ptr<Model> model;
+  ASSERT_STATUS_OK(Model::Load(model_proto, model, nullptr, *logger_));
+  Graph& graph = model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  auto rule_transformer = std::make_unique<RuleBasedGraphTransformer>("RuleTransformer1");
+  ASSERT_STATUS_OK(rule_transformer->Register(std::make_unique<DivMulFusion>()));
+  ASSERT_STATUS_OK(rule_transformer->Register(std::make_unique<CastElimination>()));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::move(rule_transformer), TransformerLevel::Level1));
+  // Without the reconnection this fails to resolve: "Node input 'mid' is not a graph input,
+  // initializer, or output of a previous node."
+  ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  EXPECT_EQ(op_to_count["Cast"], 0);
+  EXPECT_EQ(op_to_count["Mul"], 0);
+  EXPECT_EQ(op_to_count["Div"], 1);
+}
+
+TEST_F(GraphTransformationTests, DivMulFusion_ReconnectsDropoutProducerEdge) {
+  // Same defect reached through EliminateDropout instead of CastElimination, and with the Mul's
+  // operands commuted so the substituted input is found at index 1 rather than index 0:
+  // x -> Dropout -> mid; Div(one, two) -> div_out; Mul(div_out, mid) -> output.
+  ONNX_NAMESPACE::ModelProto model_proto;
+  model_proto.set_ir_version(8);
+  auto* opset = model_proto.add_opset_import();
+  opset->set_version(13);
+
+  auto* graph_proto = model_proto.mutable_graph();
+  graph_proto->set_name("DivMulFusion_DropoutProducer");
+
+  auto* one = graph_proto->add_initializer();
+  one->set_name("one");
+  one->set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  one->add_float_data(1.0f);
+
+  auto* two = graph_proto->add_initializer();
+  two->set_name("two");
+  two->set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  two->add_float_data(2.0f);
+
+  {
+    auto* input = graph_proto->add_input();
+    input->set_name("x");
+    auto* type = input->mutable_type()->mutable_tensor_type();
+    type->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    type->mutable_shape()->add_dim()->set_dim_value(2);
+    type->mutable_shape()->add_dim()->set_dim_value(3);
+  }
+  {
+    auto* output = graph_proto->add_output();
+    output->set_name("output");
+    auto* type = output->mutable_type()->mutable_tensor_type();
+    type->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    type->mutable_shape()->add_dim()->set_dim_value(2);
+    type->mutable_shape()->add_dim()->set_dim_value(3);
+  }
+
+  // Inference-mode Dropout, so it carries no ratio and is an identity.
+  auto* dropout_node = graph_proto->add_node();
+  dropout_node->set_op_type("Dropout");
+  dropout_node->set_name("dropout");
+  dropout_node->add_input("x");
+  dropout_node->add_output("mid");
+
+  auto* div_node = graph_proto->add_node();
+  div_node->set_op_type("Div");
+  div_node->set_name("div");
+  div_node->add_input("one");
+  div_node->add_input("two");
+  div_node->add_output("div_out");
+
+  auto* mul_node = graph_proto->add_node();
+  mul_node->set_op_type("Mul");
+  mul_node->set_name("mul");
+  mul_node->add_input("div_out");
+  mul_node->add_input("mid");
+  mul_node->add_output("output");
+
+  std::shared_ptr<Model> model;
+  ASSERT_STATUS_OK(Model::Load(model_proto, model, nullptr, *logger_));
+  Graph& graph = model->MainGraph();
+
+  onnxruntime::GraphTransformerManager graph_transformation_mgr{5};
+  auto rule_transformer = std::make_unique<RuleBasedGraphTransformer>("RuleTransformer1");
+  ASSERT_STATUS_OK(rule_transformer->Register(std::make_unique<DivMulFusion>()));
+  ASSERT_STATUS_OK(rule_transformer->Register(std::make_unique<EliminateDropout>()));
+  ASSERT_STATUS_OK(graph_transformation_mgr.Register(std::move(rule_transformer), TransformerLevel::Level1));
+  ASSERT_STATUS_OK(graph_transformation_mgr.ApplyTransformers(graph, TransformerLevel::Level1, *logger_));
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  EXPECT_EQ(op_to_count["Dropout"], 0);
+  EXPECT_EQ(op_to_count["Mul"], 0);
+  EXPECT_EQ(op_to_count["Div"], 1);
+}
+
 // Note: There is intentionally no end-to-end regression test for the
 // `ratio.size() != 1` guard in `EliminateDropout`. ONNX Dropout requires
 // `ratio` to be a scalar, so a malformed (zero-element or multi-element)
