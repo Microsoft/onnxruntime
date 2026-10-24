@@ -28,6 +28,7 @@ jobs:
           reporter: github-pr-check
           level: info
           filter_mode: diff_context
+          ignore: "spectre"
       - name: shellcheck # Static check shell scripts
         uses: reviewdog/action-shellcheck@0722bbdb0d47f04c1b53b8734d2422ac63a45ec6 # v1.32.1
         with:

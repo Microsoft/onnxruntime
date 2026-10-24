@@ -33,6 +33,10 @@ jobs:
         with:
           architecture: x64
 
+      - name: Test OneCore Spectre library selection
+        shell: cmd
+        run: python tools\ci_build\test_onecore_spectre.py
+
       - name: Setup VCPKG Cache
         uses: ./.github/actions/setup-vcpkg-cache
         with:
