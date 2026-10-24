@@ -33,6 +33,11 @@ and have been significantly modified for ONNX Runtime — see
 11. [WFP4AFP8 Details](#11-wfp4afp8-details)
 12. [Future / Deferred Modes](#12-future--deferred-modes)
   - [12.1 MoE GEMV Optimization Summary](#121-moe-gemv-optimization-summary)
+12b. [Portable CPU/GPU Offload (`session.moe.offload.*`)](#12b-portable-cpugpu-offload-sessionmoeoffload)
+  - [12b.1 Export Format (Canonical `com.microsoft::QMoE`)](#12b1-export-format-canonical-commicrosoftqmoe)
+  - [12b.2 Export Storage (External Data Layout, Alignment & Popularity Profile)](#12b2-export-storage-external-data-layout-alignment--popularity-profile)
+  - [12b.3 Session Options (`session.moe.offload.*`) & GenAI Runtime Profiles](#12b3-session-options-sessionmoeoffload--genai-runtime-profiles)
+  - [12b.4 Implementation Details (5-Stage Planner, Doorbell Decode & Hybrid Prefill)](#12b4-implementation-details-5-stage-planner-doorbell-decode--hybrid-prefill)
 13. [Testing](#13-testing)
 14. [Build Configuration](#14-build-configuration)
   - [14.1 MSVC and TMA grouped MoE GEMM](#141-msvc-and-tma-grouped-moe-gemm)
@@ -1692,6 +1697,368 @@ onnxruntime/test/python/transformers/profile_qmoe_gemv.sh \
 
 ---
 
+## 12b. Portable CPU/GPU Offload (`session.moe.offload.*`)
+
+Large Mixture-of-Experts models (such as 48-layer $\times$ 512-expert NVFP4 models with
+60+ GiB of routed expert weights) often exceed the VRAM of 24 GiB–32 GiB consumer and workstation
+GPUs. Rather than exporting a separate hardware-specific operator or baking GPU slot counts into the
+ONNX graph, `com.microsoft::QMoE` supports **portable runtime CPU/GPU offload** controlled entirely
+by `session.moe.offload.*` session options.
+
+A **single canonical `com.microsoft::QMoE` model package** runs unchanged across:
+
+- **Full-HBM GPUs** (e.g., 80 GiB–141 GiB H100/H200): `session.moe.offload.mode="auto"` admits all
+  $E$ experts per layer into GPU HBM during session initialization with zero runtime offload overhead.
+- **VRAM-Constrained GPUs with Ample Host RAM** (e.g., 24 GiB / 32 GiB GPU + 64 GiB–128 GiB RAM):
+  caches the hottest $C_l < E$ experts per layer in GPU HBM, executes cold routed experts on the
+  CPU via AVX-512 microkernels overlapped with GPU resident GEMVs inside a single captured CUDA
+  Graph, and promotes newly hot experts asynchronously in the background.
+- **VRAM- and Host-RAM-Constrained Systems** (e.g., 24 GiB / 30 GiB GPU + 48 GB–64 GB RAM): bounds
+  host RAM usage via `FileExpertStore` (`session.moe.offload.host_expert_bytes`), maintaining
+  disjoint GPU and host residency and streaming uncached cold experts from the backing weight files
+  on demand.
+
+---
+
+### 12b.1 Export Format (Canonical `com.microsoft::QMoE`)
+
+Exporters emit standard `com.microsoft::QMoE` nodes with **no offload-specific operator attributes,
+inputs, or outputs**. Hardware capacity, cache slot counts, worker thread counts, and CUDA Graph
+capture policies are never encoded in `model.onnx`.
+
+#### Supported Quantization Encodings & Tensor Shapes
+
+| Encoding | `quant_type` | `expert_weight_bits` | `block_size` | `weights_prepacked` | `swiglu_fusion` | Required Expert Input Slots |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **NVFP4 (W4A16)** | `"nvfp4"` | `4` | `16` | `1` (offline K-packed row-major) | `1` (interleaved) | • **Slot 2 (`fc1_experts_weights`)**: `uint8`, physical `[E, 2*I, H/2]` (logical `[E, H, I]`)<br>• **Slot 3 (`fc1_scales`)**: `float8e4m3fn`, `[E, 2*I, H/16]`<br>• **Slot 5 (`fc2_experts_weights`)**: `uint8`, physical `[E, H, I/2]` (logical `[E, I, H/2]`)<br>• **Slot 6 (`fc2_scales`)**: `float8e4m3fn`, `[E, H, I/16]`<br>• **Slot 15 (`fc1_global_scale`)**: `float32`, `[E]`<br>• **Slot 16 (`fc2_global_scale`)**: `float32`, `[E]`<br>• *(Optional)* **Slots 4, 7**: `fc1_experts_bias` `[E, 2*I]`, `fc2_experts_bias` `[E, H]` (`fp16`/`bf16`) |
+
+> **Eligibility note**: When `session.moe.offload.mode="auto"`, any `MoE`/`QMoE` node outside the
+> table above (such as `quant_type="fp4"` (MXFP4), `quant_type="int"`, `quant_type="fp8"`, `swiglu_fusion=2`, or separate
+> `router_weights` at slot 14) keeps its initializers on GPU and executes through the standard CUDA
+> `MoE`/`QMoE` path. When `session.moe.offload.mode="required"`, unsupported nodes or shared
+> non-offload initializer consumers fail fast during session initialization with `ORT_INVALID_ARGUMENT`.
+
+#### Layer Index Resolution
+
+No `layer_index` attribute is required on `com.microsoft::QMoE`. During session initialization,
+the offload planner derives each node's stable layer index (`0 .. L-1`) from the node name or
+weight initializer names (matching `layers.<L>`, `layer.<L>`, or `blocks.<L>`), falling back to
+topological graph order when no numeric layer token is present.
+
+---
+
+### 12b.2 Export Storage (External Data Layout, Alignment & Popularity Profile)
+
+#### 1. External Data Layout & Page Alignment
+
+Expert initializers (slots `2..13, 15, 16`) should be saved as standard ONNX external data
+(`TensorProto.DataLocation.EXTERNAL`) in one or more regular files relative to the directory
+containing `model.onnx` (for example, `source_weights/experts.data` and
+`source_weights/model.onnx.experts.0..7.data`):
+
+- **Expert-Major Contiguity**: Within each bank tensor, expert $e \in [0, E)$ occupies a contiguous
+  byte range `[e * bytes_per_expert, (e + 1) * bytes_per_expert)`. For Qwen3.8-Flash-Next
+  (`E = 512`, `H = 2560`, `I = 640`, NVFP4), each expert occupies:
+  $$\underbrace{1{,}638{,}400\text{ B}}_{\text{FC1 weights}} + \underbrace{819{,}200\text{ B}}_{\text{FC2 weights}} + \underbrace{204{,}800\text{ B}}_{\text{FC1 scales}} + \underbrace{102{,}400\text{ B}}_{\text{FC2 scales}} + \underbrace{8\text{ B}}_{\text{global scales}} = 2{,}764{,}808\text{ B}\ (\approx 2.637\text{ MiB/expert}).$$
+- **4096-Byte File Offset Alignment**: Aligning the start `offset` of each external tensor to a
+  `4096`-byte OS page boundary allows ORT's `PosixRandomAccessFile::Map` / `WindowsEnv::MapFileIntoMemory`
+  to memory-map the file read-only (`PROT_READ, MAP_SHARED` on Linux; `FILE_MAP_READ` on Windows)
+  with zero heap allocation, stripe pages evenly across NUMA sockets, and release host OS pages for
+  GPU-resident experts at `4 KiB` granularity.
+
+#### 2. Optional Offline Popularity Profile (`expert-profile.bin`)
+
+A model package may optionally ship a compact binary popularity profile (`expert-profile.bin`,
+`STRP` v1 format) in the model directory (or referenced via `session.moe.offload.popularity_file`).
+The file has a 24-byte little-endian header (`struct.pack("<6I", 0x50525453, 1, num_layers, num_experts, total_pairs, num_ranked_pairs)`)
+followed by `num_ranked_pairs` 4-byte `<2H` `(layer_id, expert_id)` pairs ordered from globally
+most frequent to least frequent.
+
+When present, `QMoESessionController::PlanAndAdmitSession()` uses this global ranking to:
+1. Allocate **non-uniform per-layer GPU resident capacities** $C_l$ (after reserving a floor of
+   `min_slots_per_layer = 4` experts per layer) so layers with flatter routing distributions receive
+   proportionally more GPU HBM slots.
+2. Seed the initial GPU resident slots `[0, C_l)` and bounded host cache slots (`FileExpertStore`)
+   with the hottest cold experts before the first inference call.
+
+When no popularity file is provided, the planner distributes the GPU expert byte budget uniformly
+across layers (`C_l = floor(budget / L)`) and seeds experts `0 .. C_l - 1`.
+
+---
+
+### 12b.3 Session Options (`session.moe.offload.*`) & GenAI Runtime Profiles
+
+All offload policies and memory budgets are configured through standard `OrtSessionOptions`
+configuration entries (`include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h`).
+Unknown `session.moe.offload.*` keys or legacy prototype keys (`moe.cpu_offload.*`) fail fast at
+session creation with `ORT_INVALID_ARGUMENT`.
+
+#### Session Configuration Keys
+
+| Config Key (`session.moe.offload.*`) | Allowed Values | Default | Description |
+| :--- | :--- | :---: | :--- |
+| `session.moe.offload.mode` | `"disabled"`, `"auto"`, `"required"` | `"disabled"` | `"disabled"`: standard GPU-only QMoE. `"auto"`: places initializers on CPU first; if all experts fit in usable GPU VRAM, uploads all experts to GPU (`C_l = E`), otherwise enables hybrid offload. `"required"`: enforces offload planning under `device_expert_bytes`. |
+| `session.moe.offload.placement` | `"static"`, `"adaptive"` | `"adaptive"` | `"static"`: fixed GPU resident set (`spare_slots = 0`). `"adaptive"`: reserves `spare_slots = 2` per partially offloaded layer and promotes hot cold experts into GPU HBM between steps. |
+| `session.moe.offload.cpu_execution` | `"auto"`, `"enabled"`, `"disabled"` | `"auto"` | Controls AVX-512 CPU cold-expert execution during decode (`rows <= async_max_tokens`). |
+| `session.moe.offload.device_expert_bytes` | `"auto"` or integer bytes | `"auto"` | Maximum GPU HBM bytes for all MoE resident + spare expert slabs and lookup tables in the session. `"auto"` uses `usable_free_vram - reserve_device_bytes - device_working_bytes`. |
+| `session.moe.offload.host_expert_bytes` | `"auto"` or integer bytes | `"auto"` | Maximum host RAM bytes for cold experts. `"auto"` uses direct `MAP_SHARED` `mmap` over the external weight files. A finite value smaller than total expert bytes enables the bounded `FileExpertStore` LRU host cache and evicts `mmap` source pages via `madvise(MADV_DONTNEED)`. |
+| `session.moe.offload.reserve_device_bytes` | `"auto"` or integer bytes | `0` | GPU VRAM bytes reserved for post-initialization KV/GDN caches, child sessions (`mtp.onnx`), and CUDA Graph pools when `device_expert_bytes="auto"`. |
+| `session.moe.offload.device_working_bytes` | Positive integer bytes | `268435456` (`256 MiB`) | Upper bound on transient GPU streaming/dequant workspace. |
+| `session.moe.offload.host_working_bytes` | Positive integer bytes | `67108864` (`64 MiB`) | Upper bound on transient CPU thread-pool scratch buffers. |
+| `session.moe.offload.pinned_bytes` | Non-negative integer bytes | `67108864` (`64 MiB`) | Upper bound on pinned host DMA staging and promotion bounce buffers. |
+| `session.moe.offload.budget_group` | String identifier | `""` (per-session) | Optional cross-session budget group name (e.g., `"qwen38_flash_graph"`) shared across target and draft sessions on the same GPU. |
+| `session.moe.offload.allow_file_backing` | `"0"`, `"1"` | `"1"` | Allows `FileExpertStore` to read uncached cold experts from the backing weight files when `host_expert_bytes` is bounded. |
+| `session.moe.offload.cpu_threads` | Non-negative integer | `0` (`auto`) | Number of `SpinPool` worker threads for cold-expert CPU execution (`0` auto-detects physical cores via `DiscoverPhysicalCoreCount()`). |
+| `session.moe.offload.async_max_tokens` | Non-negative integer | `4` | Token threshold separating hybrid doorbell decode (`rows <= async_max_tokens`) from GPU streaming DMA prefill (`rows > async_max_tokens`). |
+| `session.moe.offload.prefill_wave_experts` | Positive integer | `32` | Maximum experts per compaction/DMA wave during prefill (further bounded by `device_working_bytes`). |
+| `session.moe.offload.popularity_file` | Relative or absolute path | `""` | Optional path to `expert-profile.bin` (`STRP` v1 format). Relative paths resolve against the model directory. |
+| `session.moe.offload.source_root` | Relative or absolute path | Model directory | Root directory used to resolve external weight files and relative profile paths. |
+| `session.moe.offload.derived_cache_dir` | Relative or absolute path | `""` | Optional directory for derived cache artifacts. |
+| `session.moe.offload.node_overrides` | Semicolon-separated spec | `""` | Optional per-node overrides (`"node_name:max_resident_slots=<N>,device_expert_bytes=<B>"`). |
+
+#### Standalone Python Usage Example
+
+```python
+import onnxruntime as ort
+
+so = ort.SessionOptions()
+so.add_session_config_entry("session.use_device_allocator_for_initializers", "1")
+so.add_session_config_entry("session.moe.offload.mode", "required")
+so.add_session_config_entry("session.moe.offload.placement", "adaptive")
+so.add_session_config_entry("session.moe.offload.device_expert_bytes", str(18 * 1024**3))  # 18 GiB GPU slab budget
+so.add_session_config_entry("session.moe.offload.host_expert_bytes", str(38 * 1024**3))    # 38 GiB bounded host cache
+so.add_session_config_entry("session.moe.offload.allow_file_backing", "1")
+so.add_session_config_entry("session.moe.offload.popularity_file", "expert-profile.bin")
+
+sess = ort.InferenceSession(
+    "model.onnx",
+    sess_options=so,
+    providers=[("CUDAExecutionProvider", {"enable_cuda_graph": "1"})],
+)
+```
+
+#### `onnxruntime-genai` `runtime_profiles` Example (`genai_config.json`)
+
+In `onnxruntime-genai`, a single portable `genai_config.json` sets `session.moe.offload.mode="auto"`
+in the base decoder config and overrides `session.moe.offload.*` per hardware tier via
+`runtime_profiles` (matching device VRAM and effective host RAM bounds, including Linux cgroup v2
+`memory.max` limits):
+
+```json
+{
+  "model": {
+    "decoder": {
+      "filename": "model.onnx",
+      "session_options": {
+        "session.use_device_allocator_for_initializers": "1",
+        "session.moe.offload.mode": "auto",
+        "session.moe.offload.placement": "adaptive",
+        "session.moe.offload.device_expert_bytes": "auto",
+        "session.moe.offload.host_expert_bytes": "auto",
+        "session.moe.offload.allow_file_backing": "1",
+        "session.moe.offload.popularity_file": "expert-profile.bin"
+      }
+    }
+  },
+  "runtime_profiles": [
+    {
+      "id": "consumer-gpu-32g",
+      "eligibility": {
+        "minimum_total_device_memory_bytes": 25769803777,
+        "maximum_total_device_memory_bytes": 34359738368,
+        "minimum_effective_host_memory_bytes": 51539607553
+      },
+      "overlay": {
+        "model": {
+          "decoder": {
+            "filename": "model_s4.onnx",
+            "session_options": {
+              "session.moe.offload.mode": "required",
+              "session.moe.offload.device_expert_bytes": "19231076352"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "consumer-gpu-30g-ram-48g-32k",
+      "eligibility": {
+        "minimum_total_device_memory_bytes": 25769803777,
+        "maximum_total_device_memory_bytes": 32212254720,
+        "minimum_effective_host_memory_bytes": 0,
+        "maximum_effective_host_memory_bytes": 51539607552
+      },
+      "overlay": {
+        "model": {
+          "decoder": {
+            "filename": "model_s4.onnx",
+            "session_options": {
+              "session.moe.offload.mode": "required",
+              "session.moe.offload.device_expert_bytes": "18289511424",
+              "session.moe.offload.host_expert_bytes": "41339060224",
+              "session.moe.offload.allow_file_backing": "1"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+---
+
+### 12b.4 Implementation Details (5-Stage Planner, Doorbell Decode & Hybrid Prefill)
+
+#### 1. Five-Stage `SessionState` Planning &Bounded Materialization Pipeline
+
+A key requirement of offload on 24 GiB–32 GiB GPUs is that **ORT must never materialize or prepack
+all $E$ experts onto the GPU during session creation** (which would immediately OOM on a 63 GiB MoE
+model). Offload initialization is split across five deterministic stages in
+[session_state.cc](onnxruntime/core/framework/session_state.cc),
+[qmoe_session_controller.h](onnxruntime/core/providers/cuda/qmoe_session_controller.h), and
+[moe_quantization.cc](onnxruntime/contrib_ops/cuda/moe/moe_quantization.cc):
+
+```
+Stage 1: PlaceMoeOffloadInitializersOnCpu (SessionState::FinalizeSessionState, before SaveInitializedTensors)
+  └─ Overrides exec_plan location of MoE (slots 2..7) and QMoE (slots 2..13, 15, 16) initializers
+     to OrtDevice::CPU and skips memory-pattern tracing for external CPU initializers.
+     SaveInitializedTensors() maps external files read-only on CPU (PROT_READ, MAP_SHARED) with 0 B GPU VRAM.
+        │
+Stage 2: Kernel Construction & Zero-Copy PrePack Bypass (CreateKernel -> OpKernel::PrePack)
+  └─ QMoE::QMoE registers MoeExpertSourceDescriptor and MoeBackendCapabilities (gpu_slot_bytes,
+     cpu_slot_bytes, gpu_fixed_table_bytes) with QMoESessionController.
+  └─ QMoE::PrePack sets is_packed = false when offload_policy_.mode != kDisabled so the CPU mmap
+     OrtValues remain alive in SessionState::constant_initialized_tensors_ with zero copies in both
+     monolithic and plugin CUDA EP builds.
+        │
+Stage 3: Session-Wide Byte Planner (ep->OnSessionInitializationEnd -> PlanAndAdmitSession)
+  └─ Queries usable free VRAM after all non-MoE weights (attention, norms, shared experts, LM head)
+     are already on GPU. On Windows WDDM, intersects cudaMemGetInfo with DXGI
+     QueryVideoMemoryInfo(DXGI_MEMORY_SEGMENT_GROUP_LOCAL) minus a 12% anti-spillover reserve so
+     driver allocations never spill into slow Shared GPU Memory (dxgmms2.sys).
+  └─ Runs profile-guided water-filling across all registered QMoE layers (with min_slots_per_layer = 4
+     floor, spare_slots in {0, 2}, dummy_slots = 0) and water-fills bounded host_cache_slots.
+  └─ On Linux unlimited-RAM offload, PrepareLinuxHostExpertMappings() prefaults and migrates (SYS_move_pages)
+     all mapped expert pages to a verified 50/50 split across NUMA sockets.
+        │
+Stage 4: Per-Node Materialization & Host Page Eviction (QMoE::InitializeAdmittedPlan)
+  └─ Full GPU Residency (resident_slots == E): uploads CPU tensors to GPU buffers and uses the stock
+     GPU QMoE path with zero offload overhead.
+  └─ Partial Offload (resident_slots < E): uploads 2 KiB per-layer fc1/fc2 global scales to GPU HBM,
+     constructs QMoEOffload(info, policy, source_desc, plan), allocates the [C_l + S_l] GPU resident
+     slab and double-buffered slot_table_dev_ (2 * E * sizeof(int)), seeds initial residents,
+     initializes FileExpertStore when host_expert_bytes is bounded, and evicts uploaded host pages
+     via madvise(MADV_DONTNEED) / VirtualUnlock.
+        │
+Stage 5: Runtime Execution (QMoE::ComputeInternal)
+  └─ rows <= async_max_tokens (decode): dispatches to offload_backend_->ComputeInternal(context).
+  └─ rows > async_max_tokens (prefill): syncs slot tables and runs streaming DMA + UVA/HBM dequant.
+```
+
+#### 2. Decode Path (`rows <= async_max_tokens`): Device-Doorbell CUDA-Graph Hybrid Execution
+
+During decode (`1..4` tokens, including multi-draft MTP verification), launching per-layer host
+callbacks (`cudaLaunchHostFunc`) or separate D2H/H2D `cudaMemcpyAsync` calls would break CUDA Graph
+capture and add ~20 us/layer of driver wakeup latency. Instead, `QMoEOffload` uses a **Device-Doorbell
+Host Worker Protocol** ([qmoe_kernels.cu](onnxruntime/contrib_ops/cuda/moe/qmoe_kernels.cu),
+[qmoe_offload.cc](onnxruntime/contrib_ops/cuda/moe/qmoe_offload.cc)) where all per-layer GPU kernels
+execute on the primary compute stream with fixed device/pinned addresses and capture into a single
+full-model CUDA Graph:
+
+1. **Router & Fused Doorbell Classification (`SoftmaxTopK` $\to$ `QMoEOffloadClassifyKernel<<<1, 256, 0, stream>>>`)**:
+   - Classifies each of the $\text{rows} \times k$ routes against `slot_table_dev_[expert]`.
+   - Routes with `slot >= 0` are marked as GPU hits; routes with `slot < 0` are marked as CPU misses.
+   - If any route misses, thread block 0 copies `topk_indices` (`<= 160 B`) and the BF16/FP16 input
+     activations (`<= 20 KiB`) directly into UVA-mapped pinned host memory (`host_indices`, `host_input`),
+     executes `__threadfence_system()`, increments the device sequence counter `*doorbell_seq_dev`,
+     and writes `*doorbell_req_host = next_seq` to wake the persistent `DoorbellService` host thread.
+2. **Concurrent GPU Resident GEMV & CPU Cold-Expert AVX-512 Execution**:
+   - **On the GPU (`stream`)**: `MoeGemvFp4DecodeKernel` executes FC1 (SwiGLU) and FC2 immediately on
+     the GPU resident slab (`[C_l + S_l, ...]`). Because `MoeGemvFp4DecodeKernel` natively skips
+     negative slot indices (`slot < 0`), **zero dummy slots (`dummy_slots = 0`)** are allocated or read.
+     When followed by a shared expert (`SharedExpertDown`), the shared-expert projection is also
+     launched before waiting on the CPU doorbell.
+   - **On the CPU (`DoorbellService` + `SpinPool`)**: `DoorbellService` detects `*doorbell_req_host == next_seq`
+     and dispatches the missed experts across `SpinPool` workers pinned to distinct physical cores
+     alternating across NUMA sockets / L3 CCDs (`DiscoverPhysicalCoreCount()`).
+   - **AVX-512 Cold-Expert Microkernels (`Fp4Group4Avx512<RT=1..4>`)**: Cold NVFP4 experts are
+     evaluated directly from their row-major `[N, K/2]` storage without weight conversion using
+     `_mm512_permutex2var_ps` 2D LUT permutes (`stack_fma = 0`, `stack_mov = 0`), multi-row contiguous
+     activation reuse (`RT = 1..4` tokens routed to the same cold expert share a single DDR5 weight
+     read), and a single fused `ParallelFor(total_fc1 + total_fc2)` coordinated by per-expert atomic
+     readiness counters (`fc1_done[slot]`) so each expert's FC2 tasks start immediately after its own
+     FC1 tasks finish. Results are written directly into UVA-mapped pinned `host_result`.
+3. **Fused Wait, Merge, Finalize & Combine (`QMoEOffloadMergeFinalizeCombineKernel`)**:
+   - Preloads GPU-resident `wave_output` hits and `shared_out` into registers while thread 0 spins on
+     `*doorbell_done_host >= *doorbell_seq_dev`, then reads CPU cold outputs zero-copy from mapped
+     pinned `host_result`, accumulates all $k$ weighted expert contributions in exact `k_idx = 0..k-1`
+     FP32 FMA order, adds `shared_out`, and triggers Hopper Programmatic Dependent Launch
+     (`cudaTriggerProgrammaticLaunchCompletion`) so the post-MLP `HcBlockKernel` overlaps its weight
+     prefetch with the doorbell spin.
+
+#### 3. Adaptive Residency & Between-Step Background Promotion (`StepBetweenRuns`)
+
+When `session.moe.offload.placement="adaptive"`, each partially offloaded layer allocates
+$P_l = C_l + 2$ physical slots (`spare_slots = 2`):
+
+- **Marginal-Latency & Presence-EMA Scoring**: Each decode invocation updates per-expert routing scores
+  with continuous exponential decay ($d = 2^{-\Delta R / R_{\text{half}}}$) and a 32-invocation presence
+  EMA, weighting the first row routed to a cold expert in an invocation at `1.0` and subsequent rows
+  in the same invocation at `marginal_row_weight_` (`0.8`).
+- **Safe In-Slab Promotion (`PromoteResident`)**: At step boundaries (`OnBeforeGraphReplay` /
+  `StepBetweenRuns`), completed background promotions (`cudaEventQuery(promo_ready_) == cudaSuccess`)
+  update the host slot map, flip the double-buffered `slot_table_dev_` epoch (`CurrentSlotTableDev()`),
+  and copy the `2 KiB` updated slot table to GPU HBM. New promotions copy candidate expert banks
+  into a free spare slot on low-priority `promo_stream_` before retiring the victim slot, bounded
+  globally per step by `SessionPromotionBudget` (`16` experts / `64 MiB` per step, using a
+  pre-allocated double-buffered pinned bounce ring with parallel `SharedSpinPool` chunk copies when
+  host banks are unpinned).
+- **Bounded Host Cache Victim Swapping (`SwapHostCandidateForVictim`)**: When `FileExpertStore` is
+  active, promoting a cached host expert $e_{\text{cand}}$ to GPU HBM and evicting GPU victim
+  $e_{\text{victim}}$ overwrites $e_{\text{cand}}$'s host cache slot in-place via D2H copy from the
+  GPU victim slot (`BeginReplace` / `FinishReplace`), keeping GPU and host residency 100% disjoint
+  and avoiding future disk reads if $e_{\text{victim}}$ is routed again.
+
+#### 4. Prefill Path (`rows > async_max_tokens`): Hybrid UVA + Compact Streaming DMA
+
+During prefill (`rows > 4`, e.g., `512`–`2,048` token chunks), CPU execution is bypassed in favor of
+GPU tensor-core grouped GEMMs fed by **Hybrid Three-Source Dequantization**
+([qmoe_offload.cc](onnxruntime/contrib_ops/cuda/moe/qmoe_offload.cc),
+[qmoe_kernels.cu](onnxruntime/contrib_ops/cuda/moe/qmoe_kernels.cu)):
+
+1. **Zero-Copy Reuse of GPU HBM & Host Cache (`QMoEDequantizeNvfp4RowMajorKernel`)**:
+   - For each compaction pass (`runner_num_experts`, typically `64` or `128`), `EnqueuePrefillPassDmaLocked`
+     inspects `expert_active_mask`, `expert_slot_` (GPU HBM), and `file_store_expert_slot_` (UVA-pinned
+     `FileExpertStore`).
+   - Inactive experts (`active_mask < 0`) are skipped entirely (`h_cold_map[i] = -1`).
+   - Experts already resident in the layer's GPU slab (`resident_slot >= 0`) are dequantized directly
+     from GPU HBM (`4.8 TB/s`) with zero PCIe transfer (`h_cold_map[i] = -1`).
+   - Experts resident in the UVA-mapped `FileExpertStore` host cache (`host_slot >= 0`) are encoded as
+     `h_cold_map[i] = -2 - host_slot` and dequantized directly over PCIe UVA without CPU staging copies.
+   - Only the remaining uncached cold experts (`M` experts) are packed in parallel by `SharedSpinPool`
+     into double-buffered pinned `host_staging[buf_idx]` (`h_cold_map[i] = 0 .. M-1`) and transferred
+     asynchronously on high-priority `dma_stream` while the compute stream executes the previous pass's
+     grouped GEMM.
+2. **Dynamic Tail-Layer Slab Lending & Warm Seeding (`FinalizeQMoEPrefillAndSeedDecode`)**:
+   - For long prompts (`> 2,048` tokens, up to `64K`), `TryPrepareQMoEPrefillDmaLayer` temporarily lends
+     `4.4 GiB–7.2 GiB` of tail-layer resident slabs before allocating the prefill DMA workspace so peak
+     GPU VRAM never exceeds the decode envelope.
+   - When prefill finishes (`FinalizeQMoEPrefillAndSeedDecode`), the prefill DMA workspace and any
+     temporary host staging buffers are freed *before* restoring lent resident slabs, and the prompt
+     routing histogram (`hist_dev`) warm-seeds the initial decode resident set.
+
+Implementation files:
+- [onnxruntime_session_options_config_keys.h](include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h) — `session.moe.offload.*` config key constants;
+- [moe_offload_plan.h](onnxruntime/core/framework/moe_offload_plan.h) — `MoeOffloadSessionPolicy`, `MoeExpertSourceDescriptor`, `MoeBackendCapabilities`, `MoeNodeExecutionPlan`, and `IMoeOffloadNode`;
+- [session_state.cc](onnxruntime/core/framework/session_state.cc) — Stage 1 `PlaceMoeOffloadInitializersOnCpu` and Stage 3 `OnSessionInitializationEnd` hook;
+- [qmoe_session_controller.h](onnxruntime/core/providers/cuda/qmoe_session_controller.h) — `PlanAndAdmitSession`, `QueryPlatformUsableDeviceMemory`, `PrepareLinuxHostExpertMappings`, and `EvictUploadedHostPages`;
+- [qmoe_shared_layout.h](onnxruntime/contrib_ops/cpu/moe/qmoe_shared_layout.h), [qmoe_shared_layout.cc](onnxruntime/contrib_ops/cpu/moe/qmoe_shared_layout.cc), [qmoe_shared_layout_avx512.cc](onnxruntime/contrib_ops/cpu/moe/qmoe_shared_layout_avx512.cc) — 4-bit expert layouts, AVX-512 microkernels (`Fp4Group4Avx512`), and `FileExpertStore`;
+- [qmoe_spin_pool.h](onnxruntime/contrib_ops/cuda/moe/qmoe_spin_pool.h) — NUMA/CCD-pinned `SpinPool` (`DiscoverPhysicalCoreCount`) and `CpuBudgetGroup`;
+- [moe_quantization.cc](onnxruntime/contrib_ops/cuda/moe/moe_quantization.cc), [qmoe_offload.cc](onnxruntime/contrib_ops/cuda/moe/qmoe_offload.cc), [qmoe_kernels.cu](onnxruntime/contrib_ops/cuda/moe/qmoe_kernels.cu) — `QMoE` `IMoeOffloadNode` integration, doorbell CUDA-graph decode, adaptive promotion, and hybrid UVA + compact DMA prefill.
+
+---
+
 ## 13. Testing
 
 | Test file | Coverage |
@@ -1703,6 +2070,8 @@ onnxruntime/test/python/transformers/profile_qmoe_gemv.sh \
 | [test_qmoe_fp4_cuda.py](onnxruntime/test/python/transformers/test_qmoe_fp4_cuda.py) | MXFP4 QMoE: quantization utilities, packing, FP16/BF16, SiLU/SwiGLU, top-k and expert-count variants. On SM80+ (including SM120) `TestQMoEFP4Sm80SingleWeightCopy` checks the SM80 grouped GEMM + fused GEMV regime against the dequant fallback. |
 | [test_qmoe_fp8_cuda.py](onnxruntime/test/python/transformers/test_qmoe_fp8_cuda.py) | Legacy FP8 W8A16 native/dequant paths and square-block FP8 fallback, separate FC3, fused SwiGLU, partial blocks, top-10, validation errors, and opt-in official Qwen dimensions. |
 | [test_qmoe_wfp4afp8_cuda.py](onnxruntime/test/python/transformers/test_qmoe_wfp4afp8_cuda.py) | WFP4AFP8 — native Blackwell path requires SM100+; SM<100 exercises the dequant fallback. |
+| [test_qmoe_shared_layout.py](onnxruntime/test/python/transformers/test_qmoe_shared_layout.py) | Shared 4-bit expert block layouts (`INT4`, `MXFP4`, `NVFP4`), scalar vs. AVX-512 cold-expert kernel parity, and `FileExpertStore` roundtrips. |
+| [test_qmoe_offload_v4.py](onnxruntime/test/python/test_qmoe_offload_v4.py) | Portable QMoE Offload v4 (`session.moe.offload.*` on canonical `com.microsoft::QMoE`): rejection of invalid/legacy config keys, numerical parity across `disabled`, `auto`, `static`, `adaptive`, and `bounded_host` (`FileExpertStore`) modes for decode (`T=1,2,4`) and prefill (`T=16`), and full CUDA Graph capture and replay. |
 
 ### Reference computation
 

@@ -3875,8 +3875,10 @@ Status InferenceSession::RunImpl(const RunOptions& run_options,
         const bool synchronize_execution_providers =
             run_options.config_options.GetConfigOrDefault(kOrtRunOptionsConfigDisableSynchronizeExecutionProviders, "0") == "0";
         const bool run_succeeded = retval.IsOK() && !run_options.terminate && (std::uncaught_exceptions() == 0);
-        RunOptions failed_run_options;
         const RunOptions* effective_run_options = &run_options;
+#if !defined(ORT_MINIMAL_BUILD) || defined(ORT_EXTENDED_MINIMAL_BUILD)
+        // The failed-run marker is only consumed by the CUDA EP, which is not part of a pure minimal build.
+        RunOptions failed_run_options;
         if (!run_succeeded) {
           ORT_TRY {
             failed_run_options = run_options;
@@ -3887,6 +3889,9 @@ Status InferenceSession::RunImpl(const RunOptions& run_options,
             effective_run_options = &run_options;
           }
         }
+#else
+        ORT_UNUSED_PARAMETER(run_succeeded);
+#endif
         for (auto* xp : exec_providers_to_stop) {
           ORT_TRY {
             auto status = xp->OnRunEnd(synchronize_execution_providers, *effective_run_options);

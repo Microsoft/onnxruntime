@@ -553,7 +553,7 @@ struct MoeNodeExecutionPlan {
 
 // Whether an offload-aware MoE/QMoE kernel backend exists. Expert initializers are only relocated to host memory
 // when it does; the backend integration that implements IMoeOffloadNode enables this.
-inline constexpr bool kExpertRelocationBackendAvailable = false;
+inline constexpr bool kExpertRelocationBackendAvailable = true;
 
 class IMoeOffloadNode {
  public:

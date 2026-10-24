@@ -113,6 +113,8 @@ const OrtMemoryInfo* OrtAllocatorImplWrappingIAllocator::Info() const {
 }
 
 std::unordered_map<std::string, std::string> OrtAllocatorImplWrappingIAllocator::Stats() const {
+  // Plugin EP allocators are not available in a pure minimal build.
+#if !defined(ORT_MINIMAL_BUILD) || defined(ORT_EXTENDED_MINIMAL_BUILD)
   const auto* ort_allocator = i_allocator_->GetWrappedOrtAllocator();
   if (ort_allocator != nullptr && ort_allocator->version >= kOrtAllocatorStatsMinVersion && ort_allocator->GetStats) {
     Ort::UnownedAllocator allocator(const_cast<OrtAllocator*>(ort_allocator));
@@ -125,6 +127,7 @@ std::unordered_map<std::string, std::string> OrtAllocatorImplWrappingIAllocator:
     }
     return entries;
   }
+#endif  // !defined(ORT_MINIMAL_BUILD) || defined(ORT_EXTENDED_MINIMAL_BUILD)
 
   AllocatorStats stats{};
   i_allocator_->GetStats(&stats);

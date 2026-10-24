@@ -59,6 +59,10 @@
     "${ONNXRUNTIME_ROOT}/contrib_ops/cuda/*.h"
     "${ONNXRUNTIME_ROOT}/contrib_ops/cuda/*.cc"
   )
+  if(NOT onnxruntime_ENABLE_MLAS_QMOE_OFFLOAD)
+    list(APPEND onnxruntime_cuda_contrib_ops_cc_srcs
+      "${ONNXRUNTIME_ROOT}/contrib_ops/cpu/moe/qmoe_shared_layout.cc")
+  endif()
 
   if(onnxruntime_MINIMAL_BUILD)
     list(REMOVE_ITEM onnxruntime_cuda_contrib_ops_cc_srcs
@@ -400,7 +404,7 @@
       # cuDNN and cuFFT are loaded dynamically at runtime (see cudnn_stub.cc / cufft_stub.cc), so they are
       # intentionally not linked here to avoid a hard runtime dependency when the related ops are not used.
       target_link_libraries(${target} PRIVATE CUDA::cublasLt CUDA::cublas cudnn_frontend CUDA::curand CUDA::cudart CUDA::cuda_driver
-              ${ABSEIL_LIBS} ${ONNXRUNTIME_PROVIDERS_SHARED} Boost::mp11 safeint_interface)
+              ${ABSEIL_LIBS} ${ONNXRUNTIME_PROVIDERS_SHARED} onnxruntime_mlas Boost::mp11 safeint_interface)
     endif()
 
     include(cutlass)

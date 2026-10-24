@@ -3,14 +3,17 @@
 
 #pragma once
 
-#include "core/common/common.h"
 #include "core/providers/cuda/cuda_kernel.h"
+#include "core/common/common.h"
+#include "core/framework/moe_offload_plan.h"
 #include "contrib_ops/cuda/moe/moe_base.h"
+#include "contrib_ops/cuda/moe/qmoe_offload.h"
 #include "contrib_ops/cuda/moe/qmoe_row_tiling.h"
 #include "contrib_ops/cuda/llm/moe_gemm/moe_kernels.h"
 #include "contrib_ops/cuda/llm/moe_gemm/moe_gemm_profiler.h"
 #include "contrib_ops/cuda/llm/moe_gemm/moe_gemv_fp4.h"
 
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -26,12 +29,22 @@ constexpr const char* kQMoERowTileSizeConfig = "ep.cuda.qmoe_row_tile_size";
 constexpr const char* kQMoEIntDequantMaxScratchBytes = "ORT_QMOE_INT_DEQUANT_MAX_SCRATCH_BYTES";
 constexpr const char* kQMoEIntDequantMaxScratchBytesConfig = "ep.cuda.qmoe_int_dequant_max_scratch_bytes";
 
-class QMoE final : public CudaKernel, public MoEBase {
+class QMoE final : public CudaKernel, public MoEBase, public onnxruntime::moe_offload::IMoeOffloadNode {
  public:
   explicit QMoE(const OpKernelInfo& op_kernel_info);
+  ~QMoE() override;
   Status ComputeInternal(OpKernelContext* ctx) const override;
   Status PrePack(const Tensor& tensor, int input_idx, AllocatorPtr alloc,
                  bool& is_packed, PrePackedWeights* prepacked_weights) override;
+
+  const onnxruntime::moe_offload::MoeExpertSourceDescriptor& GetSourceDescriptor() const noexcept override {
+    return offload_source_desc_;
+  }
+  const onnxruntime::moe_offload::MoeBackendCapabilities& GetBackendCapabilities() const noexcept override {
+    return offload_capabilities_;
+  }
+  Status InitializeAdmittedPlan(const onnxruntime::moe_offload::MoeOffloadSessionPolicy& policy,
+                                const onnxruntime::moe_offload::MoeNodeExecutionPlan& plan) override;
 
  private:
   // PrePack helpers - each handles one category of input tensor.
@@ -310,6 +323,20 @@ class QMoE final : public CudaKernel, public MoEBase {
 
   mutable std::mutex fp4_gemv_tune_cache_mutex_;
   mutable std::unordered_map<Fp4GemvTuneKey, Fp4GemvTuneResult, Fp4GemvTuneKeyHash> fp4_gemv_tune_cache_;
+
+  // v4 MoE Offload state
+  int32_t offload_layer_index_{-1};
+  int offload_registered_dev_id_{-1};
+  const uint8_t* offload_registered_fc1_w_{nullptr};
+  bool offload_node_registered_{false};
+  bool offload_prepack_bypass_{false};
+  IAllocatorUniquePtr<void> offload_gpu_fc1_bias_;
+  IAllocatorUniquePtr<void> offload_gpu_fc2_bias_;
+  onnxruntime::moe_offload::MoeOffloadSessionPolicy offload_policy_{};
+  onnxruntime::moe_offload::MoeExpertSourceDescriptor offload_source_desc_{};
+  onnxruntime::moe_offload::MoeBackendCapabilities offload_capabilities_{};
+  onnxruntime::moe_offload::MoeNodeExecutionPlan offload_plan_{};
+  std::unique_ptr<QMoEOffload> offload_backend_;
 };
 
 }  // namespace cuda

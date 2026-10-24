@@ -37,6 +37,7 @@
 #include "contrib_ops/cpu/utils/debug_macros.h"
 
 #include <algorithm>
+#include <optional>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -228,17 +229,6 @@ bool StaticFp4CutlassShapeSupported(const OpKernelInfo& op_kernel_info, bool is_
     return false;
   }
 
-  // The SM90 WFP4A16 block-scaled grouped GEMM packs block scales in groups of 8 k-blocks
-  // (PackedScalesNum = CTA_K(256) / group_size(32)); the GEMM reads ceil(K/256) of those
-  // packed groups. PrePackFp4ScalesForTmaWs zero-pads each expert's k-block count up to a
-  // multiple of 8 (and the runner strides experts by the padded count), so K no longer has
-  // to be 256-aligned: the partial last group's tail blocks are zero and are only read by
-  // the GEMM's last CTA-K-tile, where the matching A/B K elements are TMA-zeroed. The
-  // binding requirements are now the MXFP4 block-scale vector size (k % 32 == 0 for an
-  // integral k-block count) and the weight/activation TMA alignment. Gate on 64 as a
-  // conservative margin above 32; this admits gpt-oss-20b (hidden=inter=2880) while leaving
-  // headroom for any untested N-dim/CTA tiling alignment, and can be lowered to 32 once
-  // broader shapes are validated.
   constexpr int64_t kMxfp4CutlassAlignment = 64;
   return hidden_size % kMxfp4CutlassAlignment == 0 && inter_size % kMxfp4CutlassAlignment == 0;
 }
@@ -738,9 +728,249 @@ QMoE::QMoE(const OpKernelInfo& op_kernel_info) : CudaKernel(op_kernel_info), MoE
   }  // end integer quantization
 
   nvfp4_weights_row_major_ = quant_type_ == "nvfp4" && weights_prepacked_mode == 1;
+  {
+    int64_t attr_layer = -1;
+    if (op_kernel_info.GetAttr<int64_t>("layer_index", &attr_layer).IsOK() && attr_layer >= 0) {
+      offload_layer_index_ = static_cast<int32_t>(attr_layer);
+    } else {
+      int32_t parsed_layer = -1;
+      auto get_input_name = [&](size_t slot) -> std::string {
+#ifdef ORT_USE_EP_API_ADAPTERS
+        if (slot < op_kernel_info.GetKernelInfo().GetInputCount()) {
+          return op_kernel_info.GetKernelInfo().GetInputName(slot);
+        }
+#else
+        const auto& in_defs = op_kernel_info.node().InputDefs();
+        if (slot < in_defs.size() && in_defs[slot] != nullptr && in_defs[slot]->Exists()) {
+          return in_defs[slot]->Name();
+        }
+#endif
+        return {};
+      };
+      if (onnxruntime::moe_offload::MoeOffloadSessionPolicy::TryExtractLayerIndexFromName(
+              op_kernel_info.node().Name(), parsed_layer)) {
+        offload_layer_index_ = parsed_layer;
+      } else {
+        const std::string in2_name = get_input_name(2);
+        if (!in2_name.empty() &&
+            onnxruntime::moe_offload::MoeOffloadSessionPolicy::TryExtractLayerIndexFromName(
+                in2_name, parsed_layer)) {
+          offload_layer_index_ = parsed_layer;
+        }
+      }
+    }
+  }
   if (nvfp4_weights_row_major_) {
     nvfp4_gemv_raw_layout_ = true;
     enable_fp4_gemv_autotune_ = false;
+    const Tensor* fc1_w = nullptr;
+    const Tensor* fc1_s = nullptr;
+    const Tensor* fc2_w = nullptr;
+    const Tensor* fc2_s = nullptr;
+    const Tensor* fc1_g = nullptr;
+    const Tensor* fc2_g = nullptr;
+    if (offload_layer_index_ >= 0 &&
+        op_kernel_info.TryGetConstantInput(2, &fc1_w) && fc1_w &&
+        op_kernel_info.TryGetConstantInput(3, &fc1_s) && fc1_s &&
+        op_kernel_info.TryGetConstantInput(5, &fc2_w) && fc2_w &&
+        op_kernel_info.TryGetConstantInput(6, &fc2_s) && fc2_s &&
+        op_kernel_info.TryGetConstantInput(15, &fc1_g) && fc1_g &&
+        op_kernel_info.TryGetConstantInput(16, &fc2_g) && fc2_g &&
+        fc1_w->Location().device.Type() == OrtDevice::CPU &&
+        fc1_w->Shape().NumDimensions() == 3 && fc2_w->Shape().NumDimensions() == 3) {
+      int dev_id = 0;
+      static_cast<void>(cudaGetDevice(&dev_id));
+      const int num_e = static_cast<int>(fc1_w->Shape()[0]);
+      const bool legacy_w = (fc1_w->Shape()[1] == fc2_w->Shape()[2] * 2 &&
+                             fc1_w->Shape()[2] == fc2_w->Shape()[1]);
+      const int hid = (fc2_s->Shape().NumDimensions() == 3)
+                          ? static_cast<int>(fc2_s->Shape()[1])
+                          : static_cast<int>(legacy_w ? fc1_w->Shape()[1] : fc2_w->Shape()[1]);
+      const int inter = (fc1_s->Shape().NumDimensions() == 3)
+                            ? static_cast<int>(fc1_s->Shape()[1] / 2)
+                            : static_cast<int>(legacy_w ? fc2_w->Shape()[1] : (fc1_w->Shape()[1] / 2));
+      offload_registered_dev_id_ = dev_id;
+      offload_registered_fc1_w_ = static_cast<const uint8_t*>(fc1_w->DataRaw());
+      RegisterQMoEDenseLayerHostWeights(
+          dev_id, offload_layer_index_, num_e, hid, inter,
+          static_cast<const uint8_t*>(fc1_w->DataRaw()),
+          static_cast<const uint8_t*>(fc1_s->DataRaw()),
+          static_cast<const float*>(fc1_g->DataRaw()),
+          static_cast<const uint8_t*>(fc2_w->DataRaw()),
+          static_cast<const uint8_t*>(fc2_s->DataRaw()),
+          static_cast<const float*>(fc2_g->DataRaw()));
+    }
+  }
+
+  // Parse v4 MoE offload policy and register with QMoESessionController when enabled (F03, F04, F10, F13, F17).
+  {
+    auto controller = GetQMoESessionController();
+    std::filesystem::path model_path = GetSessionModelPath();
+    if (model_path.empty() && controller) {
+      model_path = controller->GetModelPath();
+    }
+    if (controller && !model_path.empty() && controller->GetModelPath().empty()) {
+      controller->SetModelPath(model_path);
+    }
+    ORT_THROW_IF_ERROR(onnxruntime::moe_offload::MoeOffloadSessionPolicy::ParseFromConfigOptions(
+        op_kernel_info.GetConfigOptions(), model_path, offload_policy_));
+    if (offload_policy_.mode != onnxruntime::moe_offload::OffloadMode::kDisabled && controller) {
+      auto get_input_name = [&](size_t slot) -> std::string {
+#ifdef ORT_USE_EP_API_ADAPTERS
+        if (slot < op_kernel_info.GetKernelInfo().GetInputCount()) {
+          return op_kernel_info.GetKernelInfo().GetInputName(slot);
+        }
+#else
+        const auto& in_defs = op_kernel_info.node().InputDefs();
+        if (slot < in_defs.size() && in_defs[slot] != nullptr && in_defs[slot]->Exists()) {
+          return in_defs[slot]->Name();
+        }
+#endif
+        return {};
+      };
+      auto input_slot_exists = [&](size_t slot) -> bool {
+        return !get_input_name(slot).empty();
+      };
+      bool has_unsupported_slot = false;
+      int bad_slot_idx = -1;
+      for (int bad_slot : {8, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20}) {
+        if (input_slot_exists(static_cast<size_t>(bad_slot))) {
+          has_unsupported_slot = true;
+          bad_slot_idx = bad_slot;
+          break;
+        }
+      }
+      const Tensor* fc1_w = nullptr;
+      const Tensor* fc1_s = nullptr;
+      const Tensor* fc1_b = nullptr;
+      const Tensor* fc2_w = nullptr;
+      const Tensor* fc2_s = nullptr;
+      const Tensor* fc2_b = nullptr;
+      const Tensor* fc1_g = nullptr;
+      const Tensor* fc2_g = nullptr;
+      const bool has_const_weights =
+          op_kernel_info.TryGetConstantInput(2, &fc1_w) && fc1_w &&
+          op_kernel_info.TryGetConstantInput(3, &fc1_s) && fc1_s &&
+          op_kernel_info.TryGetConstantInput(5, &fc2_w) && fc2_w &&
+          op_kernel_info.TryGetConstantInput(6, &fc2_s) && fc2_s &&
+          fc1_w->Shape().NumDimensions() == 3 && fc2_w->Shape().NumDimensions() == 3 &&
+          fc1_w->Location().device.Type() == OrtDevice::CPU &&
+          fc1_s->Location().device.Type() == OrtDevice::CPU &&
+          fc2_w->Location().device.Type() == OrtDevice::CPU &&
+          fc2_s->Location().device.Type() == OrtDevice::CPU;
+      if (input_slot_exists(4)) static_cast<void>(op_kernel_info.TryGetConstantInput(4, &fc1_b));
+      if (input_slot_exists(7)) static_cast<void>(op_kernel_info.TryGetConstantInput(7, &fc2_b));
+      if (input_slot_exists(15)) static_cast<void>(op_kernel_info.TryGetConstantInput(15, &fc1_g));
+      if (input_slot_exists(16)) static_cast<void>(op_kernel_info.TryGetConstantInput(16, &fc2_g));
+
+      const bool is_interleaved_swiglu =
+          (activation_type_ == onnxruntime::llm::kernels::cutlass_kernels::ActivationType::Swiglu) &&
+          (swiglu_fusion_ == 0 || swiglu_fusion_ == 1);
+      const bool nvfp4_globals_ok = (quant_type_ != "nvfp4") || (fc1_g != nullptr && fc2_g != nullptr);
+      // The offload backend reads the raw K-packed row-major bytes. Only NVFP4 with weights_prepacked=1 defines that
+      // layout; MXFP4 and other weights_prepacked modes are N-packed in the standard path, so admitting them would
+      // change how the same initializer bytes are interpreted.
+      const bool node_eligible =
+          nvfp4_weights_row_major_ &&
+          expert_weight_bits_ == 4 &&
+          is_interleaved_swiglu &&
+          !use_sparse_mixer_ &&
+          !has_unsupported_slot &&
+          has_const_weights &&
+          nvfp4_globals_ok;
+
+      if (!node_eligible) {
+        ORT_ENFORCE(offload_policy_.mode != onnxruntime::moe_offload::OffloadMode::kRequired,
+                    "QMoE offload mode='required' rejected node '", op_kernel_info.node().Name(),
+                    "': quant_type='", quant_type_, "', nvfp4_row_major_weights=", nvfp4_weights_row_major_,
+                    " (requires quant_type='nvfp4' and weights_prepacked=1)",
+                    ", swiglu_fusion=", swiglu_fusion_, ", use_sparse_mixer=", use_sparse_mixer_,
+                    ", unsupported_slot=", bad_slot_idx, ", has_const_cpu_weights=", has_const_weights);
+      } else {
+        const int32_t num_e = static_cast<int32_t>(fc1_w->Shape()[0]);
+        const int32_t hid = static_cast<int32_t>(fc1_w->Shape()[1]);
+        const int32_t inter = static_cast<int32_t>(fc2_w->Shape()[1]);
+        const size_t blk = 16u;
+
+        offload_source_desc_.op_type = "QMoE";
+        offload_source_desc_.quant_type = quant_type_;
+        offload_source_desc_.stable_node_id = op_kernel_info.node().Name();
+        offload_source_desc_.num_experts = num_e;
+        offload_source_desc_.top_k = static_cast<int32_t>(k_);
+        offload_source_desc_.hidden_size = hid;
+        offload_source_desc_.inter_size = inter;
+        offload_source_desc_.block_size = static_cast<int32_t>(blk);
+        offload_source_desc_.weight_bits = 4;
+        offload_source_desc_.weights_prepacked = weights_prepacked_;
+        offload_source_desc_.placement.device_id = controller->DeviceId();
+        offload_source_desc_.shard_spec.global_num_experts = num_e;
+        offload_source_desc_.shard_spec.local_num_experts = num_e;
+        offload_source_desc_.shard_spec.global_hidden_size = hid;
+        offload_source_desc_.shard_spec.global_inter_size = inter;
+        offload_source_desc_.shard_spec.local_hidden_size = hid;
+        offload_source_desc_.shard_spec.local_inter_size = inter;
+        offload_source_desc_.shard_spec.quant_block_size = static_cast<int32_t>(blk);
+
+        auto record_slice = [&](onnxruntime::moe_offload::ExpertBankKind kind, int slot_idx, const Tensor* t) {
+          if (!t || num_e <= 0) return;
+          onnxruntime::moe_offload::MoeExpertBankSlice slice;
+          slice.kind = kind;
+          slice.input_index = slot_idx;
+          slice.initializer_name = get_input_name(static_cast<size_t>(slot_idx));
+          slice.elem_type = static_cast<ONNXTensorElementDataType>(t->GetElementType());
+          slice.full_shape = t->Shape();
+          slice.total_bytes = t->SizeInBytes();
+          slice.bytes_per_expert = t->SizeInBytes() / static_cast<size_t>(num_e);
+          slice.host_data = (t->Location().device.Type() == OrtDevice::CPU) ? t->DataRaw() : nullptr;
+          slice.is_file_mapped = onnxruntime::moe_offload::IsReloadableFileMapping(slice.host_data, slice.total_bytes);
+          offload_source_desc_.banks[static_cast<size_t>(kind)] = std::move(slice);
+        };
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc1Weights, 2, fc1_w);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc2Weights, 5, fc2_w);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc1Scales, 3, fc1_s);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc2Scales, 6, fc2_s);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc1GlobalScale, 15, fc1_g);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc2GlobalScale, 16, fc2_g);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc1Bias, 4, fc1_b);
+        record_slice(onnxruntime::moe_offload::ExpertBankKind::kFc2Bias, 7, fc2_b);
+
+        const size_t raw_slot_bytes =
+            static_cast<size_t>(2) * inter * (hid / 2) +
+            static_cast<size_t>(hid) * (inter / 2) +
+            static_cast<size_t>(2) * inter * (hid / blk) +
+            static_cast<size_t>(hid) * (inter / blk) +
+            2 * sizeof(float);
+        const size_t fc1_bias_slot_bytes =
+            (fc1_b != nullptr && num_e > 0) ? (fc1_b->SizeInBytes() / static_cast<size_t>(num_e)) : 0;
+        const size_t fc2_bias_fixed_bytes = (fc2_b != nullptr) ? fc2_b->SizeInBytes() : 0;
+
+        onnxruntime::contrib::qmoe_shared::Nvfp4ExpertBlockLayout host_layout{};
+        const bool layout_ok = (quant_type_ == "nvfp4")
+                                   ? onnxruntime::contrib::qmoe_shared::MakeNvfp4ExpertBlockLayout(hid, inter, &host_layout)
+                                   : onnxruntime::contrib::qmoe_shared::MakeMxfp4ExpertBlockLayout(hid, inter, &host_layout);
+        const size_t cpu_slot_stride = layout_ok ? host_layout.stride : raw_slot_bytes;
+
+        offload_capabilities_.supports_full_gpu_resident = true;
+        offload_capabilities_.supports_hybrid_doorbell_decode = true;
+        offload_capabilities_.supports_gpu_streaming_prefill = true;
+        offload_capabilities_.supports_file_backed_bounded_host_cache = true;
+        offload_capabilities_.supports_cuda_graph_capture = true;
+        offload_capabilities_.decode_kernel_skips_negative_slots = true;
+        offload_capabilities_.source_bytes_per_expert = raw_slot_bytes;
+        offload_capabilities_.gpu_slot_bytes = raw_slot_bytes + fc1_bias_slot_bytes;
+        // QMoE keeps its own full FC1/FC2 bias banks on the device for prefill dequantization, in addition to the
+        // per-slot FC1 bias and full FC2 bias buffer owned by the offload backend; charge every persistent copy.
+        const size_t fc1_bias_full_bytes = (fc1_b != nullptr) ? fc1_b->SizeInBytes() : 0;
+        offload_capabilities_.gpu_fixed_table_bytes =
+            static_cast<size_t>(2) * num_e * sizeof(int32_t) + 2 * fc2_bias_fixed_bytes + fc1_bias_full_bytes;
+        offload_capabilities_.cpu_slot_bytes = cpu_slot_stride;
+        offload_capabilities_.min_host_cache_slots = 1;
+
+        controller->RegisterMoeOffloadNode(this, offload_policy_, offload_layer_index_);
+        offload_source_desc_.layer_index = offload_layer_index_;
+        offload_node_registered_ = true;
+      }
+    }
   }
 
   ORT_ENFORCE(m_moe_runner != nullptr,
@@ -756,7 +986,100 @@ QMoE::QMoE(const OpKernelInfo& op_kernel_info) : CudaKernel(op_kernel_info), MoE
   }
 }
 
+QMoE::~QMoE() {
+  if (offload_registered_dev_id_ >= 0 && offload_layer_index_ >= 0) {
+    UnregisterQMoEDenseLayerHostWeights(
+        offload_registered_dev_id_, offload_layer_index_, offload_registered_fc1_w_);
+  }
+  if (auto controller = GetQMoESessionController()) {
+    controller->UnregisterMoeOffloadNode(this);
+  }
+}
+
+Status QMoE::InitializeAdmittedPlan(const onnxruntime::moe_offload::MoeOffloadSessionPolicy& policy,
+                                    const onnxruntime::moe_offload::MoeNodeExecutionPlan& plan) {
+  offload_policy_ = policy;
+  offload_plan_ = plan;
+  offload_layer_index_ = plan.layer_index;
+
+  AllocatorPtr alloc = Info().GetAllocator(OrtMemTypeDefault);
+  ORT_RETURN_IF_NOT(alloc != nullptr, "QMoE InitializeAdmittedPlan requires a valid CUDA device allocator.");
+  cudaStream_t stream = nullptr;
+  auto copy_optional_cpu_bias_to_gpu = [&](int slot, IAllocatorUniquePtr<void>& dst) {
+    const Tensor* t = nullptr;
+    if (Info().TryGetConstantInput(slot, &t) && t != nullptr && t->SizeInBytes() > 0 &&
+        t->Location().device.Type() == OrtDevice::CPU) {
+      bool dummy_packed = false;
+      PrePackCopyToGpu(*t, stream, alloc, dst, dummy_packed);
+    }
+  };
+  copy_optional_cpu_bias_to_gpu(4, offload_gpu_fc1_bias_);
+  copy_optional_cpu_bias_to_gpu(7, offload_gpu_fc2_bias_);
+
+  auto check_cpu_global_scale_eligible = [&](int slot) -> bool {
+    if (quant_type_ != "nvfp4") return false;
+    const Tensor* t = nullptr;
+    if (!Info().TryGetConstantInput(slot, &t) || t == nullptr || t->Location().device.Type() != OrtDevice::CPU) {
+      return false;
+    }
+    const int64_t count = t->Shape().Size();
+    if (count <= 0) return false;
+    const float* scales = t->Data<float>();
+    for (int64_t i = 0; i < count; ++i) {
+      if (!onnxruntime::llm::kernels::moe_gemv::IsNvfp4DecodeFastScale(scales[i])) return false;
+    }
+    return true;
+  };
+  nvfp4_fc1_decode_scale_eligible_ = check_cpu_global_scale_eligible(15);
+  nvfp4_fc2_decode_scale_eligible_ = check_cpu_global_scale_eligible(16);
+
+  if (plan.resident_slots >= plan.num_experts && nvfp4_weights_row_major_) {
+    // Full GPU residency admitted for row-major NVFP4: upload CPU tensors to GPU buffers now.
+    auto copy_input_to_gpu = [&](int slot, IAllocatorUniquePtr<void>& dst) {
+      const Tensor* t = nullptr;
+      if (Info().TryGetConstantInput(slot, &t) && t != nullptr && t->SizeInBytes() > 0) {
+        bool dummy_packed = false;
+        PrePackCopyToGpu(*t, stream, alloc, dst, dummy_packed);
+      }
+    };
+    copy_input_to_gpu(2, packed_fp4_fc1_weights_);
+    copy_input_to_gpu(3, packed_fp4_fc1_block_scales_);
+    copy_input_to_gpu(5, packed_fp4_fc2_weights_);
+    copy_input_to_gpu(6, packed_fp4_fc2_block_scales_);
+    copy_input_to_gpu(15, packed_fc1_global_scale_);
+    copy_input_to_gpu(16, packed_fc2_global_scale_);
+    return Status::OK();
+  }
+
+  if (nvfp4_weights_row_major_) {
+    auto copy_scale_to_gpu = [&](int slot, IAllocatorUniquePtr<void>& dst) {
+      const Tensor* t = nullptr;
+      if (Info().TryGetConstantInput(slot, &t) && t != nullptr && t->SizeInBytes() > 0) {
+        bool dummy_packed = false;
+        PrePackCopyToGpu(*t, stream, alloc, dst, dummy_packed);
+      }
+    };
+    copy_scale_to_gpu(15, packed_fc1_global_scale_);
+    copy_scale_to_gpu(16, packed_fc2_global_scale_);
+  }
+
+  offload_backend_ = std::make_unique<QMoEOffload>(Info(), policy, offload_source_desc_, plan);
+  return Status::OK();
+}
+
 Status QMoE::ComputeInternal(OpKernelContext* context) const {
+  if (offload_backend_ != nullptr) {
+    const Tensor* in_tensor = context->Input<Tensor>(0);
+    ORT_RETURN_IF_NOT(in_tensor != nullptr, "QMoE requires input tensor 0.");
+    const auto& in_shape = in_tensor->Shape();
+    const int64_t rows = (in_shape.NumDimensions() == 2)
+                             ? in_shape[0]
+                             : static_cast<int64_t>(SafeInt<int64_t>(in_shape[0]) * in_shape[1]);
+    if (!nvfp4_weights_row_major_ || rows <= offload_policy_.async_max_tokens) {
+      return offload_backend_->ComputeInternal(context);
+    }
+    offload_backend_->SyncPrefillSlotTables(Stream(context));
+  }
   const bool is_fp4 = (quant_type_ == "fp4");
   const bool is_nvfp4 = (quant_type_ == "nvfp4");
   // NVFP4 shares the E2M1 4-bit weight format, [E,K,N/2] weight layout, and the per-expert
@@ -1153,8 +1476,10 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
           ? (static_cast<int64_t>(moe_params.num_rows) * static_cast<int64_t>(k_)) /
                 static_cast<int64_t>(moe_params.num_experts)
           : static_cast<int64_t>(moe_params.num_rows) * static_cast<int64_t>(k_);
+  // Offload-managed NVFP4 keeps raw scales and initializers on the host or in raw GPU copies, which the native
+  // block-scaled kernels (swizzled scales, device weight pointers) cannot consume.
   const bool route_native_fp4 =
-      fp4_native_available &&
+      fp4_native_available && !offload_node_registered_ &&
       (!nvfp4_weights_row_major_ || (packed_fp4_fc1_block_scales_ != nullptr &&
                                      packed_fp4_fc2_block_scales_ != nullptr)) &&
       (fp4_native_max_tokens_per_expert_ <= 0 || avg_tokens_per_expert <= fp4_native_max_tokens_per_expert_) &&
@@ -1235,7 +1560,7 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
   const bool fp4_gemv_prologue_supported =
       (k_ == 1 || k_ == 2 || k_ == 4 || k_ == 6 || k_ == 8 || k_ == 10) &&
       moe_params.num_experts <= 1022;
-  if (is_fp4_family && fp4_decode_regime && enable_fp4_gemv_ && is_fused_swiglu &&
+  if (offload_backend_ == nullptr && is_fp4_family && fp4_decode_regime && enable_fp4_gemv_ && is_fused_swiglu &&
       fp4_gemv_buffers_ready && fp4_gemv_prologue_supported) {
     namespace gemv = onnxruntime::llm::kernels::moe_gemv;
     const int64_t expanded = moe_params.num_rows * static_cast<int64_t>(k_);
@@ -1349,9 +1674,53 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
           effective_row_tile_size != qmoe::kDisabledRowTileSize && !use_fp4_gemv && !use_packed_int_gemv);
   const bool use_nvfp4_compaction = is_nvfp4 && !route_native_fp4 && !use_fp4_gemv;
   const bool use_expert_compaction = is_block_fp8 || use_nvfp4_compaction;
+#if defined(_WIN32)
+  static const int max_compact_experts_env =
+      onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_MAX_COMPACT_EXPERTS", 64);
+#else
+  static const int max_compact_experts_env =
+      onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_MAX_COMPACT_EXPERTS", 0);
+#endif
+  const int default_compact_experts =
+      (offload_backend_ != nullptr && max_compact_experts_env <= 0)
+          ? static_cast<int>(offload_policy_.prefill_wave_experts)
+          : max_compact_experts_env;
+  const int dynamic_compact_experts =
+      onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_CURRENT_MAX_COMPACT_EXPERTS", default_compact_experts);
+  static const bool dequant_transient_env =
+      onnxruntime::ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_DEQUANT_TRANSIENT", 0) != 0;
+  const int full_active_experts =
+      (use_nvfp4_compaction && (dynamic_compact_experts > 0 || offload_backend_ != nullptr))
+          ? narrow<int>(moe_params.num_experts)
+          : (use_expert_compaction ? qmoe::MaxActiveExperts(row_tile_plan, narrow<int>(moe_params.num_experts), narrow<int>(k_))
+                                   : narrow<int>(moe_params.num_experts));
+  int eff_compact_experts =
+      (offload_backend_ != nullptr && dynamic_compact_experts >= full_active_experts && full_active_experts > 1)
+          ? std::max(1, full_active_experts / 2)
+          : dynamic_compact_experts;
+  if (offload_backend_ != nullptr && use_nvfp4_compaction &&
+      offload_policy_.device_working_bytes_explicit && offload_policy_.device_working_bytes > 0) {
+    const size_t elem_bytes = is_fp16_ ? sizeof(half) : sizeof(__nv_bfloat16);
+    const size_t per_expert_dequant_bytes =
+        static_cast<size_t>(3) * static_cast<size_t>(moe_params.hidden_size) *
+        static_cast<size_t>(moe_params.inter_size) * elem_bytes;
+    if (per_expert_dequant_bytes > 0) {
+      const int max_wave_by_working_budget = static_cast<int>(std::clamp<size_t>(
+          (offload_policy_.device_working_bytes * 3 / 4) / per_expert_dequant_bytes,
+          size_t{1}, static_cast<size_t>(full_active_experts)));
+      if (eff_compact_experts <= 0 || eff_compact_experts > max_wave_by_working_budget) {
+        eff_compact_experts = max_wave_by_working_budget;
+      }
+    }
+  }
   const int runner_num_experts =
-      use_expert_compaction ? qmoe::MaxActiveExperts(row_tile_plan, narrow<int>(moe_params.num_experts), narrow<int>(k_))
-                            : narrow<int>(moe_params.num_experts);
+      (use_nvfp4_compaction && eff_compact_experts > 0)
+          ? std::min(full_active_experts, eff_compact_experts)
+          : full_active_experts;
+  const int num_compact_passes =
+      (use_nvfp4_compaction && runner_num_experts < full_active_experts)
+          ? (full_active_experts + runner_num_experts - 1) / runner_num_experts
+          : 1;
 
   // Profile and capture the best tactics under the profiler mutex, then release the mutex so
   // that scratch allocation, weight dequantization, scale prepping, softmax, and other
@@ -1523,7 +1892,9 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
       qmoe::MakeScratchLayout(workspace_size, row_tile_plan, k_);
   const size_t total_scratch_bytes = scratch_layout.total_bytes;
 
-  auto work_space = GetScratchBuffer<void>(total_scratch_bytes, GetComputeStream(context));
+  auto work_space = (dequant_transient_env && !use_fp4_gemv && !use_packed_int)
+                        ? GetTransientScratchBuffer<void>(total_scratch_bytes)
+                        : GetScratchBuffer<void>(total_scratch_bytes, GetComputeStream(context));
   char* workspace_ptr = reinterpret_cast<char*>(work_space.get());
   float* expert_scales = reinterpret_cast<float*>(workspace_ptr + workspace_size);
   int* expert_indices =
@@ -2287,36 +2658,47 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
     // (fc*_gemv_sm80_layout, the single-copy default) or reads the dedicated GEMV-native copy
     // in gemv_fp4_fc*_weights_decode_.
     const uint8_t* gemv_fc1_weight = use_raw_nvfp4_gemv
-                                         ? static_cast<const uint8_t*>(fc1_experts_weights->DataRaw())
+                                         ? (packed_fp4_fc1_weights_
+                                                ? static_cast<const uint8_t*>(packed_fp4_fc1_weights_.get())
+                                                : static_cast<const uint8_t*>(fc1_experts_weights->DataRaw()))
                                          : static_cast<const uint8_t*>(
                                                ((enable_fp4_sm80_gemm_ && !fc1_gemv_sm80_layout)
                                                     ? gemv_fp4_fc1_weights_decode_
                                                     : gemv_fp4_fc1_weights_)
                                                    .get());
     const uint8_t* gemv_fc2_weight = use_raw_nvfp4_gemv
-                                         ? static_cast<const uint8_t*>(fc2_experts_weights->DataRaw())
+                                         ? (packed_fp4_fc2_weights_
+                                                ? static_cast<const uint8_t*>(packed_fp4_fc2_weights_.get())
+                                                : static_cast<const uint8_t*>(fc2_experts_weights->DataRaw()))
                                          : static_cast<const uint8_t*>(
                                                ((enable_fp4_sm80_gemm_ && !fc2_gemv_sm80_layout)
                                                     ? gemv_fp4_fc2_weights_decode_
                                                     : gemv_fp4_fc2_weights_)
                                                    .get());
+    // With native FP4 prepacking, packed_fp4_*_block_scales_ holds swizzled scales, so raw GEMV reads the original
+    // tensor when it is GPU-resident and uses the uploaded raw copy only for CPU-backed offload initializers.
+    auto raw_row_major_ptr = [&](int input_idx, const IAllocatorUniquePtr<void>& uploaded) -> const void* {
+      const Tensor* t = context->Input<Tensor>(input_idx);
+      if (t != nullptr && t->Location().device.Type() != OrtDevice::CPU) return t->DataRaw();
+      return uploaded ? uploaded.get() : (t != nullptr ? t->DataRaw() : nullptr);
+    };
     const uint8_t* gemv_fc1_raw_block_scales =
-        nvfp4_weights_row_major_ ? static_cast<const uint8_t*>(context->Input<Tensor>(3)->DataRaw())
+        nvfp4_weights_row_major_ ? static_cast<const uint8_t*>(raw_row_major_ptr(3, packed_fp4_fc1_block_scales_))
         : is_nvfp4               ? static_cast<const uint8_t*>((gemv_fp4_fc1_block_raw_ ? gemv_fp4_fc1_block_raw_
                                                                                         : packed_fp4_fc1_block_scales_)
                                                                    .get())
                                  : nullptr;
     const uint8_t* gemv_fc2_raw_block_scales =
-        nvfp4_weights_row_major_ ? static_cast<const uint8_t*>(context->Input<Tensor>(6)->DataRaw())
+        nvfp4_weights_row_major_ ? static_cast<const uint8_t*>(raw_row_major_ptr(6, packed_fp4_fc2_block_scales_))
         : is_nvfp4               ? static_cast<const uint8_t*>((gemv_fp4_fc2_block_raw_ ? gemv_fp4_fc2_block_raw_
                                                                                         : packed_fp4_fc2_block_scales_)
                                                                    .get())
                                  : nullptr;
     const float* gemv_fc1_raw_global_scales =
-        nvfp4_weights_row_major_ ? context->Input<Tensor>(15)->Data<float>()
+        nvfp4_weights_row_major_ ? static_cast<const float*>(raw_row_major_ptr(15, packed_fc1_global_scale_))
                                  : (is_nvfp4 ? static_cast<const float*>(packed_fc1_global_scale_.get()) : nullptr);
     const float* gemv_fc2_raw_global_scales =
-        nvfp4_weights_row_major_ ? context->Input<Tensor>(16)->Data<float>()
+        nvfp4_weights_row_major_ ? static_cast<const float*>(raw_row_major_ptr(16, packed_fc2_global_scale_))
                                  : (is_nvfp4 ? static_cast<const float*>(packed_fc2_global_scale_.get()) : nullptr);
     auto p_r2u_buf = GetScratchBuffer<int>(expanded, GetComputeStream(context));
     auto p_exp_buf = GetScratchBuffer<int>(expanded, GetComputeStream(context));
@@ -2393,8 +2775,12 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
       }
     }
 
-    const void* fc1_bias = fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr;
-    const void* fc2_bias = fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr;
+    const void* fc1_bias = offload_gpu_fc1_bias_
+                               ? offload_gpu_fc1_bias_.get()
+                               : (fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr);
+    const void* fc2_bias = offload_gpu_fc2_bias_
+                               ? offload_gpu_fc2_bias_.get()
+                               : (fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr);
 
     using MoeGemvConfig = gemv::MoeGemvConfig;
 
@@ -2639,6 +3025,13 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
   std::array<const float*, 3> fp8_scales{};
   size_t dequant_weight_bytes = 0;
   std::function<void()> dequantize_fp4;
+  std::function<void(int)> dequantize_fp4_dma;
+  bool use_prefill_dma = false;
+  int prefill_dma_dev_id = 0;
+  int64_t prefill_dma_layer = -1;
+  QMoEPrefillPassDmaView prefill_dma_view{};
+  // Held across every tile and pass so concurrent sessions cannot interleave on the per-device DMA state.
+  std::optional<QMoEPrefillDmaLease> prefill_dma_lease;
   if (use_int_dequant_fallback) {
     ORT_ENFORCE(fc1_experts_weights != nullptr && fc2_experts_weights != nullptr &&
                     fc1_scales != nullptr && fc2_scales != nullptr,
@@ -2696,16 +3089,20 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
     // (this is the large per-expert-M fallback), packed_fp4_*_block_scales_ holds the TMA-swizzled
     // layout, so use the raw copy kept in gemv_fp4_*_block_raw_ instead. NVFP4 retains its raw
     // scale inputs; prefer those even when native prepacking also created swizzled scales.
-    const void* p_fc1_block_scales = is_nvfp4 && fp4_fc1_block_scales ? fp4_fc1_block_scales->DataRaw()
-                                     : gemv_fp4_fc1_block_raw_        ? gemv_fp4_fc1_block_raw_.get()
-                                                                      : (packed_fp4_fc1_block_scales_ ? packed_fp4_fc1_block_scales_.get()
-                                                                                                      : (fp4_fc1_block_scales ? fp4_fc1_block_scales->DataRaw() : nullptr));
+    const void* p_fc1_block_scales =
+        (is_nvfp4 && fp4_fc1_block_scales && fp4_fc1_block_scales->Location().device.Type() == OrtDevice::GPU)
+            ? fp4_fc1_block_scales->DataRaw()
+        : gemv_fp4_fc1_block_raw_ ? gemv_fp4_fc1_block_raw_.get()
+                                  : (packed_fp4_fc1_block_scales_ ? packed_fp4_fc1_block_scales_.get()
+                                                                  : (fp4_fc1_block_scales ? fp4_fc1_block_scales->DataRaw() : nullptr));
     const void* p_fc1_global_scale = packed_fc1_global_scale_ ? packed_fc1_global_scale_.get()
                                                               : (fc1_global_scale ? fc1_global_scale->DataRaw() : nullptr);
-    const void* p_fc2_block_scales = is_nvfp4 && fp4_fc2_block_scales ? fp4_fc2_block_scales->DataRaw()
-                                     : gemv_fp4_fc2_block_raw_        ? gemv_fp4_fc2_block_raw_.get()
-                                                                      : (packed_fp4_fc2_block_scales_ ? packed_fp4_fc2_block_scales_.get()
-                                                                                                      : (fp4_fc2_block_scales ? fp4_fc2_block_scales->DataRaw() : nullptr));
+    const void* p_fc2_block_scales =
+        (is_nvfp4 && fp4_fc2_block_scales && fp4_fc2_block_scales->Location().device.Type() == OrtDevice::GPU)
+            ? fp4_fc2_block_scales->DataRaw()
+        : gemv_fp4_fc2_block_raw_ ? gemv_fp4_fc2_block_raw_.get()
+                                  : (packed_fp4_fc2_block_scales_ ? packed_fp4_fc2_block_scales_.get()
+                                                                  : (fp4_fc2_block_scales ? fp4_fc2_block_scales->DataRaw() : nullptr));
     const void* p_fc2_global_scale = packed_fc2_global_scale_ ? packed_fc2_global_scale_.get()
                                                               : (fc2_global_scale ? fc2_global_scale->DataRaw() : nullptr);
     ORT_RETURN_IF_NOT(p_fc1_block_scales && p_fc1_global_scale && p_fc2_block_scales && p_fc2_global_scale,
@@ -2720,47 +3117,180 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
     size_t fc1_bytes = SafeInt<size_t>(num_experts) * fc1_n * fc1_k * element_size;
     size_t fc2_bytes = SafeInt<size_t>(num_experts) * fc2_n * fc2_k * element_size;
     dequant_weight_bytes = SafeInt<size_t>(fc1_bytes) + fc2_bytes;
-    dequant_fc1_weights = GetScratchBuffer<void>(fc1_bytes, GetComputeStream(context));
-    dequant_fc2_weights = GetScratchBuffer<void>(fc2_bytes, GetComputeStream(context));
 
     ORT_RETURN_IF_NOT(fc1_experts_weights != nullptr && fc2_experts_weights != nullptr,
                       "QMoE FP4/NVFP4 dequant fallback requires valid raw expert-weight tensors.");
-    dequantize_fp4 = [&, fc1_n, fc1_k, fc2_n, fc2_k, num_experts,
-                      p_fc1_block_scales, p_fc1_global_scale, p_fc2_block_scales, p_fc2_global_scale]() {
-      // Choose the FP4 (MXFP4 / E8M0, block 32) or NVFP4 (E4M3, block 16) dequant launcher.
-      auto dequant = [&](const uint8_t* weights, const uint8_t* block_scales, const float* global_scale,
-                         void* out, int n, int k, const Tensor* bias, void* output_bias) {
-        if (is_fp16_) {
-          half* out_h = static_cast<half*>(out);
-          if (is_nvfp4) {
-            LaunchQMoEDequantizeNvfp4Weights(weights, block_scales, global_scale, out_h, num_experts, n, k, stream,
-                                             compact_to_expert.get(), bias ? static_cast<const half*>(bias->DataRaw()) : nullptr,
-                                             static_cast<half*>(output_bias), nvfp4_weights_row_major_);
+    QMoEResidentLayerSlabView resident_view{};
+    if (is_nvfp4 && nvfp4_weights_row_major_ && offload_layer_index_ >= 0) {
+      const int64_t parsed_layer = offload_layer_index_;
+      int dev_id = 0;
+      static_cast<void>(cudaGetDevice(&dev_id));
+      prefill_dma_dev_id = dev_id;
+      prefill_dma_layer = parsed_layer;
+      if (use_nvfp4_compaction && num_compact_passes > 1) {
+        const float* host_fc1_g = (fc1_global_scale && fc1_global_scale->Location().device.Type() == OrtDevice::CPU)
+                                      ? fc1_global_scale->Data<float>()
+                                      : static_cast<const float*>(p_fc1_global_scale);
+        const float* host_fc2_g = (fc2_global_scale && fc2_global_scale->Location().device.Type() == OrtDevice::CPU)
+                                      ? fc2_global_scale->Data<float>()
+                                      : static_cast<const float*>(p_fc2_global_scale);
+        prefill_dma_lease.emplace(dev_id, stream);
+        use_prefill_dma = TryPrepareQMoEPrefillDmaLayer(
+            dev_id, parsed_layer, narrow<int>(moe_params.num_experts),
+            narrow<int>(moe_params.hidden_size), narrow<int>(moe_params.inter_size),
+            runner_num_experts, moe_params.num_rows, element_size,
+            static_cast<const uint8_t*>(fc1_experts_weights->DataRaw()),
+            static_cast<const uint8_t*>(p_fc1_block_scales),
+            host_fc1_g,
+            static_cast<const uint8_t*>(fc2_experts_weights->DataRaw()),
+            static_cast<const uint8_t*>(p_fc2_block_scales),
+            host_fc2_g,
+            stream, &prefill_dma_view);
+        if (!use_prefill_dma) prefill_dma_lease.reset();
+      }
+      if (!use_prefill_dma) {
+        static_cast<void>(TryGetQMoEResidentLayerSlabView(
+            dev_id, parsed_layer, narrow<int>(moe_params.num_experts),
+            narrow<int>(moe_params.hidden_size), narrow<int>(moe_params.inter_size), &resident_view, stream,
+            static_cast<const uint8_t*>(fc1_experts_weights->DataRaw())));
+      }
+    }
+    const void* fc1_bias_gpu_src =
+        offload_gpu_fc1_bias_
+            ? offload_gpu_fc1_bias_.get()
+            : (fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr);
+    const void* fc2_bias_gpu_src =
+        offload_gpu_fc2_bias_
+            ? offload_gpu_fc2_bias_.get()
+            : (fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr);
+    if (use_prefill_dma) {
+      if (!prefill_dma_view.dequant_fc1_weights || !prefill_dma_view.dequant_fc2_weights) {
+        dequant_fc1_weights = dequant_transient_env
+                                  ? GetTransientScratchBuffer<void>(fc1_bytes)
+                                  : GetScratchBuffer<void>(fc1_bytes, GetComputeStream(context));
+        dequant_fc2_weights = dequant_transient_env
+                                  ? GetTransientScratchBuffer<void>(fc2_bytes)
+                                  : GetScratchBuffer<void>(fc2_bytes, GetComputeStream(context));
+        prefill_dma_view.dequant_fc1_weights = dequant_fc1_weights.get();
+        prefill_dma_view.dequant_fc2_weights = dequant_fc2_weights.get();
+      }
+      fc1_weight_data = prefill_dma_view.dequant_fc1_weights;
+      fc2_weight_data = prefill_dma_view.dequant_fc2_weights;
+      dequantize_fp4_dma = [&, fc1_n, fc1_k, fc2_n, fc2_k, wave_experts = num_experts, fc1_bias_gpu_src, fc2_bias_gpu_src](int pass_start_expert) {
+        // The last wave covers only the remaining experts; launching a full wave would read past the per-expert tables.
+        const int num_experts = std::min(wave_experts, narrow<int>(moe_params.num_experts) - pass_start_expert);
+        if (num_experts <= 0) return;
+        auto dequant_pass = [&](const uint8_t* stg_w, const uint8_t* stg_s, const float* stg_g,
+                                void* out, int n, int k, const void* bias_ptr, void* output_bias,
+                                const uint8_t* res_w, const uint8_t* res_s,
+                                const uint8_t* host_w, const uint8_t* host_s) {
+          if (is_fp16_) {
+            half* out_h = static_cast<half*>(out);
+            LaunchQMoEDequantizeNvfp4Weights(
+                stg_w, stg_s, stg_g, out_h, num_experts, n, k, stream,
+                nullptr, static_cast<const half*>(bias_ptr),
+                static_cast<half*>(output_bias), nvfp4_weights_row_major_,
+                res_w, res_s, prefill_dma_view.slot_table_dev,
+                pass_start_expert, expert_to_compact.get(),
+                host_w, host_s, prefill_dma_view.host_expert_stride, prefill_dma_view.host_slot_table_dev);
           } else {
-            LaunchQMoEDequantizeFp4Weights(weights, block_scales, global_scale, out_h, num_experts, n, k, stream);
+            __nv_bfloat16* out_b = static_cast<__nv_bfloat16*>(out);
+            LaunchQMoEDequantizeNvfp4Weights(
+                stg_w, stg_s, stg_g, out_b, num_experts, n, k, stream,
+                nullptr, static_cast<const __nv_bfloat16*>(bias_ptr),
+                static_cast<__nv_bfloat16*>(output_bias), nvfp4_weights_row_major_,
+                res_w, res_s, prefill_dma_view.slot_table_dev,
+                pass_start_expert, expert_to_compact.get(),
+                host_w, host_s, prefill_dma_view.host_expert_stride, prefill_dma_view.host_slot_table_dev);
           }
-        } else {
-          __nv_bfloat16* out_b = static_cast<__nv_bfloat16*>(out);
-          if (is_nvfp4) {
-            LaunchQMoEDequantizeNvfp4Weights(weights, block_scales, global_scale, out_b, num_experts, n, k, stream,
-                                             compact_to_expert.get(), bias ? static_cast<const __nv_bfloat16*>(bias->DataRaw()) : nullptr,
-                                             static_cast<__nv_bfloat16*>(output_bias), nvfp4_weights_row_major_);
-          } else {
-            LaunchQMoEDequantizeFp4Weights(weights, block_scales, global_scale, out_b, num_experts, n, k, stream);
-          }
-        }
+        };
+        dequant_pass(prefill_dma_view.staging_fc1_weights,
+                     prefill_dma_view.staging_fc1_scales,
+                     prefill_dma_view.staging_fc1_global_scales,
+                     prefill_dma_view.dequant_fc1_weights, fc1_n, fc1_k,
+                     fc1_bias_gpu_src, compact_fc1_bias.get(),
+                     prefill_dma_view.resident_fc1_weights, prefill_dma_view.resident_fc1_scales,
+                     prefill_dma_view.host_fc1_weights, prefill_dma_view.host_fc1_scales);
+        dequant_pass(prefill_dma_view.staging_fc2_weights,
+                     prefill_dma_view.staging_fc2_scales,
+                     prefill_dma_view.staging_fc2_global_scales,
+                     prefill_dma_view.dequant_fc2_weights, fc2_n, fc2_k,
+                     fc2_bias_gpu_src, compact_fc2_bias.get(),
+                     prefill_dma_view.resident_fc2_weights, prefill_dma_view.resident_fc2_scales,
+                     prefill_dma_view.host_fc2_weights, prefill_dma_view.host_fc2_scales);
       };
-      dequant(static_cast<const uint8_t*>(fc1_experts_weights->DataRaw()),
-              static_cast<const uint8_t*>(p_fc1_block_scales),
-              static_cast<const float*>(p_fc1_global_scale),
-              dequant_fc1_weights.get(), fc1_n, fc1_k, fc1_experts_bias_optional, compact_fc1_bias.get());
-      dequant(static_cast<const uint8_t*>(fc2_experts_weights->DataRaw()),
-              static_cast<const uint8_t*>(p_fc2_block_scales),
-              static_cast<const float*>(p_fc2_global_scale),
-              dequant_fc2_weights.get(), fc2_n, fc2_k, fc2_experts_bias_optional, compact_fc2_bias.get());
-    };
-    fc1_weight_data = dequant_fc1_weights.get();
-    fc2_weight_data = dequant_fc2_weights.get();
+    } else {
+      ORT_RETURN_IF(nvfp4_weights_row_major_ &&
+                        (offload_plan_.use_file_backing ||
+                         ParseEnvironmentVariableWithDefault<int>("ORT_QMOE_HOST_CACHE_MIB", 0) > 0) &&
+                        !resident_view.all_experts_cached,
+                    "Bounded prefill with incomplete GPU/host cache coverage requires prefill staging DMA. "
+                    "Enable ORT_QMOE_ENABLE_PREFILL_STAGING_DMA and provide sufficient workspace; "
+                    "pageable expert banks cannot be read directly by the GPU.");
+      dequant_fc1_weights = dequant_transient_env
+                                ? GetTransientScratchBuffer<void>(fc1_bytes)
+                                : GetScratchBuffer<void>(fc1_bytes, GetComputeStream(context));
+      dequant_fc2_weights = dequant_transient_env
+                                ? GetTransientScratchBuffer<void>(fc2_bytes)
+                                : GetScratchBuffer<void>(fc2_bytes, GetComputeStream(context));
+      dequantize_fp4 = [&, fc1_n, fc1_k, fc2_n, fc2_k, num_experts,
+                        p_fc1_block_scales, p_fc1_global_scale, p_fc2_block_scales, p_fc2_global_scale,
+                        resident_view, fc1_bias_gpu_src, fc2_bias_gpu_src]() {
+        // Choose the FP4 (MXFP4 / E8M0, block 32) or NVFP4 (E4M3, block 16) dequant launcher.
+        auto dequant = [&](const uint8_t* weights, const uint8_t* block_scales, const float* global_scale,
+                           void* out, int n, int k, const void* bias_ptr, void* output_bias,
+                           const uint8_t* res_w, const uint8_t* res_s,
+                           const uint8_t* host_w, const uint8_t* host_s) {
+          if (is_fp16_) {
+            half* out_h = static_cast<half*>(out);
+            if (is_nvfp4) {
+              LaunchQMoEDequantizeNvfp4Weights(weights, block_scales, global_scale, out_h, num_experts, n, k, stream,
+                                               compact_to_expert.get(), static_cast<const half*>(bias_ptr),
+                                               static_cast<half*>(output_bias), nvfp4_weights_row_major_,
+                                               res_w, res_s, resident_view.slot_table_dev,
+                                               -1, nullptr,
+                                               host_w, host_s, resident_view.host_expert_stride, resident_view.host_slot_table_dev);
+            } else {
+              LaunchQMoEDequantizeFp4Weights(weights, block_scales, global_scale, out_h, num_experts, n, k, stream);
+            }
+          } else {
+            __nv_bfloat16* out_b = static_cast<__nv_bfloat16*>(out);
+            if (is_nvfp4) {
+              LaunchQMoEDequantizeNvfp4Weights(weights, block_scales, global_scale, out_b, num_experts, n, k, stream,
+                                               compact_to_expert.get(), static_cast<const __nv_bfloat16*>(bias_ptr),
+                                               static_cast<__nv_bfloat16*>(output_bias), nvfp4_weights_row_major_,
+                                               res_w, res_s, resident_view.slot_table_dev,
+                                               -1, nullptr,
+                                               host_w, host_s, resident_view.host_expert_stride, resident_view.host_slot_table_dev);
+            } else {
+              LaunchQMoEDequantizeFp4Weights(weights, block_scales, global_scale, out_b, num_experts, n, k, stream);
+            }
+          }
+        };
+        const float* fc1_g_ptr = static_cast<const float*>(p_fc1_global_scale);
+        const float* fc2_g_ptr = static_cast<const float*>(p_fc2_global_scale);
+        const uint8_t* fc1_w_ptr = packed_fp4_fc1_weights_
+                                       ? static_cast<const uint8_t*>(packed_fp4_fc1_weights_.get())
+                                       : static_cast<const uint8_t*>(fc1_experts_weights->DataRaw());
+        const uint8_t* fc2_w_ptr = packed_fp4_fc2_weights_
+                                       ? static_cast<const uint8_t*>(packed_fp4_fc2_weights_.get())
+                                       : static_cast<const uint8_t*>(fc2_experts_weights->DataRaw());
+        dequant(fc1_w_ptr,
+                static_cast<const uint8_t*>(p_fc1_block_scales),
+                fc1_g_ptr,
+                dequant_fc1_weights.get(), fc1_n, fc1_k, fc1_bias_gpu_src, compact_fc1_bias.get(),
+                resident_view.fc1_weights, resident_view.fc1_scales,
+                resident_view.host_fc1_weights, resident_view.host_fc1_scales);
+        dequant(fc2_w_ptr,
+                static_cast<const uint8_t*>(p_fc2_block_scales),
+                fc2_g_ptr,
+                dequant_fc2_weights.get(), fc2_n, fc2_k, fc2_bias_gpu_src, compact_fc2_bias.get(),
+                resident_view.fc2_weights, resident_view.fc2_scales,
+                resident_view.host_fc2_weights, resident_view.host_fc2_scales);
+      };
+      fc1_weight_data = dequant_fc1_weights.get();
+      fc2_weight_data = dequant_fc2_weights.get();
+    }
   } else if (is_fp8 && use_fp8_dequant_fallback_) {
     auto get_block_scales = [&](int input_idx, size_t scratch_idx) -> const float* {
       const auto* tensor = context->Input<Tensor>(input_idx);
@@ -2807,18 +3337,28 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
 
   if (use_expert_compaction) {
     const size_t num_routes = SafeInt<size_t>(row_tile_plan.rows_per_tile) * k_;
-    compact_expert_indices = GetScratchBuffer<int>(num_routes, GetComputeStream(context));
-    expert_to_compact = GetScratchBuffer<int>(moe_params.num_experts, GetComputeStream(context));
-    compact_to_expert = GetScratchBuffer<int>(runner_num_experts, GetComputeStream(context));
+    compact_expert_indices = dequant_transient_env
+                                 ? GetTransientScratchBuffer<int>(num_routes)
+                                 : GetScratchBuffer<int>(num_routes, GetComputeStream(context));
+    expert_to_compact = dequant_transient_env
+                            ? GetTransientScratchBuffer<int>(moe_params.num_experts)
+                            : GetScratchBuffer<int>(moe_params.num_experts, GetComputeStream(context));
+    compact_to_expert = dequant_transient_env
+                            ? GetTransientScratchBuffer<int>(runner_num_experts)
+                            : GetScratchBuffer<int>(runner_num_experts, GetComputeStream(context));
     const size_t element_size = input->DataType()->Size();
     if (fc1_experts_bias_optional) {
       const size_t fc1_n = SafeInt<size_t>(moe_params.inter_size) * (is_fused_swiglu ? 2 : 1);
-      compact_fc1_bias = GetScratchBuffer<void>(
-          SafeInt<size_t>(runner_num_experts) * fc1_n * element_size, GetComputeStream(context));
+      compact_fc1_bias = dequant_transient_env
+                             ? GetTransientScratchBuffer<void>(SafeInt<size_t>(runner_num_experts) * fc1_n * element_size)
+                             : GetScratchBuffer<void>(
+                                   SafeInt<size_t>(runner_num_experts) * fc1_n * element_size, GetComputeStream(context));
     }
     if (fc2_experts_bias_optional) {
-      compact_fc2_bias = GetScratchBuffer<void>(
-          SafeInt<size_t>(runner_num_experts) * moe_params.hidden_size * element_size, GetComputeStream(context));
+      compact_fc2_bias = dequant_transient_env
+                             ? GetTransientScratchBuffer<void>(SafeInt<size_t>(runner_num_experts) * moe_params.hidden_size * element_size)
+                             : GetScratchBuffer<void>(
+                                   SafeInt<size_t>(runner_num_experts) * moe_params.hidden_size * element_size, GetComputeStream(context));
     }
   }
   if (dequantize_fp4 && !use_nvfp4_compaction) {
@@ -2874,6 +3414,19 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
     activation_params.limit = std::numeric_limits<float>::infinity();
   }
 
+  IAllocatorUniquePtr<void> multi_pass_output_buf;
+  IAllocatorUniquePtr<float> multi_pass_accum_buf;
+  if (num_compact_passes > 1) {
+    const size_t max_tile_elems = SafeInt<size_t>(row_tile_plan.rows_per_tile) * moe_params.hidden_size;
+    const size_t pass_out_bytes = SafeInt<size_t>(max_tile_elems) * input->DataType()->Size();
+    multi_pass_output_buf = dequant_transient_env
+                                ? GetTransientScratchBuffer<void>(pass_out_bytes)
+                                : GetScratchBuffer<void>(pass_out_bytes, GetComputeStream(context));
+    multi_pass_accum_buf = dequant_transient_env
+                               ? GetTransientScratchBuffer<float>(max_tile_elems)
+                               : GetScratchBuffer<float>(max_tile_elems, GetComputeStream(context));
+  }
+
   // Route and execute each row tile in order on the same stream. The tile-local top-k metadata and
   // runner workspace are safe to reuse because the next tile's writes are ordered after all kernels
   // from the previous runMoe call. Tactic mutation remains serialized across concurrent QMoE calls.
@@ -2902,17 +3455,6 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
       }
     }
 #endif
-    if (use_expert_compaction) {
-      LaunchQMoECompactExperts(expert_indices, compact_expert_indices.get(),
-                               expert_to_compact.get(), compact_to_expert.get(),
-                               narrow<int>(moe_params.num_experts), runner_num_experts,
-                               SafeInt<int64_t>(tile_rows) * k_, stream);
-      if (use_nvfp4_compaction) {
-        dequantize_fp4();
-      } else {
-        dequantize_fp8();
-      }
-    }
     const size_t input_element_offset =
         SafeInt<size_t>(row_offset) * SafeInt<size_t>(moe_params.hidden_size);
     const size_t input_byte_offset =
@@ -2924,38 +3466,139 @@ Status QMoE::ComputeInternal(OpKernelContext* context) const {
     void* tile_output =
         reinterpret_cast<char*>(output->MutableDataRaw()) + output_byte_offset;
 
-    std::lock_guard<std::mutex> profiler_lock(mGemmProfilerMutex);
-    if (use_fp4_deep_gemm) {
-      active_runner->setFp4DeepGemmWeightScales(
-          static_cast<const float*>(fp4_deep_gemm_fc1_weight_scales_.get()),
-          static_cast<const float*>(fp4_deep_gemm_fc2_weight_scales_.get()));
+    if (num_compact_passes > 1) {
+      const int64_t tile_elems = SafeInt<int64_t>(tile_rows) * moe_params.hidden_size;
+      const int64_t tile_routes = SafeInt<int64_t>(tile_rows) * k_;
+      CUDA_CALL_THROW(cudaMemsetAsync(multi_pass_accum_buf.get(), 0,
+                                      static_cast<size_t>(tile_elems) * sizeof(float), stream));
+      if (use_prefill_dma) {
+        LaunchQMoEMarkActiveExperts(expert_indices, expert_to_compact.get(),
+                                    narrow<int>(moe_params.num_experts), tile_routes, stream);
+      }
+      if (prefill_dma_view.prefill_layer_hist_dev != nullptr) {
+        LaunchQMoEAccumulateExpertHistogram(expert_indices, tile_routes,
+                                            narrow<int>(moe_params.num_experts),
+                                            prefill_dma_view.prefill_layer_hist_dev, stream);
+      }
+      for (int pass_idx = 0; pass_idx < num_compact_passes; ++pass_idx) {
+        if (use_prefill_dma) {
+          ORT_ENFORCE(BeginQMoEPrefillDmaPass(
+              prefill_dma_dev_id, prefill_dma_layer, pass_idx, num_compact_passes,
+              runner_num_experts, stream, &prefill_dma_view, expert_to_compact.get()));
+          LaunchQMoERemapExpertRange(expert_indices, compact_expert_indices.get(),
+                                     tile_routes, pass_idx * runner_num_experts,
+                                     runner_num_experts, stream);
+          dequantize_fp4_dma(pass_idx * runner_num_experts);
+          EndQMoEPrefillDmaPassDequant(prefill_dma_dev_id, pass_idx, stream);
+        } else {
+          LaunchQMoECompactExperts(expert_indices, compact_expert_indices.get(),
+                                   expert_to_compact.get(), compact_to_expert.get(),
+                                   narrow<int>(moe_params.num_experts), runner_num_experts,
+                                   tile_routes, stream,
+                                   pass_idx * runner_num_experts);
+          dequantize_fp4();
+        }
+        {
+          std::lock_guard<std::mutex> profiler_lock(mGemmProfilerMutex);
+          active_runner->setTactic(tile_config->config1, tile_config->config2);
+          active_runner->runMoe(
+              tile_input,
+              nullptr,
+              compact_expert_indices.get(),
+              expert_scales,
+              fc1_weight_data,
+              compact_fc1_bias ? compact_fc1_bias.get()
+                               : (offload_gpu_fc1_bias_
+                                      ? offload_gpu_fc1_bias_.get()
+                                      : (fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr)),
+              kernel_activation_type,
+              fc2_weight_data,
+              compact_fc2_bias ? compact_fc2_bias.get()
+                               : (offload_gpu_fc2_bias_
+                                      ? offload_gpu_fc2_bias_.get()
+                                      : (fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr)),
+              quant_params,
+              tile_rows,
+              moe_params.hidden_size,
+              moe_params.inter_size,
+              runner_num_experts,
+              k_,
+              workspace_ptr,
+              multi_pass_output_buf.get(),
+              unpermuted_row_to_permuted_row,
+              parallelism_config,
+              activation_params,
+              fused_routing,
+              stream);
+        }
+        const bool is_last_pass = (pass_idx == num_compact_passes - 1);
+        if (is_fp16_) {
+          LaunchQMoEAccumulatePassOutput(multi_pass_accum_buf.get(),
+                                         static_cast<const half*>(multi_pass_output_buf.get()),
+                                         static_cast<half*>(tile_output),
+                                         tile_elems, is_last_pass, stream);
+        } else {
+          LaunchQMoEAccumulatePassOutput(multi_pass_accum_buf.get(),
+                                         static_cast<const __nv_bfloat16*>(multi_pass_output_buf.get()),
+                                         static_cast<__nv_bfloat16*>(tile_output),
+                                         tile_elems, is_last_pass, stream);
+        }
+        if (use_prefill_dma) {
+          PrefetchNextQMoEPrefillDmaPass(
+              prefill_dma_dev_id, prefill_dma_layer, pass_idx, num_compact_passes,
+              runner_num_experts, stream);
+        }
+      }
+    } else {
+      if (use_expert_compaction) {
+        LaunchQMoECompactExperts(expert_indices, compact_expert_indices.get(),
+                                 expert_to_compact.get(), compact_to_expert.get(),
+                                 narrow<int>(moe_params.num_experts), runner_num_experts,
+                                 SafeInt<int64_t>(tile_rows) * k_, stream);
+        if (use_nvfp4_compaction) {
+          dequantize_fp4();
+        } else {
+          dequantize_fp8();
+        }
+      }
+
+      std::lock_guard<std::mutex> profiler_lock(mGemmProfilerMutex);
+      if (use_fp4_deep_gemm) {
+        active_runner->setFp4DeepGemmWeightScales(
+            static_cast<const float*>(fp4_deep_gemm_fc1_weight_scales_.get()),
+            static_cast<const float*>(fp4_deep_gemm_fc2_weight_scales_.get()));
+      }
+      active_runner->setTactic(tile_config->config1, tile_config->config2);
+      active_runner->runMoe(
+          tile_input,
+          nullptr,
+          use_expert_compaction ? compact_expert_indices.get() : expert_indices,
+          expert_scales,
+          fc1_weight_data,
+          compact_fc1_bias ? compact_fc1_bias.get()
+                           : (offload_gpu_fc1_bias_
+                                  ? offload_gpu_fc1_bias_.get()
+                                  : (fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr)),
+          kernel_activation_type,
+          fc2_weight_data,
+          compact_fc2_bias ? compact_fc2_bias.get()
+                           : (offload_gpu_fc2_bias_
+                                  ? offload_gpu_fc2_bias_.get()
+                                  : (fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr)),
+          quant_params,
+          tile_rows,
+          moe_params.hidden_size,
+          moe_params.inter_size,
+          runner_num_experts,
+          k_,
+          workspace_ptr,
+          tile_output,
+          unpermuted_row_to_permuted_row,
+          parallelism_config,
+          activation_params,
+          fused_routing,
+          stream);
     }
-    active_runner->setTactic(tile_config->config1, tile_config->config2);
-    active_runner->runMoe(
-        tile_input,
-        nullptr,
-        use_expert_compaction ? compact_expert_indices.get() : expert_indices,
-        expert_scales,
-        fc1_weight_data,
-        compact_fc1_bias ? compact_fc1_bias.get()
-                         : (fc1_experts_bias_optional ? fc1_experts_bias_optional->DataRaw() : nullptr),
-        kernel_activation_type,
-        fc2_weight_data,
-        compact_fc2_bias ? compact_fc2_bias.get()
-                         : (fc2_experts_bias_optional ? fc2_experts_bias_optional->DataRaw() : nullptr),
-        quant_params,
-        tile_rows,
-        moe_params.hidden_size,
-        moe_params.inter_size,
-        runner_num_experts,
-        k_,
-        workspace_ptr,
-        tile_output,
-        unpermuted_row_to_permuted_row,
-        parallelism_config,
-        activation_params,
-        fused_routing,
-        stream);
 
 #if !defined(BUILD_CUDA_EP_AS_PLUGIN) && !defined(ORT_MINIMAL_BUILD)
     if (routing_snapshot_) {
@@ -2982,6 +3625,9 @@ Status QMoE::PrePack(const Tensor& tensor, int input_idx, AllocatorPtr alloc,
                      bool& is_packed, PrePackedWeights* prepacked_weights) {
   ORT_UNUSED_PARAMETER(prepacked_weights);
   is_packed = false;
+  if (offload_node_registered_ && !offload_prepack_bypass_) {
+    return Status::OK();
+  }
   if (nvfp4_weights_row_major_ && (input_idx == 2 || input_idx == 5 ||
                                    (use_fp4_dequant_fallback_ && (input_idx == 3 || input_idx == 6)))) {
     return Status::OK();

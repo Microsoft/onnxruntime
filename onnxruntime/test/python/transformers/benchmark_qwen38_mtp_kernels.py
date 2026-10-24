@@ -521,7 +521,14 @@ def compile_nvfp4(source, element_type, fused, bias, wide, reuse=False, decode=F
     converter_start = details.index("template <typename AType, bool PairInterleaved = false>")
     converter_end = details.index("\n};", converter_start) + 3
     pair_start = source.index("template <typename T, bool FusedSwiGlu, bool EnableBias>\n__device__")
-    pair_end = source.index("// NVFP4 schema weights", pair_start)
+    pair_ends = [
+        index
+        for index in (
+            source.find(marker, pair_start) for marker in ("// NVFP4/MXFP4 schema weights", "// NVFP4 schema weights")
+        )
+        if index >= 0
+    ]
+    pair_end = min(pair_ends)
     prefix = (
         """
 #include <cuda_fp16.h>

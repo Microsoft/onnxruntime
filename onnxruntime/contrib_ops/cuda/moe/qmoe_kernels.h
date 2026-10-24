@@ -53,6 +53,61 @@ bool LaunchFusedRouteMaps(const __nv_bfloat16* logits, float* topk_scales, int* 
                           int* permuted_expert, int64_t* expert_first_token_offset, int num_rows, int num_experts,
                           int k, bool normalize_scales, bool pdl, cudaStream_t stream);
 
+cudaError_t LaunchQMoEOffloadGather(
+    const half* input, const int* route_ids, half* gathered,
+    int route_count, int hidden_size, int k, cudaStream_t stream);
+cudaError_t LaunchQMoEOffloadGather(
+    const __nv_bfloat16* input, const int* route_ids, __nv_bfloat16* gathered,
+    int route_count, int hidden_size, int k, cudaStream_t stream);
+
+cudaError_t LaunchQMoEOffloadScatter(
+    const half* wave_output, const int* route_ids, half* contributions,
+    int route_count, int hidden_size, int tile_rows, int k, cudaStream_t stream);
+cudaError_t LaunchQMoEOffloadScatter(
+    const __nv_bfloat16* wave_output, const int* route_ids, __nv_bfloat16* contributions,
+    int route_count, int hidden_size, int tile_rows, int k, cudaStream_t stream);
+
+cudaError_t LaunchQMoEOffloadMetadata(
+    float* unit_scales, int* identity_permutation, int route_count, cudaStream_t stream);
+
+cudaError_t LaunchQMoEOffloadSourceRows(
+    int* source_rows, int route_count, int k, cudaStream_t stream);
+
+cudaError_t LaunchQMoEOffloadScatterBias(
+    const half* wave_bias, const int* compact_experts, const int* route_ids, half* route_bias,
+    int route_count, int hidden_size, cudaStream_t stream);
+cudaError_t LaunchQMoEOffloadScatterBias(
+    const __nv_bfloat16* wave_bias, const int* compact_experts, const int* route_ids, __nv_bfloat16* route_bias,
+    int route_count, int hidden_size, cudaStream_t stream);
+
+cudaError_t LaunchQMoEOffloadClassify(
+    const int* topk_indices, const int* expert_slot, int route_count, int row_count,
+    int* hit_ids, int* hit_compact, int* hit_flag, cudaStream_t stream,
+    int dummy_slot = 0, float* unit_scales = nullptr, int* identity_permutation = nullptr,
+    int k_for_source_rows = 0, int* host_indices_out = nullptr,
+    const void* input_dev = nullptr, void* host_input_out = nullptr, int input_vec4_count = 0,
+    uint64_t* doorbell_seq_dev = nullptr, volatile uint64_t* doorbell_req_host = nullptr,
+    volatile int32_t* doorbell_tile_rows_host = nullptr, int tile_rows = 0);
+
+cudaError_t LaunchQMoEOffloadMerge(
+    const half* wave_output, const half* cpu_rows, const int* hit_flag, half* contributions,
+    int route_count, int hidden_size, int tile_rows, int k, cudaStream_t stream,
+    const uint64_t* doorbell_seq_dev = nullptr, const volatile uint64_t* doorbell_done_host = nullptr);
+cudaError_t LaunchQMoEOffloadMerge(
+    const __nv_bfloat16* wave_output, const __nv_bfloat16* cpu_rows, const int* hit_flag, __nv_bfloat16* contributions,
+    int route_count, int hidden_size, int tile_rows, int k, cudaStream_t stream,
+    const uint64_t* doorbell_seq_dev = nullptr, const volatile uint64_t* doorbell_done_host = nullptr);
+
+cudaError_t LaunchQMoEOffloadMergeFinalizeCombine(
+    const __nv_bfloat16* wave_output, const __nv_bfloat16* cpu_rows, const int* hit_flag,
+    const float* scales, __nv_bfloat16* routed_out, __nv_bfloat16* shared_out,
+    int hidden_size, int tile_rows, int k, cudaStream_t stream,
+    const uint64_t* doorbell_seq_dev = nullptr, const volatile uint64_t* doorbell_done_host = nullptr,
+    int trigger = 0);
+
+cudaError_t LaunchQMoESharedExpertCombine(
+    __nv_bfloat16* shared_out, const __nv_bfloat16* routed_out,
+    int count, int trigger, cudaStream_t stream);
 void LaunchSparseMixerTop2(
     const float* input,
     float* output,
@@ -279,6 +334,45 @@ void LaunchQMoECompactExperts(
     int num_experts,
     int expert_capacity,
     int64_t num_routes,
+    cudaStream_t stream,
+    int pass_offset = 0);
+
+void LaunchQMoEMarkActiveExperts(
+    const int* expert_indices,
+    int* expert_active_mask,
+    int num_experts,
+    int64_t num_routes,
+    cudaStream_t stream);
+
+void LaunchQMoERemapExpertRange(
+    const int* expert_indices,
+    int* compact_indices,
+    int64_t num_routes,
+    int pass_start,
+    int expert_capacity,
+    cudaStream_t stream);
+
+void LaunchQMoEAccumulateExpertHistogram(
+    const int* expert_indices,
+    int64_t num_routes,
+    int num_experts,
+    int* global_hist,
+    cudaStream_t stream);
+
+void LaunchQMoEAccumulatePassOutput(
+    float* accum,
+    const half* pass_output,
+    half* final_output,
+    int64_t count,
+    bool write_final,
+    cudaStream_t stream);
+
+void LaunchQMoEAccumulatePassOutput(
+    float* accum,
+    const __nv_bfloat16* pass_output,
+    __nv_bfloat16* final_output,
+    int64_t count,
+    bool write_final,
     cudaStream_t stream);
 
 struct QMoEFp8ProjectionParams {
@@ -346,6 +440,102 @@ void LaunchQMoEDequantizeFp8Weights(
     const __nv_bfloat16* bias = nullptr,
     __nv_bfloat16* output_bias = nullptr);
 
+struct QMoEResidentLayerSlabView {
+  const uint8_t* fc1_weights = nullptr;
+  const uint8_t* fc1_scales = nullptr;
+  const uint8_t* fc2_weights = nullptr;
+  const uint8_t* fc2_scales = nullptr;
+  const int* slot_table_dev = nullptr;
+  const float* fc1_global_scales = nullptr;
+  const float* fc2_global_scales = nullptr;
+  const uint8_t* host_fc1_weights = nullptr;
+  const uint8_t* host_fc1_scales = nullptr;
+  const uint8_t* host_fc2_weights = nullptr;
+  const uint8_t* host_fc2_scales = nullptr;
+  size_t host_expert_stride = 0;
+  const int* host_slot_table_dev = nullptr;
+  bool all_experts_cached = false;
+};
+
+struct QMoEPrefillPassDmaView {
+  void* dequant_fc1_weights = nullptr;
+  void* dequant_fc2_weights = nullptr;
+  const uint8_t* staging_fc1_weights = nullptr;
+  const uint8_t* staging_fc1_scales = nullptr;
+  const float* staging_fc1_global_scales = nullptr;
+  const uint8_t* staging_fc2_weights = nullptr;
+  const uint8_t* staging_fc2_scales = nullptr;
+  const float* staging_fc2_global_scales = nullptr;
+  const uint8_t* resident_fc1_weights = nullptr;
+  const uint8_t* resident_fc1_scales = nullptr;
+  const uint8_t* resident_fc2_weights = nullptr;
+  const uint8_t* resident_fc2_scales = nullptr;
+  const int* slot_table_dev = nullptr;
+  const uint8_t* host_fc1_weights = nullptr;
+  const uint8_t* host_fc1_scales = nullptr;
+  const uint8_t* host_fc2_weights = nullptr;
+  const uint8_t* host_fc2_scales = nullptr;
+  size_t host_expert_stride = 0;
+  const int* host_slot_table_dev = nullptr;
+  int* prefill_layer_hist_dev = nullptr;
+};
+
+bool TryGetQMoEResidentLayerSlabView(
+    int device_id,
+    int64_t layer_index,
+    int num_experts,
+    int hidden_size,
+    int inter_size,
+    QMoEResidentLayerSlabView* out_view,
+    cudaStream_t stream = nullptr,
+    const uint8_t* fc1_w_id = nullptr);
+
+void RegisterQMoEDenseLayerHostWeights(
+    int device_id, int64_t layer_index, int num_experts, int hidden_size, int inter_size,
+    const uint8_t* fc1_w, const uint8_t* fc1_s, const float* fc1_g,
+    const uint8_t* fc2_w, const uint8_t* fc2_s, const float* fc2_g);
+
+void UnregisterQMoEDenseLayerHostWeights(
+    int device_id, int64_t layer_index, const uint8_t* fc1_w = nullptr);
+
+// Exclusive per-device lease over the shared prefill DMA state (staging buffers, dense-layer table and
+// workspace). Hold it from TryPrepareQMoEPrefillDmaLayer through the last pass of a layer so concurrent
+// sessions cannot interleave their prepare/begin/dequant steps. Releasing the lease orders the next owner's
+// work after everything this owner enqueued on its stream.
+class QMoEPrefillDmaLease {
+ public:
+  QMoEPrefillDmaLease(int device_id, cudaStream_t exec_stream);
+  ~QMoEPrefillDmaLease();
+  QMoEPrefillDmaLease(const QMoEPrefillDmaLease&) = delete;
+  QMoEPrefillDmaLease& operator=(const QMoEPrefillDmaLease&) = delete;
+
+ private:
+  int device_id_;
+  cudaStream_t exec_stream_;
+};
+
+bool TryPrepareQMoEPrefillDmaLayer(
+    int device_id, int64_t layer_index, int num_experts, int hidden_size, int inter_size,
+    int runner_num_experts, int64_t tile_rows, size_t elem_size,
+    const uint8_t* fc1_w, const uint8_t* fc1_s, const float* fc1_g,
+    const uint8_t* fc2_w, const uint8_t* fc2_s, const float* fc2_g,
+    cudaStream_t exec_stream, QMoEPrefillPassDmaView* out_view);
+
+bool BeginQMoEPrefillDmaPass(
+    int device_id, int64_t layer_index, int pass_idx, int num_passes, int runner_num_experts,
+    cudaStream_t exec_stream, QMoEPrefillPassDmaView* out_view,
+    const int* expert_active_mask_dev = nullptr);
+
+void PrefetchNextQMoEPrefillDmaPass(
+    int device_id, int64_t layer_index, int pass_idx, int num_passes, int runner_num_experts,
+    cudaStream_t exec_stream = nullptr);
+
+void EndQMoEPrefillDmaPassDequant(
+    int device_id, int pass_idx, cudaStream_t exec_stream);
+
+void OnQMoEDeviceArenasShrunk(int device_id) noexcept;
+void FinalizeQMoEPrefillAndSeedDecode(int device_id, cudaStream_t stream = nullptr);
+
 // NVFP4 weight dequantization: E2M1 4-bit weights with Float8E4M3FN block scales
 // (block size 16) and per-expert float32 global scales. Weight layout [E, K, N/2],
 // block-scale layout [E, N, K/16]. Mirrors LaunchQMoEDequantizeFp4Weights (MXFP4).
@@ -361,7 +551,16 @@ void LaunchQMoEDequantizeNvfp4Weights(
     const int* compact_to_expert = nullptr,
     const half* bias = nullptr,
     half* output_bias = nullptr,
-    bool weights_row_major = false);
+    bool weights_row_major = false,
+    const uint8_t* resident_packed_weights = nullptr,
+    const uint8_t* resident_block_scales = nullptr,
+    const int* resident_expert_to_slot = nullptr,
+    int pass_start_expert = -1,
+    const int* expert_active_mask = nullptr,
+    const uint8_t* host_packed_weights = nullptr,
+    const uint8_t* host_block_scales = nullptr,
+    size_t host_expert_stride = 0,
+    const int* host_expert_to_slot = nullptr);
 
 void LaunchQMoEDequantizeNvfp4Weights(
     const uint8_t* packed_weights,
@@ -375,7 +574,16 @@ void LaunchQMoEDequantizeNvfp4Weights(
     const int* compact_to_expert = nullptr,
     const __nv_bfloat16* bias = nullptr,
     __nv_bfloat16* output_bias = nullptr,
-    bool weights_row_major = false);
+    bool weights_row_major = false,
+    const uint8_t* resident_packed_weights = nullptr,
+    const uint8_t* resident_block_scales = nullptr,
+    const int* resident_expert_to_slot = nullptr,
+    int pass_start_expert = -1,
+    const int* expert_active_mask = nullptr,
+    const uint8_t* host_packed_weights = nullptr,
+    const uint8_t* host_block_scales = nullptr,
+    size_t host_expert_stride = 0,
+    const int* host_expert_to_slot = nullptr);
 
 // Repack column-major FP4 packed weights to row-major layout on GPU.
 // Input shape interpretation: [experts, k, n/2] (col-major packed),
