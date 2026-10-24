@@ -1,12 +1,114 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <vector>
+
 #include "gtest/gtest.h"
 #include "core/providers/cpu/tensor/scatter_nd.h"
 #include "test/providers/provider_test_utils.h"
+#include "test/common/tensor_op_test_utils.h"
+#include "test/util/include/default_providers.h"
 
 namespace onnxruntime {
 namespace test {
+
+namespace {
+
+// The reductions below all previously threw for MLFloat16 and BFloat16. Index 0 appears twice,
+// so slices 0 and 2 both land on output slice 0 and the reduction is applied more than once.
+// The values are small powers of two, exact in both half formats, so the expected result does
+// not depend on rounding.
+template <typename T>
+void RunScatterNDHalfReductionTest(const char* reduction, const std::vector<float>& expected_slice0,
+                                   const std::vector<float>& expected_slice1) {
+  OpTester test("ScatterND", 18);
+  test.AddAttribute("reduction", reduction);
+
+  const std::vector<float> data(12, 1.f);
+  std::vector<float> updates;
+  for (float v : {2.f, 4.f, 8.f}) updates.insert(updates.end(), 6, v);
+
+  std::vector<float> expected;
+  expected.insert(expected.end(), expected_slice0.begin(), expected_slice0.end());
+  expected.insert(expected.end(), expected_slice1.begin(), expected_slice1.end());
+
+  if constexpr (std::is_same_v<T, MLFloat16>) {
+    test.AddInput<MLFloat16>("data", {2, 2, 3}, ToFloat16(data));
+    test.AddInput<int64_t>("indices", {3, 1}, {0, 1, 0});
+    test.AddInput<MLFloat16>("updates", {3, 2, 3}, ToFloat16(updates));
+    test.AddOutput<MLFloat16>("output", {2, 2, 3}, ToFloat16(expected));
+  } else {
+    test.AddInput<BFloat16>("data", {2, 2, 3}, ToBFloat16(data));
+    test.AddInput<int64_t>("indices", {3, 1}, {0, 1, 0});
+    test.AddInput<BFloat16>("updates", {3, 2, 3}, ToBFloat16(updates));
+    test.AddOutput<BFloat16>("output", {2, 2, 3}, ToBFloat16(expected));
+  }
+
+  if constexpr (std::is_same_v<T, BFloat16>) {
+    // bfloat16 runs on CPU only for now: the CUDA kernel selects its compute type by element
+    // size, so it treats bfloat16 as float16 and reduces misread bits
+    // (microsoft/onnxruntime#32061). Widen this once that is fixed.
+    std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+    execution_providers.emplace_back(DefaultCpuExecutionProvider());
+    test.ConfigEps(std::move(execution_providers)).RunWithConfig();
+  } else {
+    test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+  }
+}
+
+}  // namespace
+
+TEST(ScatterNDOpTest, ScatterND_18_add_MLFloat16) {
+  RunScatterNDHalfReductionTest<MLFloat16>("add", std::vector<float>(6, 11.f), std::vector<float>(6, 5.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_add_BFloat16) {
+  RunScatterNDHalfReductionTest<BFloat16>("add", std::vector<float>(6, 11.f), std::vector<float>(6, 5.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_mul_MLFloat16) {
+  RunScatterNDHalfReductionTest<MLFloat16>("mul", std::vector<float>(6, 16.f), std::vector<float>(6, 4.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_mul_BFloat16) {
+  RunScatterNDHalfReductionTest<BFloat16>("mul", std::vector<float>(6, 16.f), std::vector<float>(6, 4.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_min_MLFloat16) {
+  RunScatterNDHalfReductionTest<MLFloat16>("min", std::vector<float>(6, 1.f), std::vector<float>(6, 1.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_min_BFloat16) {
+  RunScatterNDHalfReductionTest<BFloat16>("min", std::vector<float>(6, 1.f), std::vector<float>(6, 1.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_max_MLFloat16) {
+  RunScatterNDHalfReductionTest<MLFloat16>("max", std::vector<float>(6, 8.f), std::vector<float>(6, 4.f));
+}
+
+TEST(ScatterNDOpTest, ScatterND_18_max_BFloat16) {
+  RunScatterNDHalfReductionTest<BFloat16>("max", std::vector<float>(6, 8.f), std::vector<float>(6, 4.f));
+}
+
+// Pins the accumulation precision: the reduction is carried out in half and rounded after every
+// update. One ULP at 1024 is 1.0 in binary16, so each 0.25 update rounds away and the total stays
+// 1024, where accumulating in float and rounding once at the end would give 1026.
+//
+// ONNX does not specify the intermediate precision, so this is a property of the CPU kernel
+// rather than of the operator, and it runs on CPU only.
+TEST(ScatterNDOpTest, ScatterND_18_add_MLFloat16_RoundsAfterEachUpdate) {
+  OpTester test("ScatterND", 18);
+  test.AddAttribute("reduction", "add");
+
+  test.AddInput<MLFloat16>("data", {2, 1}, ToFloat16({1024.f, 0.f}));
+  test.AddInput<int64_t>("indices", {8, 1}, {0, 0, 0, 0, 0, 0, 0, 0});
+  test.AddInput<MLFloat16>("updates", {8, 1}, ToFloat16(std::vector<float>(8, 0.25f)));
+  test.AddOutput<MLFloat16>("output", {2, 1}, ToFloat16({1024.f, 0.f}));
+
+  std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+  execution_providers.emplace_back(DefaultCpuExecutionProvider());
+  test.ConfigEps(std::move(execution_providers)).RunWithConfig();
+}
 
 TEST(ScatterNDOpTest, ScatterND_scaler_string_int64) {
   OpTester test1("ScatterND", 11);

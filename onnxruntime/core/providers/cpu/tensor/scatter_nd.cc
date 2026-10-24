@@ -171,17 +171,31 @@ struct Func_Add_ND<bool> {
   }
 };
 
+// MLFloat16 and BFloat16 expose conversions and comparisons but no arithmetic operators,
+// so 'add' and 'mul' are evaluated in float and rounded back to half on every update. That
+// matches the CUDA and WebGPU kernels, which likewise reduce one update at a time in half
+// precision rather than carrying a float accumulator across updates.
+// 'min' and 'max' need no specialization: both types have the comparison operators the
+// generic functors use.
 template <>
 struct Func_Add_ND<MLFloat16> {
-  void operator()(MLFloat16*, const MLFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: MLFloat16 data type is not supported with ScatterND opset 16 when reduction is 'add'.");
+  void operator()(MLFloat16* a, const MLFloat16* b, uint64_t element_to_copy) const {
+    while (element_to_copy-- > 0) {
+      *a = MLFloat16(a->ToFloat() + b->ToFloat());
+      ++a;
+      ++b;
+    }
   }
 };
 
 template <>
 struct Func_Add_ND<BFloat16> {
-  void operator()(BFloat16*, const BFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: BFloat16 data type is not supported with ScatterND opset 16 when reduction is 'add'.");
+  void operator()(BFloat16* a, const BFloat16* b, uint64_t element_to_copy) const {
+    while (element_to_copy-- > 0) {
+      *a = BFloat16(a->ToFloat() + b->ToFloat());
+      ++a;
+      ++b;
+    }
   }
 };
 
@@ -210,15 +224,23 @@ struct Func_Mul_ND<std::string> {
 
 template <>
 struct Func_Mul_ND<MLFloat16> {
-  void operator()(MLFloat16*, const MLFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: MLFloat16 data type is not supported with ScatterND opset 16 when reduction is 'mul'.");
+  void operator()(MLFloat16* a, const MLFloat16* b, uint64_t element_to_copy) const {
+    while (element_to_copy-- > 0) {
+      *a = MLFloat16(a->ToFloat() * b->ToFloat());
+      ++a;
+      ++b;
+    }
   }
 };
 
 template <>
 struct Func_Mul_ND<BFloat16> {
-  void operator()(BFloat16*, const BFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: BFloat16 data type is not supported with ScatterND opset 16 when reduction is 'mul'.");
+  void operator()(BFloat16* a, const BFloat16* b, uint64_t element_to_copy) const {
+    while (element_to_copy-- > 0) {
+      *a = BFloat16(a->ToFloat() * b->ToFloat());
+      ++a;
+      ++b;
+    }
   }
 };
 
@@ -247,20 +269,6 @@ struct Func_Min_ND<std::string> {
   }
 };
 
-template <>
-struct Func_Min_ND<MLFloat16> {
-  void operator()(MLFloat16*, const MLFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: MLFloat16 data type is not supported with ScatterND opset 18 when reduction is 'min'.");
-  }
-};
-
-template <>
-struct Func_Min_ND<BFloat16> {
-  void operator()(BFloat16*, const BFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: BFloat16 data type is not supported with ScatterND opset 18 when reduction is 'min'.");
-  }
-};
-
 template <class T>
 struct Func_Max_ND {
   void operator()(T* a, const T* b, uint64_t element_to_copy) const {
@@ -283,20 +291,6 @@ template <>
 struct Func_Max_ND<std::string> {
   void operator()(std::string*, const std::string*, uint64_t) const {
     ORT_NOT_IMPLEMENTED("CPU execution provider: string data type is not supported with ScatterND opset 18 when reduction is 'max'.");
-  }
-};
-
-template <>
-struct Func_Max_ND<MLFloat16> {
-  void operator()(MLFloat16*, const MLFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: MLFloat16 data type is not supported with ScatterND opset 18 when reduction is 'max'.");
-  }
-};
-
-template <>
-struct Func_Max_ND<BFloat16> {
-  void operator()(BFloat16*, const BFloat16*, uint64_t) const {
-    ORT_NOT_IMPLEMENTED("CPU execution provider: BFloat16 data type is not supported with ScatterND opset 18 when reduction is 'max'.");
   }
 };
 
