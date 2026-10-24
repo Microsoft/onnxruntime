@@ -119,6 +119,22 @@ describe('API Tests - simple API tests', () => {
     }
   });
 
+  it('recognizes the WebGPU disableSubgroupMatrix option', async () => {
+    const model = path.join(TEST_DATA_ROOT, 'test_types_float.onnx');
+
+    for (const disableSubgroupMatrix of [true, false]) {
+      try {
+        const session = await InferenceSession.create(model, {
+          executionProviders: [{ name: 'webgpu', disableSubgroupMatrix }],
+        });
+        await session.release();
+      } catch (error) {
+        // A build without WebGPU, or a machine without a usable adapter, can fail for unrelated reasons.
+        assert.doesNotMatch(String(error), /WebGPU EP has an unrecognized option: 'disableSubgroupMatrix'/);
+      }
+    }
+  });
+
   MODEL_TEST_TYPES_CASES.forEach((testCase) => {
     it(`${testCase.model}`, async () => {
       const session = await InferenceSession.create(testCase.model);

@@ -192,6 +192,8 @@ struct WebGpuContextConfig {
 #endif
   };
   bool enable_robustness_explicitly_set{false};
+  bool disable_subgroup_matrix{false};
+  bool disable_subgroup_matrix_explicitly_set{false};
   bool preserve_device{false};
   WeightLoadAccelerationMode weight_load_acceleration_mode{
       WeightLoadAccelerationMode::Off};
@@ -507,6 +509,7 @@ class WebGpuContext final {
   webgpu::ValidationMode validation_mode_;
   bool validation_mode_explicitly_set_;
   bool enable_robustness_ = false;
+  bool disable_subgroup_matrix_ = false;
   std::optional<uint32_t> adapter_index_;
   int adapter_power_preference_ = static_cast<int>(WGPUPowerPreference_HighPerformance);
   int adapter_backend_type_ = 0;

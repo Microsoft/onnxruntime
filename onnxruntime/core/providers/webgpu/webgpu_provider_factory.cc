@@ -312,6 +312,18 @@ WebGpuContextConfig ParseWebGpuContextConfig(
     }
   }
 
+  if (std::string disable_subgroup_matrix_str;
+      config_options.TryGetConfigEntry(kDisableSubgroupMatrix, disable_subgroup_matrix_str)) {
+    config.disable_subgroup_matrix_explicitly_set = true;
+    if (disable_subgroup_matrix_str == kDisableSubgroupMatrix_ON) {
+      config.disable_subgroup_matrix = true;
+    } else if (disable_subgroup_matrix_str == kDisableSubgroupMatrix_OFF) {
+      config.disable_subgroup_matrix = false;
+    } else {
+      ORT_THROW("Invalid disableSubgroupMatrix value: ", disable_subgroup_matrix_str, ". Must be \"0\" or \"1\".");
+    }
+  }
+
   if (std::string enable_robustness_str;
       config_options.TryGetConfigEntry(kEnableRobustness, enable_robustness_str)) {
     config.enable_robustness_explicitly_set = true;

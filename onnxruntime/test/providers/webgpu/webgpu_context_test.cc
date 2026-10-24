@@ -1293,6 +1293,69 @@ TEST(WebGpuContextTest, EnableRobustnessRejectsInvalidValue) {
   EXPECT_THROW(WebGpuProviderFactoryCreator::Create(RobustnessOptions("true")), OnnxRuntimeException);
 }
 
+TEST(WebGpuContextTest, DisableSubgroupMatrixRejectsInvalidValue) {
+  for (const char* value : {"true", "false", "2", "", "1x"}) {
+    ConfigOptions options;
+    ASSERT_STATUS_OK(options.AddConfigEntry(kDisableSubgroupMatrix, value));
+    EXPECT_THROW(WebGpuProviderFactoryCreator::Create(options), OnnxRuntimeException);
+  }
+}
+
+TEST(WebGpuContextTest, DisableSubgroupMatrixControlsDeviceFeature) {
+  RunWithFreshDefaultContext([]() {
+    ConfigOptions options;
+    ASSERT_STATUS_OK(options.AddConfigEntry(kDisableSubgroupMatrix, "1"));
+    auto ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+    auto& context = webgpu::WebGpuContextFactory::GetContext(0);
+    const auto feature = wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix;
+    EXPECT_FALSE(context.Device().HasFeature(feature));
+    EXPECT_FALSE(context.DeviceHasFeature(feature));
+#if !defined(__wasm__)
+    EXPECT_EQ(context.SubgroupMatrixConfigs().configCount, 0u);
+#endif
+    auto matching_ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+    // Omitted or conflicting values on a shared context warn and keep the feature disabled.
+    auto omitted_ep = WebGpuProviderFactoryCreator::Create(ConfigOptions{})->CreateProvider();
+    ASSERT_STATUS_OK(options.AddConfigEntry(kDisableSubgroupMatrix, "0"));
+    auto conflicting_ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+    EXPECT_FALSE(context.DeviceHasFeature(feature));
+  });
+}
+
+TEST(WebGpuContextTest, DisableSubgroupMatrixMasksExternalDeviceFeature) {
+  ConfigOptions default_options;
+  auto default_ep = WebGpuProviderFactoryCreator::Create(default_options)->CreateProvider();
+  if (!webgpu::WebGpuContextFactory::GetContext(0).Device().HasFeature(
+          wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix)) {
+    GTEST_SKIP() << "The adapter does not support subgroup matrices.";
+  }
+  RunWithFreshDefaultContext([]() {
+    ConfigOptions options;
+    ASSERT_STATUS_OK(options.AddConfigEntry(kDisableSubgroupMatrix, "0"));
+    auto ep = WebGpuProviderFactoryCreator::Create(options)->CreateProvider();
+    auto& context = webgpu::WebGpuContextFactory::GetContext(0);
+    const auto feature = wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix;
+    EXPECT_EQ(context.DeviceHasFeature(feature), context.Device().HasFeature(feature));
+    ASSERT_TRUE(context.Device().HasFeature(feature));
+
+    ConfigOptions external_options;
+    ASSERT_STATUS_OK(external_options.AddConfigEntry(kDeviceId, "1"));
+    ASSERT_STATUS_OK(external_options.AddConfigEntry(kDisableSubgroupMatrix, "1"));
+    ASSERT_STATUS_OK(external_options.AddConfigEntry(
+        kWebGpuInstance, std::to_string(reinterpret_cast<uintptr_t>(context.Instance().Get())).c_str()));
+    ASSERT_STATUS_OK(external_options.AddConfigEntry(
+        kWebGpuDevice, std::to_string(reinterpret_cast<uintptr_t>(context.Device().Get())).c_str()));
+    auto external_ep = WebGpuProviderFactoryCreator::Create(external_options)->CreateProvider();
+    auto& external_context = webgpu::WebGpuContextFactory::GetContext(1);
+    EXPECT_TRUE(external_context.Device().HasFeature(feature));
+    EXPECT_FALSE(external_context.DeviceHasFeature(feature));
+#if !defined(__wasm__)
+    EXPECT_EQ(external_context.SubgroupMatrixConfigs().configCount, 0u);
+#endif
+    EXPECT_TRUE(context.DeviceHasFeature(feature));
+  });
+}
+
 TEST(WebGpuContextTest, KvCacheQuantizationAcceptsSupportedBitWidths) {
   for (const auto& [value, expected_bits] :
        std::array<std::pair<const char*, uint32_t>, 3>{{{"0", 0}, {"4", 4}, {"8", 8}}}) {

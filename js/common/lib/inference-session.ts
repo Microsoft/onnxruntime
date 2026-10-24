@@ -301,6 +301,15 @@ export declare namespace InferenceSession {
     validationMode?: 'disabled' | 'wgpuOnly' | 'basic' | 'full';
 
     /**
+     * Disable subgroup matrix kernels and use their existing fallbacks, including with a custom GPU device.
+     * This is a global, first-context-wins option. Later
+     * conflicting values on an existing context are ignored with a warning.
+     *
+     * @default false
+     */
+    disableSubgroupMatrix?: boolean;
+
+    /**
      * Enable robust buffer access for an ORT-created Dawn device. This is a global, first-device-wins option. Later
      * conflicting values and values supplied with an external device are ignored with a warning.
      *

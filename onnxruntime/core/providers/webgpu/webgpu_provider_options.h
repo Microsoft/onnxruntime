@@ -66,6 +66,8 @@ constexpr const char* kDefaultBufferCacheMode = "ep.webgpuexecutionprovider.defa
 
 constexpr const char* kValidationMode = "ep.webgpuexecutionprovider.validationMode";
 constexpr const char* kEnableRobustness = "ep.webgpuexecutionprovider.enableRobustness";
+// Disable subgroup matrix kernels. Accepts "0" (default) or "1". Set before the shared context is initialized.
+constexpr const char* kDisableSubgroupMatrix = "ep.webgpuexecutionprovider.disableSubgroupMatrix";
 
 constexpr const char* kForceCpuNodeNames = "ep.webgpuexecutionprovider.forceCpuNodeNames";
 constexpr const char* kEnablePIXCapture = "ep.webgpuexecutionprovider.enablePIXCapture";
@@ -131,6 +133,9 @@ constexpr const char* kValidationMode_full = "full";
 
 constexpr const char* kEnableRobustness_ON = "1";
 constexpr const char* kEnableRobustness_OFF = "0";
+
+constexpr const char* kDisableSubgroupMatrix_ON = "1";
+constexpr const char* kDisableSubgroupMatrix_OFF = "0";
 
 }  // namespace options
 }  // namespace webgpu

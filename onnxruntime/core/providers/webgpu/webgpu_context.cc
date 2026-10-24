@@ -184,6 +184,7 @@ void WebGpuContext::Initialize(const WebGpuContextConfig& config) {
   std::call_once(init_flag_, [this, config]() {
     max_num_pending_dispatches_ = config.max_num_pending_dispatches;
     enable_robustness_ = config.enable_robustness;
+    disable_subgroup_matrix_ = config.disable_subgroup_matrix;
     adapter_index_ = config.adapter_index;
     adapter_power_preference_ = config.power_preference;
     adapter_backend_type_ = config.backend_type;
@@ -434,6 +435,11 @@ void WebGpuContext::Initialize(const WebGpuContextConfig& config) {
     wgpu::SupportedFeatures supported_features;
     Device().GetFeatures(&supported_features);
     for (size_t i = 0; i < supported_features.featureCount; i++) {
+      // Also hide the feature on externally supplied devices so all kernels use their fallbacks.
+      if (disable_subgroup_matrix_ &&
+          supported_features.features[i] == wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix) {
+        continue;
+      }
       device_features_.insert(supported_features.features[i]);
     }
     // cache adapter info
@@ -518,6 +524,16 @@ void WebGpuContext::Initialize(const WebGpuContextConfig& config) {
               ", powerPreference=", config.power_preference,
               ", dawnBackendType=", config.backend_type,
               " and cannot be applied to the existing device. Use a separate process or an externally supplied custom context/device.");
+  }
+
+  if (config.disable_subgroup_matrix_explicitly_set && disable_subgroup_matrix_ != config.disable_subgroup_matrix) {
+    LOGS_DEFAULT(WARNING)
+        << "WebGPU context is already initialized with disableSubgroupMatrix=" << disable_subgroup_matrix_
+        << ". Requested value " << config.disable_subgroup_matrix << " will be ignored.";
+  } else if (!config.disable_subgroup_matrix_explicitly_set && disable_subgroup_matrix_) {
+    LOGS_DEFAULT(WARNING)
+        << "WebGPU context is already initialized with disableSubgroupMatrix=1. "
+        << "This session shares the context and will not use subgroup matrix kernels.";
   }
 
   if (config.enable_robustness_explicitly_set) {
@@ -1126,6 +1142,9 @@ std::vector<wgpu::FeatureName> WebGpuContext::GetAvailableRequiredFeatures(const
 #endif
   };
   for (auto feature : features) {
+    if (disable_subgroup_matrix_ && feature == wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix) {
+      continue;
+    }
 #if !defined(__wasm__)
     if (feature == wgpu::FeatureName::BufferMapExtendedUsages && !AdapterCanMapDeviceLocalMemory(adapter)) {
       continue;

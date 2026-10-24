@@ -197,6 +197,10 @@ const setExecutionProviders = async (
               appendEpOption(epOptions, 'validationMode', webgpuOptions.validationMode, allocs);
             }
 
+            if (typeof webgpuOptions.disableSubgroupMatrix === 'boolean') {
+              appendEpOption(epOptions, 'disableSubgroupMatrix', webgpuOptions.disableSubgroupMatrix ? '1' : '0', allocs);
+            }
+
             // set f32 accumulation for the MatMulNBits kernels
             if (typeof webgpuOptions.enableMatmulFp32Accumulation === 'boolean') {
               appendEpOption(
