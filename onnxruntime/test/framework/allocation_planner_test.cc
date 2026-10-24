@@ -1643,6 +1643,114 @@ TEST_F(PlannerTest, MultiStream2NodesSameStreamConsumedBy1NodeInDifferentStream)
 }
 #endif
 
+#if defined(USE_CUDA) || defined(USE_WEBGPU)
+TEST_F(PlannerTest, LocationPlanningForInitializerAsIfSubgraphOutput) {
+  constexpr int64_t kNumElements = 4;
+  const std::vector<float> then_data{1.f, 2.f, 3.f, 4.f};
+  const std::vector<float> else_data{-1.f, -2.f, -3.f, -4.f};
+
+  TypeProto float_tensor;
+  float_tensor.mutable_tensor_type()->set_elem_type(TensorProto_DataType_FLOAT);
+  float_tensor.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(kNumElements);
+
+  TypeProto bool_scalar;
+  bool_scalar.mutable_tensor_type()->set_elem_type(TensorProto_DataType_BOOL);
+  bool_scalar.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+
+  auto create_model = [&]() -> Model {
+    auto create_if_subgraph = [&](const std::string& init_name, const std::vector<float>& data) -> GraphProto {
+      Model model("if_branch_subgraph", true, DefaultLoggingManager().DefaultLogger());
+      auto& graph = model.MainGraph();
+
+      ONNX_NAMESPACE::TensorProto tensor;
+      tensor.add_dims(kNumElements);
+      for (float v : data) {
+        tensor.add_float_data(v);
+      }
+      tensor.set_data_type(TensorProto_DataType_FLOAT);
+      tensor.set_name(init_name);
+      graph_utils::AddInitializerWithOrtValue(graph, tensor);
+
+      auto& out = graph.GetOrCreateNodeArg(init_name, &float_tensor);
+      graph.SetOutputs({&out});
+
+      EXPECT_STATUS_OK(graph.Resolve());
+      return graph.ToGraphProto();
+    };
+
+    onnxruntime::Model model("main_graph", false, ModelMetaData(),
+                             PathString(), IOnnxRuntimeOpSchemaRegistryList(),
+                             {{kOnnxDomain, 12}}, {}, DefaultLoggingManager().DefaultLogger());
+    auto& main_graph = model.MainGraph();
+
+    auto& if_cond = main_graph.GetOrCreateNodeArg("if_cond", &bool_scalar);
+    auto& if_out = main_graph.GetOrCreateNodeArg("if_out", &float_tensor);
+    auto& node = main_graph.AddNode("if_node", "If", "If", {&if_cond}, {&if_out});
+    node.AddAttribute("then_branch", create_if_subgraph("then_init", then_data));
+    node.AddAttribute("else_branch", create_if_subgraph("else_init", else_data));
+
+    main_graph.SetInputs({&if_cond});
+    main_graph.SetOutputs({&if_out});
+
+    EXPECT_STATUS_OK(main_graph.Resolve());
+    return model;
+  };
+
+  SessionOptions so;
+  InferenceSession sess{so, GetEnvironment()};
+#if defined(USE_CUDA)
+  ASSERT_STATUS_OK(sess.RegisterExecutionProvider(DefaultCudaExecutionProvider()));
+#else
+  ASSERT_STATUS_OK(sess.RegisterExecutionProvider(DefaultWebGpuExecutionProvider()));
+#endif
+
+  std::string s1;
+  ASSERT_TRUE(create_model().ToProto().SerializeToString(&s1));
+  std::stringstream sstr(s1);
+  ASSERT_STATUS_OK(sess.Load(sstr));
+  ASSERT_STATUS_OK(sess.Initialize());
+
+  const auto& main_graph_session_state = sess.GetSessionState();
+  const Node* if_node = nullptr;
+  for (const auto& n : main_graph_session_state.GetGraphViewer().Nodes()) {
+    if (n.OpType() == "If") {
+      if_node = &n;
+    }
+  }
+  ASSERT_NE(if_node, nullptr);
+  ASSERT_NE(if_node->GetExecutionProviderType(), kCpuExecutionProvider) << "If must run on the GPU EP for this test";
+
+  auto check_branch = [&](const std::string& attr_name, const std::string& init_name) {
+    const auto* subgraph_session_state = main_graph_session_state.GetSubgraphSessionState(if_node->Index(), attr_name);
+    ASSERT_NE(subgraph_session_state, nullptr);
+
+    OrtValueIndex init_index;
+    ASSERT_STATUS_OK(subgraph_session_state->GetOrtValueNameIdxMap().GetIdx(init_name, init_index));
+    EXPECT_EQ(subgraph_session_state->GetExecutionPlan()->allocation_plan[init_index].location.Type(),
+              OrtDevice::GPU)
+        << init_name << " should be planned on the If node's device";
+  };
+  check_branch("then_branch", "then_init");
+  check_branch("else_branch", "else_init");
+
+  // The output must still be correct for both branches.
+  auto run_and_check = [&](bool cond, const std::vector<float>& expected) {
+    OrtValue cond_value;
+    CreateMLValue<bool>(TestCPUExecutionProvider()->CreatePreferredAllocators()[0], {1}, {cond}, &cond_value);
+    NameMLValMap feeds{{"if_cond", cond_value}};
+    std::vector<OrtValue> fetches;
+    std::vector<std::string> output_names{"if_out"};
+    ASSERT_STATUS_OK(sess.Run(RunOptions{}, feeds, output_names, &fetches));
+    ASSERT_EQ(fetches.size(), 1u);
+    const auto& out = fetches[0].Get<Tensor>();
+    ASSERT_EQ(out.Shape().Size(), kNumElements);
+    EXPECT_EQ(std::vector<float>(out.Data<float>(), out.Data<float>() + kNumElements), expected);
+  };
+  run_and_check(true, then_data);
+  run_and_check(false, else_data);
+}
+#endif
+
 #if !defined(__wasm__) && defined(ORT_ENABLE_STREAM)
 TEST_F(PlannerTest, ParaPlanCreation) {
   TypeProto graph_in_type;

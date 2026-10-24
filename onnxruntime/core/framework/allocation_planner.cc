@@ -1040,6 +1040,35 @@ class PlannerImpl {
       }
     }
 
+    // An If branch may return an initializer with no consumer in the branch, so it would stay on CPU and be copied to
+    // the If node's device on every Run. Place it on the If node's device instead.
+    if (parent_node_ != nullptr && parent_node_->OpType() == "If" &&
+        (parent_node_->Domain() == kOnnxDomain || parent_node_->Domain().empty())) {
+      const auto* parent_ep = execution_providers_.Get(*parent_node_);
+      ORT_ENFORCE(parent_ep != nullptr, "Can not find the execution provider for the parent node ",
+                  parent_node_->Name());
+      const OrtDevice parent_device = parent_ep->GetOrtDeviceByMemType(OrtMemType::OrtMemTypeDefault);
+
+      for (const auto* graph_output : graph_viewer_.GetOutputs()) {
+        if (graph_output == nullptr || !graph_output->Exists()) {
+          continue;
+        }
+
+        const auto& name = graph_output->Name();
+        if (!graph_viewer_.IsInitializedTensor(name)) {
+          continue;
+        }
+
+        OrtValueIndex index = Index(name);
+        if (set_node_arg_has_explicit_consumer.count(index) != 0 ||
+            map_implicitly_consumed_node_arg_to_ep.count(index) != 0) {
+          continue;  // location already decided by a consumer
+        }
+
+        plan_.SetLocation(static_cast<size_t>(index), parent_device);
+      }
+    }
+
     return Status::OK();
   }
 
