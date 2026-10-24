@@ -14,3 +14,6 @@
 
 # Git hooks must have Unix line endings to work on all platforms
 .githooks/* text eol=lf
+
+# Match the pinned SDK archive when patch runs in binary mode on Windows.
+cmake/patches/cpp_client_telemetry/*.patch text eol=lf

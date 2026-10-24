@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -17,6 +18,9 @@
 namespace onnxruntime {
 namespace {
 
+Microsoft::Applications::Events::ILogManager* mock_manager = nullptr;
+bool clean_shutdown = false;
+
 void Check(bool condition, const char* message) {
   if (!condition) {
     std::fprintf(stderr, "%s (Win32 error: %lu)\n", message, GetLastError());
@@ -29,20 +33,22 @@ void Check(bool condition, const char* message) {
 
 }  // namespace
 
-class OneDsTelemetryTestPeer {
- public:
-  static void Install(Microsoft::Applications::Events::ILogManager& manager) {
-    Check(OneDsTelemetry::global_register_count_ == 1, "Expected exactly one telemetry instance");
-    Check(!OneDsTelemetry::log_manager_ && !OneDsTelemetry::config_, "Real uploader must be disabled");
-    OneDsTelemetry::config_ = std::make_unique<Microsoft::Applications::Events::ILogConfiguration>();
-    OneDsTelemetry::log_manager_ = &manager;
-  }
+void OrtTelemetryLifecycleInstall(
+    uint32_t register_count, Microsoft::Applications::Events::ILogManager*& manager,
+    std::unique_ptr<Microsoft::Applications::Events::ILogConfiguration>& config) {
+  Check(register_count == 1, "Expected exactly one telemetry instance");
+  Check(!manager && !config, "Real uploader must be disabled");
+  Check(mock_manager != nullptr, "Mock uploader must be ready before construction");
+  config = std::make_unique<Microsoft::Applications::Events::ILogConfiguration>();
+  manager = mock_manager;
+}
 
-  static bool IsClean() {
-    return OneDsTelemetry::global_register_count_ == 0 &&
-           !OneDsTelemetry::log_manager_ && !OneDsTelemetry::config_;
-  }
-};
+void OrtTelemetryLifecycleClean(
+    uint32_t register_count, Microsoft::Applications::Events::ILogManager* manager,
+    const Microsoft::Applications::Events::ILogConfiguration* config) {
+  Check(register_count == 0 && !manager && !config, "Telemetry state was not cleaned up");
+  clean_shutdown = true;
+}
 
 namespace {
 
@@ -82,8 +88,8 @@ class TelemetryLifetime {
 
   TelemetryLifetime(bool process_exit, HANDLE verified)
       : manager_(process_exit), process_exit_(process_exit), verified_(verified) {
+    mock_manager = &manager_;
     telemetry_.emplace();
-    OneDsTelemetryTestPeer::Install(manager_);
   }
 
   ~TelemetryLifetime() {
@@ -98,9 +104,7 @@ class TelemetryLifetime {
     const int expected_calls = process_exit_ ? 0 : 1;
     Check(manager_.flush_count == expected_calls, "Unexpected Flush count");
     Check(manager_.teardown_count == expected_calls, "Unexpected FlushAndTeardown count");
-    if (!process_exit_) {
-      Check(OneDsTelemetryTestPeer::IsClean(), "Telemetry state was not cleaned up");
-    }
+    Check(clean_shutdown == !process_exit_, "Unexpected shared-state cleanup");
     Check(SetEvent(verified_) != FALSE, "Could not signal verified destruction");
   }
 

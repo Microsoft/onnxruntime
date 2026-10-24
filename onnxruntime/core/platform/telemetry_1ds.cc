@@ -433,7 +433,7 @@ void OneDsTelemetry::Initialize() {
   // System SQLite is shared with other libraries; let it manage its own lifetime.
   config["skipSqliteInitAndShutdown"] = "true";
 #endif
-  // Persist pending events without blocking process teardown on uploads.
+  // Skip the teardown upload budget; cancellation and worker draining still run.
   config[CFG_INT_MAX_TEARDOWN_TIME] = 0;
   config[CFG_INT_RAM_QUEUE_SIZE] = 512 * 1024;
 #if defined(ORT_TELEMETRY_USES_STATIC_CURL)
@@ -525,6 +525,11 @@ void OneDsTelemetry::Initialize() {
   if (std::string framework = ORT_CALLER_FRAMEWORK; !framework.empty()) {
     logger->SetContext("frameworkName", framework);
   }
+
+  // Initialize the SDK's lazy debug mutex before Env::Default() finishes construction.
+  // Reverse destruction order then lets Env stop and join the SDK workers before the
+  // mutex is destroyed. This diagnostic event stays inside the SDK; it is not uploaded.
+  pending_log_manager.Get()->DispatchEvent(DebugEvent{DebugEventType::EVT_UNKNOWN});
 
   // Publish the fully-configured logger atomically; concurrent readers observe it only now.
   // enabled_ is left to its default / the runtime EnableTelemetryEvents()/DisableTelemetryEvents()

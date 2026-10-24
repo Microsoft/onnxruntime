@@ -1,0 +1,22 @@
+diff --git a/lib/api/LogManagerFactory.hpp b/lib/api/LogManagerFactory.hpp
+--- a/lib/api/LogManagerFactory.hpp
++++ b/lib/api/LogManagerFactory.hpp
+@@ -14,4 +14,5 @@
+ #include <map>
++#include <new>
+ #include <set>
+ #include <string>
+ #include <vector>
+@@ -75,6 +76,8 @@
+             // consumer observed this as EXC_BAD_ACCESS in release() at process
+-            // exit). Leaking one small, fixed-size object avoids the ordering
+-            // hazard entirely; the OS reclaims it when the process exits.
+-            static LogManagerFactory& impl = *new LogManagerFactory();
+-            return impl;
++            // exit). Keep the factory alive without a destructor, like GetPAL().
++            // Static storage also avoids leaking a heap allocation every time
++            // an embedding shared library is unloaded and reloaded.
++            alignas(LogManagerFactory) static unsigned char storage[sizeof(LogManagerFactory)];
++            static LogManagerFactory* impl = ::new (storage) LogManagerFactory();
++            return *impl;
+         }

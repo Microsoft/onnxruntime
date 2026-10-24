@@ -14,6 +14,8 @@ if (onnxruntime_ENABLE_TRAINING)
   list(APPEND TEST_INC_DIR ${ORTTRAINING_ROOT})
 endif()
 
+include(onnxruntime_telemetry_tests.cmake)
+
 # Exclude files based on CMake options.
 function(filter_test_srcs test_srcs_var)
   set(excluded_path_prefixes)
@@ -3196,9 +3198,34 @@ endif()
 if(WIN32 AND onnxruntime_USE_1DS_TELEMETRY)
   if(NOT GDK_PLATFORM AND NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     set(telemetry_lifecycle_test_dir "${TEST_SRC_DIR}/platform/windows_telemetry/lifecycle")
+    # Inject the mock and observe cleanup only in the fixture's provider copy.
+    # Keep the production class private and its destructor/lock ordering intact.
+    set(telemetry_lifecycle_provider "${ONNXRUNTIME_ROOT}/core/platform/telemetry_1ds.cc")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${telemetry_lifecycle_provider}")
+    file(READ "${telemetry_lifecycle_provider}" lifecycle_provider)
+    foreach(hook "      Initialize();" "      Shutdown();")
+      string(FIND "${lifecycle_provider}" "${hook}" hook_position)
+      string(FIND "${lifecycle_provider}" "${hook}" last_hook_position REVERSE)
+      if(hook_position EQUAL -1 OR NOT hook_position EQUAL last_hook_position)
+        message(FATAL_ERROR "Update the telemetry lifecycle fixture's provider instrumentation")
+      endif()
+    endforeach()
+    string(REPLACE "      Initialize();"
+      "      Initialize();\n      OrtTelemetryLifecycleInstall(global_register_count_, log_manager_, config_);"
+      lifecycle_provider "${lifecycle_provider}")
+    string(REPLACE "      Shutdown();"
+      "      Shutdown();\n      OrtTelemetryLifecycleClean(global_register_count_, log_manager_, config_.get());"
+      lifecycle_provider "${lifecycle_provider}")
+    string(PREPEND lifecycle_provider
+      "#include <ILogConfiguration.hpp>\n#include <ILogManager.hpp>\n#include <cstdint>\n#include <memory>\nnamespace onnxruntime {\nvoid OrtTelemetryLifecycleInstall(uint32_t, Microsoft::Applications::Events::ILogManager*&, std::unique_ptr<Microsoft::Applications::Events::ILogConfiguration>&);\nvoid OrtTelemetryLifecycleClean(uint32_t, Microsoft::Applications::Events::ILogManager*, const Microsoft::Applications::Events::ILogConfiguration*);\n}\n")
+    set(telemetry_lifecycle_provider "${CMAKE_CURRENT_BINARY_DIR}/telemetry_lifecycle_provider.cc")
+    file(WRITE "${telemetry_lifecycle_provider}" "${lifecycle_provider}")
     onnxruntime_add_shared_library(onnxruntime_telemetry_shutdown_test_library
+      "${telemetry_lifecycle_provider}"
       "${telemetry_lifecycle_test_dir}/telemetry_shutdown_test_library.cc"
       "${telemetry_lifecycle_test_dir}/telemetry_shutdown_test_library.def")
+    target_include_directories(onnxruntime_telemetry_shutdown_test_library PRIVATE
+      $<TARGET_PROPERTY:onnxruntime_common,INCLUDE_DIRECTORIES>)
     target_link_libraries(onnxruntime_telemetry_shutdown_test_library PRIVATE onnxruntime_common mat)
     onnxruntime_add_executable(onnxruntime_telemetry_shutdown_test
       "${telemetry_lifecycle_test_dir}/telemetry_shutdown_test.cc")

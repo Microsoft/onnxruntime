@@ -140,8 +140,6 @@ class OneDsTelemetry : public Telemetry {
                                        const std::string& lib_path) const override;
 
  private:
-  friend class OneDsTelemetryTestPeer;
-
   static void ReportFailure(const char* operation_name, const char* message);
 
   template <typename Operation>
