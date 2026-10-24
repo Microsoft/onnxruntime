@@ -27,23 +27,44 @@ class Split : public JsKernel, public SplitBase {
       }
     } else if (split_sizes_.size() == 0 && info.GetInputCount() < 2) {
       // Compute split_sizes from input shape and num_outputs.
-      // TODO: Shape might not be known at this point, better to handle this in javascript
-      auto total_split_size = info.node().InputDefs()[0]->Shape()->dim(gsl::narrow_cast<int32_t>(axis_)).dim_value();
-      int64_t split_size_sum = 0;
-      if (num_outputs_ < 0) {
-        num_outputs_ = info.node().OutputDefs().size();
-      } else {
-        ORT_ENFORCE(num_outputs_ == info.node().OutputDefs().size(),
-                    "Number of outputs (", info.node().OutputDefs().size(), ") does not match num_outputs (",
-                    num_outputs_, ")");
+      // Only do this if shapes are static (dim_value() returns 0 for dynamic dims)
+      auto* input_shape = info.node().InputDefs()[0]->Shape();
+      bool has_static_shapes = input_shape != nullptr &&
+                               input_shape->dim(gsl::narrow_cast<int32_t>(axis_)).has_dim_value();
+
+      if (has_static_shapes) {
+        auto total_split_size = input_shape->dim(gsl::narrow_cast<int32_t>(axis_)).dim_value();
+        int64_t split_size_sum = 0;
+        if (num_outputs_ < 0) {
+          num_outputs_ = info.node().OutputDefs().size();
+        } else {
+          ORT_ENFORCE(num_outputs_ == info.node().OutputDefs().size(),
+                      "Number of outputs (", info.node().OutputDefs().size(), ") does not match num_outputs (",
+                      num_outputs_, ")");
+        }
+
+        bool all_outputs_static = true;
+        for (auto output : info.node().OutputDefs()) {
+          auto* out_shape = output->Shape();
+          if (out_shape == nullptr ||
+              !out_shape->dim(gsl::narrow_cast<int32_t>(axis_)).has_dim_value()) {
+            all_outputs_static = false;
+            break;
+          }
+          auto split_size = out_shape->dim(gsl::narrow_cast<int32_t>(axis_)).dim_value();
+          split_sizes.push_back(gsl::narrow_cast<int32_t>(split_size));
+          split_size_sum += split_size;
+        }
+
+        if (!all_outputs_static) {
+          // Dynamic output shapes - let javascript handle it at runtime
+          split_sizes.clear();
+        } else {
+          ORT_ENFORCE(split_size_sum == total_split_size,
+                      "Sum of split sizes (", split_size_sum, ") does not match input size (", total_split_size, ")");
+        }
       }
-      for (auto output : info.node().OutputDefs()) {
-        auto split_size = output->Shape()->dim(gsl::narrow_cast<int32_t>(axis_)).dim_value();
-        split_sizes.push_back(gsl::narrow_cast<int32_t>(split_size));
-        split_size_sum += split_size;
-      }
-      ORT_ENFORCE(split_size_sum == total_split_size,
-                  "Sum of split sizes (", split_size_sum, ") does not match input size (", total_split_size, ")");
+      // else: shapes are dynamic, let javascript handle it at runtime
     }
     // else: let javascript handle all other cases, ie. split_sizes come as input[1]
 
