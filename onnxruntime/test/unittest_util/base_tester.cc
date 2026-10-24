@@ -305,6 +305,21 @@ void BaseTester::AddSparseCsrTensorStrings(std::vector<Data>& data,
 }
 #endif  // !defined(DISABLE_SPARSE_TENSORS)
 
+bool BaseTester::SkipUnsupportedWebGpuFp16(const Status& status, ExpectResult expect_result,
+                                           const std::string& provider_type) {
+  // Use the shared shader generator's capability error so plugin EP tests do not
+  // need access to the provider's Dawn device across the DLL boundary.
+  if (skip_unsupported_webgpu_fp16_ && expect_result == ExpectResult::kExpectSuccess &&
+      provider_type == kWebGpuExecutionProvider &&
+      !status.IsOK() &&
+      status.ErrorMessage().find("requires f16 but the device does not support it.") != std::string::npos) {
+    skipped_webgpu_fp16_ = true;
+    LOGS_DEFAULT(WARNING) << "Skipping WebGPU FP16 execution: the device does not support ShaderF16.";
+    return true;
+  }
+  return false;
+}
+
 template <class SessionType>
 void BaseTester::ExecuteModel(Model& model, SessionType& session,
                               ExpectResult expect_result,
@@ -324,7 +339,11 @@ void BaseTester::ExecuteModel(Model& model, SessionType& session,
   EXPECT_STATUS_OK(session.Load(sstr, allow_released_onnx_opset_only));
 
   auto status = session.Initialize();
+  if (SkipUnsupportedWebGpuFp16(status, expect_result, provider_type)) {
+    return;
+  }
   if (!status.IsOK()) {
+    has_executed_ep_ = true;
     ASSERT_EQ(expect_result, ExpectResult::kExpectFailure) << "Initialize failed but expected success: "
                                                            << status.ErrorMessage();
 
@@ -346,6 +365,10 @@ void BaseTester::ExecuteModel(Model& model, SessionType& session,
   for (int i = 0; i < num_run_calls_; ++i) {
     fetches_.clear();
     status = session.Run(run_options ? *run_options : default_run_options, feeds, output_names, &fetches_);
+    if (SkipUnsupportedWebGpuFp16(status, expect_result, provider_type)) {
+      return;
+    }
+    has_executed_ep_ = true;
 
     if (status.IsOK()) {
       ASSERT_EQ(expect_result, ExpectResult::kExpectSuccess) << "Run succeeded but expected failure.";
@@ -600,6 +623,8 @@ void BaseTester::RunWithConfig(size_t* number_of_pre_packed_weights_counter,
   ORT_TRY {
     testing_function_called_ = true;
     fetches_.clear();
+    has_executed_ep_ = false;
+    skipped_webgpu_fp16_ = false;
 
     // IsAllowReleasedONNXOpsetsOnlySet() checks for the appropriate env var in the process (i.e.) process-wide
     // `test_allow_released_onnx_opset_only_` is for this specific OpTester instance
@@ -794,6 +819,9 @@ void BaseTester::RunWithConfig(size_t* number_of_pre_packed_weights_counter,
       EXPECT_TRUE(has_run) << "No registered execution providers were able to run the model.";
 #endif
     }
+    if (skipped_webgpu_fp16_ && !has_executed_ep_ && !testing::Test::HasFailure()) {
+      GTEST_SKIP() << "WebGPU device does not support ShaderF16 and no other EP executed the test.";
+    }
   }
   ORT_CATCH(const std::exception& ex) {
     ORT_HANDLE_EXCEPTION([&]() {
@@ -924,6 +952,10 @@ void BaseTester::ExecuteModelForEps(
   ExecuteModel<InferenceSession>(
       model, session_object, expect_result, expected_failure_string,
       run_options, feeds, output_names, provider_type, allow_released_onnx_opset_only);
+
+  if (provider_type == kWebGpuExecutionProvider && skipped_webgpu_fp16_) {
+    return;
+  }
 
   // After the model has initialized (happens in ExecuteModel),
   // we should be able to tell how many constant initializers were pre-packed

@@ -43,6 +43,9 @@ void TestConvTransposeOpInitializer(const ConvTransposeOpAttributes& attributes,
                                     const std::string& err_str = "",
                                     const std::unordered_set<std::string>& excluded_provider_types = {kTensorrtExecutionProvider}) {
   OpTester test("ConvTranspose", 11);
+  if constexpr (std::is_same_v<T, MLFloat16>) {
+    test.ConfigSkipUnsupportedWebGpuFp16();
+  }
   test.AddAttribute("kernel_shape", attributes.kernel_shape);
   test.AddAttribute("group", attributes.group);
 

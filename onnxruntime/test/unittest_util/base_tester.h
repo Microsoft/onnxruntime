@@ -559,6 +559,12 @@ class BaseTester {
   BaseTester& Config(const SessionOptions& sess_options);
   BaseTester& Config(ExpectResult expect_result, const std::string& expected_failure_string);
   BaseTester& ConfigExcludeEps(const std::unordered_set<std::string>& excluded_provider_types);
+  // Continue with other EPs if WebGPU reports that ShaderF16 is unavailable.
+  // Report a skipped test only if no EP could execute it.
+  BaseTester& ConfigSkipUnsupportedWebGpuFp16() {
+    skip_unsupported_webgpu_fp16_ = true;
+    return *this;
+  }
   BaseTester& Config(const RunOptions* run_options);
   BaseTester& ConfigEps(std::vector<std::unique_ptr<IExecutionProvider>>&& execution_providers);
   // Configure a single EP to run.
@@ -787,6 +793,12 @@ class BaseTester {
   int number_of_nodes_;
 
   bool testing_function_called_{};  // has the function that performs the actual testing been called yet?
+  bool has_executed_ep_ = false;
+  bool skipped_webgpu_fp16_ = false;
+  bool skip_unsupported_webgpu_fp16_ = false;
+
+  bool SkipUnsupportedWebGpuFp16(const Status& status, ExpectResult expect_result,
+                                 const std::string& provider_type);
 
   gsl::span<const int64_t> ToDimsSpan(const DimsVariant& dims_var) {
     return std::visit([](auto&& dims) { return gsl::span<const int64_t>(dims); }, dims_var);

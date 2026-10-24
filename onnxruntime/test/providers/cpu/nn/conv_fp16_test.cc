@@ -65,6 +65,7 @@ void TestConvFp16Op(const ConvOpAndTestAttributes& attributes,
     tester = std::make_unique<OpTester>("Conv", opset);
   }
 
+  tester->ConfigSkipUnsupportedWebGpuFp16();
   tester->AddAttribute("group", attributes.group);
   tester->AddAttribute("kernel_shape", attributes.kernel_shape);
 
