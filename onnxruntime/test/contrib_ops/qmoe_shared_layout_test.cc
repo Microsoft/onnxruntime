@@ -305,6 +305,90 @@ TEST(QMoESharedLayoutTest, Avx512Fp4ScalesMatchScalarIncludingNonfiniteValues) {
   }
 }
 
+TEST(QMoESharedLayoutTest, MakeInt3ExpertBlockLayoutValidatesDimensionsAndAlignment) {
+  shared::Nvfp4ExpertBlockLayout layout{};
+  EXPECT_FALSE(shared::MakeInt3ExpertBlockLayout(0, 64, 32, &layout));
+  EXPECT_FALSE(shared::MakeInt3ExpertBlockLayout(128, 64, 16, &layout));
+  EXPECT_FALSE(shared::MakeInt3ExpertBlockLayout(128, 32, 64, &layout));
+
+  ASSERT_TRUE(shared::MakeInt3ExpertBlockLayout(256, 128, 32, &layout));
+  EXPECT_EQ(layout.fc1_weights % shared::kBankAlignment, 0U);
+  EXPECT_EQ(layout.fc1_scales % shared::kBankAlignment, 0U);
+  EXPECT_EQ(layout.fc2_weights % shared::kBankAlignment, 0U);
+  EXPECT_EQ(layout.fc2_scales % shared::kBankAlignment, 0U);
+  EXPECT_EQ(layout.stride, 43520U);
+
+  ASSERT_TRUE(shared::MakeInt3ExpertBlockLayout(256, 128, 64, &layout));
+  EXPECT_EQ(layout.stride, 40448U);
+}
+
+TEST(QMoESharedLayoutTest, Avx512Int3GemmAndExpertRangesMatchScalarForBlock32And64) {
+  if (!shared::CpuHasAvx512()) GTEST_SKIP() << "AVX-512 kernels are not available";
+  constexpr int64_t hidden = 128;
+  constexpr int64_t inter = 64;
+  constexpr int64_t n1 = 2 * inter;
+  std::vector<uint8_t> fc1_w(static_cast<size_t>(n1 * (hidden * 3) / 8));
+  std::vector<uint8_t> fc2_w(static_cast<size_t>(hidden * (inter * 3) / 8));
+  for (size_t i = 0; i < fc1_w.size(); ++i) fc1_w[i] = static_cast<uint8_t>(i * 73 + i / 11);
+  for (size_t i = 0; i < fc2_w.size(); ++i) fc2_w[i] = static_cast<uint8_t>(i * 59 + i / 7);
+
+  for (int64_t block_size : {int64_t{32}, int64_t{64}}) {
+    for (bool scale_is_bf16 : {false, true}) {
+      std::vector<uint16_t> fc1_s(static_cast<size_t>(n1 * (hidden / block_size)));
+      std::vector<uint16_t> fc2_s(static_cast<size_t>(hidden * (inter / block_size)));
+      std::vector<uint16_t> fc1_b(static_cast<size_t>(n1));
+      std::vector<uint16_t> fc2_b(static_cast<size_t>(hidden));
+      auto encode = [&](float v) -> uint16_t {
+        return scale_is_bf16 ? shared::FloatToBFloat16(v) : shared::FloatToHalf(v);
+      };
+      for (size_t i = 0; i < fc1_s.size(); ++i) fc1_s[i] = encode((static_cast<int>(i % 7) + 1) / 64.0f);
+      for (size_t i = 0; i < fc2_s.size(); ++i) fc2_s[i] = encode((static_cast<int>(i % 5) + 1) / 64.0f);
+      for (size_t i = 0; i < fc1_b.size(); ++i) fc1_b[i] = encode((static_cast<int>(i % 9) - 4) / 32.0f);
+      for (size_t i = 0; i < fc2_b.size(); ++i) fc2_b[i] = encode((static_cast<int>(i % 11) - 5) / 32.0f);
+
+      shared::Int3ExpertView view{};
+      view.fc1_weights = fc1_w.data();
+      view.fc1_scales = fc1_s.data();
+      view.fc1_bias = fc1_b.data();
+      view.fc2_weights = fc2_w.data();
+      view.fc2_scales = fc2_s.data();
+      view.fc2_bias = fc2_b.data();
+      view.block_size = block_size;
+      view.scale_is_bf16 = scale_is_bf16;
+      view.bias_is_bf16 = scale_is_bf16;
+
+      const shared::SwiGluParams swiglu{1.702f, 1.0f, 7.0f};
+      for (int64_t rows = 1; rows <= shared::kMaxRowsPerCall; ++rows) {
+        std::vector<float> x(static_cast<size_t>(rows * hidden));
+        for (size_t i = 0; i < x.size(); ++i) x[i] = (static_cast<int>(i % 19) - 9) / 32.0f;
+
+        std::vector<float> inter_scalar(static_cast<size_t>(rows * inter), 0.0f);
+        std::vector<float> inter_simd(static_cast<size_t>(rows * inter), 0.0f);
+        shared::Int3Fc1SwiGluRange(hidden, inter, view, x.data(), rows, swiglu, inter_scalar.data(),
+                                   0, n1, /*force_scalar=*/true, scale_is_bf16, !scale_is_bf16);
+        shared::Int3Fc1SwiGluRange(hidden, inter, view, x.data(), rows, swiglu, inter_simd.data(),
+                                   0, n1, /*force_scalar=*/false, scale_is_bf16, !scale_is_bf16);
+        for (size_t i = 0; i < inter_scalar.size(); ++i) {
+          EXPECT_NEAR(inter_simd[i], inter_scalar[i], 1e-5f);
+        }
+
+        const std::array<std::pair<int64_t, int64_t>, 4> col_ranges{{{0, 13}, {2, 19}, {16, 127}, {0, hidden}}};
+        for (const auto& [begin, end] : col_ranges) {
+          std::vector<float> out_scalar(static_cast<size_t>(rows * hidden), -999.0f);
+          std::vector<float> out_simd(static_cast<size_t>(rows * hidden), -999.0f);
+          shared::Int3Fc2Range(hidden, inter, view, inter_scalar.data(), rows, out_scalar.data(),
+                               begin, end, /*force_scalar=*/true, /*apply_bias=*/true);
+          shared::Int3Fc2Range(hidden, inter, view, inter_simd.data(), rows, out_simd.data(),
+                               begin, end, /*force_scalar=*/false, /*apply_bias=*/true);
+          for (size_t i = 0; i < out_scalar.size(); ++i) {
+            EXPECT_NEAR(out_simd[i], out_scalar[i], 1e-5f);
+          }
+        }
+      }
+    }
+  }
+}
+
 #if defined(__linux__)
 TEST(QMoESharedLayoutTest, MappedStoreHonorsPinsAndRollsBackFailedGroups) {
   constexpr size_t stride = shared::kBankAlignment;

@@ -35,6 +35,31 @@ __device__ __forceinline__ int act_source_row(const int* permuted_row_to_source_
   return permuted_row_to_source_row[row] % num_rows;
 }
 
+template <typename Details, int GroupSize, typename TypeA>
+__device__ __forceinline__ void dequantize_and_pack_to_vec2(
+    TypeA* tile_w_pack2, TypeA* tile_w, uint8_t* tile_w_quantized,
+    TypeA* scale_lo, TypeA* scale_hi, int col_idx) {
+  static constexpr int StepK = Details::kStepK;
+  if constexpr (GroupSize == 32 && StepK == 64) {
+    using Converter = typename ConverterWrapper<Details>::Converter;
+    Converter::template convert<StepK>(tile_w_quantized, tile_w);
+    typename Details::LayoutDetails::Mapper mapper;
+    const int n0 = col_idx & ~0x1, n1 = col_idx & 0x1;
+    const float s0 = static_cast<float>(*scale_lo);
+    const float s1 = static_cast<float>(*scale_hi);
+#pragma unroll
+    for (int k = 0; k < StepK; ++k) {
+      const int physical_idx = mapper(k);
+      const float sc = (k < 32) ? s0 : s1;
+      tile_w_pack2[n0 * StepK + k * 2 + n1] =
+          static_cast<TypeA>(static_cast<float>(tile_w[physical_idx]) * sc);
+    }
+  } else {
+    dequantize<Details, 1, StepK, false, false>(tile_w, tile_w_quantized, scale_lo, nullptr, 1.0f);
+    pack_to_vec2<Details, StepK>(tile_w_pack2, tile_w, col_idx);
+  }
+}
+
 // MoE batched GEMV kernel. One thread-block (CtaM = 1 row) processes a single
 // expanded row; the row's expert determines the weight/scale/bias base pointers.
 // Mirrors the dense fpA_intB_gemv `kernel<>` body for GroupSize=0 (per-channel),
@@ -99,6 +124,10 @@ __global__ void moe_gemv_kernel(TypeA* act, uint8_t* weight, TypeA* scales, Type
       scales,
       (GroupSize != 0 ? real_offset_k / GroupSize * n : 0) + real_offset_n,
       (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
+  GMemIterator<GroupSize == 32 && StepK == 64, TypeA, CtaN, 1, TypeA> scales_iterator_hi(
+      scales,
+      (GroupSize != 0 ? (real_offset_k / GroupSize + 1) * n : 0) + real_offset_n,
+      (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
 
   out += offset_m * n + tile_id_n * CtaN * Details::kInterleave;
   if constexpr (EnableBias) {
@@ -108,7 +137,7 @@ __global__ void moe_gemv_kernel(TypeA* act, uint8_t* weight, TypeA* scales, Type
   AccT tile_acc[CtaM * CtaN];
   fill<CtaM * CtaN>(tile_acc, static_cast<AccT>(0.f));
 
-  TypeA vec_scale[CtaN];
+  TypeA vec_scale[CtaN], vec_scale_hi[CtaN];
   if constexpr (GroupSize == 0) {
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
@@ -123,13 +152,14 @@ __global__ void moe_gemv_kernel(TypeA* act, uint8_t* weight, TypeA* scales, Type
 #pragma unroll
       for (int i = 0; i < CtaN; ++i) {
         scales_iterator.load(vec_scale + i, iter, i);
+        scales_iterator_hi.load(vec_scale_hi + i, iter, i);
       }
     }
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
       weight_iterator.load(tile_w_quantized, iter, i);
-      dequantize<Details, 1, StepK, false, false>(tile_w, tile_w_quantized, vec_scale + i, nullptr, 1.0f);
-      pack_to_vec2<Details, StepK>(tile_w_pack2, tile_w, i);
+      dequantize_and_pack_to_vec2<Details, GroupSize, TypeA>(
+          tile_w_pack2, tile_w, tile_w_quantized, vec_scale + i, vec_scale_hi + i, i);
     }
 #pragma unroll
     for (int i = 0; i < CtaM; ++i) {
@@ -269,11 +299,14 @@ __global__ void moe_gemv_fused_finalize_kernel(
     GMemIterator<Mandatory, TypeA, CtaN, 1, TypeA> scales_iterator(
         expert_scales, (GroupSize != 0 ? real_offset_k / GroupSize * n : 0) + real_offset_n,
         (GroupSize != 0 ? CtaK / Interleave / GroupSize * n : 0), Interleave);
+    GMemIterator<GroupSize == 32 && StepK == 64, TypeA, CtaN, 1, TypeA> scales_iterator_hi(
+        expert_scales, (GroupSize != 0 ? (real_offset_k / GroupSize + 1) * n : 0) + real_offset_n,
+        (GroupSize != 0 ? CtaK / Interleave / GroupSize * n : 0), Interleave);
 
     AccT tile_acc[CtaN];
     fill<CtaN>(tile_acc, static_cast<AccT>(0.f));
 
-    TypeA vec_scale[CtaN];
+    TypeA vec_scale[CtaN], vec_scale_hi[CtaN];
     if constexpr (GroupSize == 0) {
 #pragma unroll
       for (int i = 0; i < CtaN; ++i) {
@@ -288,13 +321,14 @@ __global__ void moe_gemv_fused_finalize_kernel(
 #pragma unroll
         for (int i = 0; i < CtaN; ++i) {
           scales_iterator.load(vec_scale + i, iter, i);
+          scales_iterator_hi.load(vec_scale_hi + i, iter, i);
         }
       }
 #pragma unroll
       for (int i = 0; i < CtaN; ++i) {
         weight_iterator.load(tile_w_quantized, iter, i);
-        dequantize<Details, 1, StepK, false, false>(tile_w, tile_w_quantized, vec_scale + i, nullptr, 1.0f);
-        pack_to_vec2<Details, StepK>(tile_w_pack2, tile_w, i);
+        dequantize_and_pack_to_vec2<Details, GroupSize, TypeA>(
+            tile_w_pack2, tile_w, tile_w_quantized, vec_scale + i, vec_scale_hi + i, i);
       }
       act_iterator.load(tile_a, iter, 0);
       mma<Details, 1, CtaN, StepK, AccT>(tile_acc, tile_w_pack2, tile_a);
@@ -458,6 +492,9 @@ __global__ void moe_gemv_splitk_partials_kernel(
   GMemIterator<Mandatory, TypeA, CtaN, 1, TypeA> scales_iterator(
       scales, (GroupSize != 0 ? real_offset_k / GroupSize * n : 0) + real_offset_n,
       (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
+  GMemIterator<GroupSize == 32 && StepK == 64, TypeA, CtaN, 1, TypeA> scales_iterator_hi(
+      scales, (GroupSize != 0 ? (real_offset_k / GroupSize + 1) * n : 0) + real_offset_n,
+      (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
 
   partials += (static_cast<int64_t>(split_id) * expanded_num_rows + offset_m) * n +
               tile_id_n * CtaN * Details::kInterleave;
@@ -465,7 +502,7 @@ __global__ void moe_gemv_splitk_partials_kernel(
   AccT tile_acc[CtaM * CtaN];
   fill<CtaM * CtaN>(tile_acc, static_cast<AccT>(0.f));
 
-  TypeA vec_scale[CtaN];
+  TypeA vec_scale[CtaN], vec_scale_hi[CtaN];
   if constexpr (GroupSize == 0) {
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
@@ -487,13 +524,14 @@ __global__ void moe_gemv_splitk_partials_kernel(
 #pragma unroll
       for (int i = 0; i < CtaN; ++i) {
         scales_iterator.load(vec_scale + i, iter, i);
+        scales_iterator_hi.load(vec_scale_hi + i, iter, i);
       }
     }
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
       weight_iterator.load(tile_w_quantized, iter, i);
-      dequantize<Details, 1, StepK, false, false>(tile_w, tile_w_quantized, vec_scale + i, nullptr, 1.0f);
-      pack_to_vec2<Details, StepK>(tile_w_pack2, tile_w, i);
+      dequantize_and_pack_to_vec2<Details, GroupSize, TypeA>(
+          tile_w_pack2, tile_w, tile_w_quantized, vec_scale + i, vec_scale_hi + i, i);
     }
     act_iterator.load(tile_a, iter, 0);
     mma<Details, 1, CtaN, StepK, AccT>(tile_acc, tile_w_pack2, tile_a);
@@ -634,6 +672,10 @@ __global__ void moe_gemv_interleaved_swiglu_kernel(
       scales,
       (GroupSize != 0 ? real_offset_k / GroupSize * n : 0) + real_offset_n,
       (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
+  GMemIterator<GroupSize == 32 && StepK == 64, TypeA, CtaN, 1, TypeA> scales_iterator_hi(
+      scales,
+      (GroupSize != 0 ? (real_offset_k / GroupSize + 1) * n : 0) + real_offset_n,
+      (GroupSize != 0 ? CtaK / Details::kInterleave / GroupSize * n : 0), Details::kInterleave);
 
   out += offset_m * inter_size + tile_id_n * CtaN * Details::kInterleave / 2;
   if constexpr (EnableBias) {
@@ -643,7 +685,7 @@ __global__ void moe_gemv_interleaved_swiglu_kernel(
   AccT tile_acc[CtaM * CtaN];
   fill<CtaM * CtaN>(tile_acc, static_cast<AccT>(0.f));
 
-  TypeA vec_scale[CtaN];
+  TypeA vec_scale[CtaN], vec_scale_hi[CtaN];
   if constexpr (GroupSize == 0) {
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
@@ -658,13 +700,14 @@ __global__ void moe_gemv_interleaved_swiglu_kernel(
 #pragma unroll
       for (int i = 0; i < CtaN; ++i) {
         scales_iterator.load(vec_scale + i, iter, i);
+        scales_iterator_hi.load(vec_scale_hi + i, iter, i);
       }
     }
 #pragma unroll
     for (int i = 0; i < CtaN; ++i) {
       weight_iterator.load(tile_w_quantized, iter, i);
-      dequantize<Details, 1, StepK, false, false>(tile_w, tile_w_quantized, vec_scale + i, nullptr, 1.0f);
-      pack_to_vec2<Details, StepK>(tile_w_pack2, tile_w, i);
+      dequantize_and_pack_to_vec2<Details, GroupSize, TypeA>(
+          tile_w_pack2, tile_w, tile_w_quantized, vec_scale + i, vec_scale_hi + i, i);
     }
 #pragma unroll
     for (int i = 0; i < CtaM; ++i) {

@@ -13,6 +13,7 @@
 #include "contrib_ops/cuda/llm/moe_gemm/moe_gemm_profiler.h"
 #include "contrib_ops/cuda/llm/moe_gemm/moe_gemv_fp4.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -34,6 +35,7 @@ class QMoE final : public CudaKernel, public MoEBase, public onnxruntime::moe_of
   explicit QMoE(const OpKernelInfo& op_kernel_info);
   ~QMoE() override;
   Status ComputeInternal(OpKernelContext* ctx) const override;
+  Status ComputeInt3(OpKernelContext* ctx) const;
   Status PrePack(const Tensor& tensor, int input_idx, AllocatorPtr alloc,
                  bool& is_packed, PrePackedWeights* prepacked_weights) override;
 
@@ -86,6 +88,10 @@ class QMoE final : public CudaKernel, public MoEBase, public onnxruntime::moe_of
   int64_t fc1_expert_weight_bits_;
   int64_t fc2_expert_weight_bits_;
   int64_t fc3_expert_weight_bits_;
+  bool has_int3_ = false;
+  mutable std::atomic<bool> int3_content_validated_{false};
+  // -1: not yet determined, 1: scales/zero points are constant initializers, 0: runtime inputs.
+  mutable std::atomic<int> int3_content_constant_{-1};
   bool is_fp16_;
   // When true, the int4/int8 fc1/fc2 weight initializers are already in a
   // CUTLASS fpA_intB layout — produced offline e.g. via
@@ -117,6 +123,9 @@ class QMoE final : public CudaKernel, public MoEBase, public onnxruntime::moe_of
   // how ``MatMulNBits`` caches ``N_`` / ``K_`` in its constructor.
   TensorShape fc1_weights_shape_;
   TensorShape fc2_weights_shape_;
+  // Scale shapes cached when offline-prepacked INT2/mixed-width PrePack releases the scale initializers.
+  TensorShape fc1_scales_shape_;
+  TensorShape fc2_scales_shape_;
   bool use_fp4_dequant_fallback_ = false;
   // Dequantizes FP8 weights to FP16/BF16 scratch buffers before invoking the A16 MoE runner.
   bool use_fp8_dequant_fallback_ = false;

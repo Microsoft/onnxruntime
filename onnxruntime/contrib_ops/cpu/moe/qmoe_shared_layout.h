@@ -229,6 +229,20 @@ struct Nvfp4ExpertBlockLayout {
 
 bool MakeNvfp4ExpertBlockLayout(int64_t hidden, int64_t inter, Nvfp4ExpertBlockLayout* layout);
 bool MakeMxfp4ExpertBlockLayout(int64_t hidden, int64_t inter, Nvfp4ExpertBlockLayout* layout);
+bool MakeInt3ExpertBlockLayout(int64_t hidden, int64_t inter, int64_t block_size, Nvfp4ExpertBlockLayout* layout);
+
+// Zero-copy view of one raw INT3 expert (weights_prepacked == 0, block_size in {32, 64, 128}).
+struct Int3ExpertView {
+  const uint8_t* fc1_weights = nullptr;   // [2*inter, (hidden*3)/8] raw row-major
+  const uint16_t* fc1_scales = nullptr;   // [2*inter, hidden/block_size] row-major in FP16 or BF16
+  const uint16_t* fc1_bias = nullptr;     // optional [2*inter] in FP16 or BF16
+  const uint8_t* fc2_weights = nullptr;   // [hidden, (inter*3)/8] raw row-major
+  const uint16_t* fc2_scales = nullptr;   // [hidden, inter/block_size] row-major in FP16 or BF16
+  const uint16_t* fc2_bias = nullptr;     // optional [hidden] in FP16 or BF16
+  int64_t block_size = 32;                // 32, 64, or 128
+  bool scale_is_bf16 = true;
+  bool bias_is_bf16 = true;
+};
 
 // Zero-copy view of one INT4 expert (works with canonical com.microsoft::QMoE bank tensors
 // or a contiguous ExpertBlockLayout block).
@@ -355,6 +369,29 @@ void Int4Fc2Range(int64_t hidden, int64_t inter, const Int4ExpertView& view,
                   bool apply_bias = false);
 
 bool Int4ExpertForward(int64_t hidden, int64_t inter, const Int4ExpertView& view,
+                       const float* x, int64_t m, const SwiGluParams& swiglu, float* out,
+                       bool force_scalar = false, bool apply_fc2_bias = false,
+                       bool bf16_boundaries = false, bool fp16_boundaries = false);
+
+// Raw INT3 QMoE CPU kernels (weights_prepacked == 0, block_size in {32, 64, 128}, natural activation order).
+void Int3GemmRange(const uint8_t* weights, const uint16_t* scales, const uint16_t* bias,
+                   int64_t block_size, bool scale_is_bf16, bool bias_is_bf16,
+                   int64_t n_total, int64_t k, const float* a_natural, int64_t m,
+                   float* out, int64_t out_stride, int64_t n_begin, int64_t n_end,
+                   bool force_scalar = false);
+
+void Int3Fc1SwiGluRange(int64_t hidden, int64_t inter, const Int3ExpertView& view,
+                        const float* x_natural, int64_t m, const SwiGluParams& swiglu,
+                        float* inter_natural, int64_t n_begin, int64_t n_end,
+                        bool force_scalar = false, bool bf16_boundaries = false,
+                        bool fp16_boundaries = false);
+
+void Int3Fc2Range(int64_t hidden, int64_t inter, const Int3ExpertView& view,
+                  const float* inter_natural, int64_t m, float* out,
+                  int64_t n_begin, int64_t n_end, bool force_scalar = false,
+                  bool apply_bias = false);
+
+bool Int3ExpertForward(int64_t hidden, int64_t inter, const Int3ExpertView& view,
                        const float* x, int64_t m, const SwiGluParams& swiglu, float* out,
                        bool force_scalar = false, bool apply_fc2_bias = false,
                        bool bf16_boundaries = false, bool fp16_boundaries = false);

@@ -81,6 +81,10 @@ void Avx512Int4GemmRange(const uint8_t* weights, const uint16_t* scales, const u
                          bool scale_is_bf16, bool bias_is_bf16,
                          int64_t n_total, int64_t k, const float* a_reordered, int64_t m,
                          float* out, int64_t out_stride, int64_t n_begin, int64_t n_end);
+void Avx512Int3GemmRange(const uint8_t* weights, const uint16_t* scales, const uint16_t* bias,
+                         int64_t block_size, bool scale_is_bf16, bool bias_is_bf16,
+                         int64_t n_total, int64_t k, const float* a_natural, int64_t m,
+                         float* out, int64_t out_stride, int64_t n_begin, int64_t n_end);
 void Avx512Nvfp4GemmRange(const uint8_t* weights, const uint8_t* block_scales, float global_scale,
                           const uint16_t* bias, bool bias_is_bf16, int64_t n_total, int64_t k,
                           const float* a_reordered, int64_t m, float* out, int64_t out_stride,
@@ -236,6 +240,44 @@ void ScalarInt4GemmRange(const uint8_t* weights, const uint16_t* scales, const u
 
 inline float RoundBf16Fast(float v) noexcept {
   return BoundaryBFloat16::Round(v);
+}
+
+void ScalarInt3GemmRange(const uint8_t* weights, const uint16_t* scales, const uint16_t* bias,
+                         int64_t block_size, bool scale_is_bf16, bool bias_is_bf16,
+                         int64_t /*n_total*/, int64_t k, const float* a_natural, int64_t m,
+                         float* out, int64_t out_stride, int64_t n_begin, int64_t n_end) {
+  const int64_t blocks = k / block_size;
+  const int64_t raw_w_stride = (k * 3) / 8;
+  const int64_t groups_per_block = block_size / 8;
+  for (int64_t n = n_begin; n < n_end; ++n) {
+    const uint8_t* w_row = weights + n * raw_w_stride;
+    const uint16_t* s_row = scales + n * blocks;
+    const float b_val = (bias != nullptr)
+                            ? (bias_is_bf16 ? BoundaryBFloat16::FromBits(bias[n]) : HalfToFloat(bias[n]))
+                            : 0.0f;
+    for (int64_t r = 0; r < m; ++r) {
+      const float* ar = a_natural + r * k;
+      float acc = 0.0f;
+      for (int64_t kb = 0; kb < blocks; ++kb) {
+        const uint16_t s_bits = s_row[kb];
+        const float s_val = scale_is_bf16 ? BoundaryBFloat16::FromBits(s_bits) : HalfToFloat(s_bits);
+        float sum = 0.0f;
+        const uint8_t* p = w_row + kb * groups_per_block * 3;
+        const float* ab = ar + kb * block_size;
+        for (int64_t g = 0; g < groups_per_block; ++g) {
+          const uint32_t w24 = static_cast<uint32_t>(p[3 * g]) |
+                               (static_cast<uint32_t>(p[3 * g + 1]) << 8) |
+                               (static_cast<uint32_t>(p[3 * g + 2]) << 16);
+          for (int j = 0; j < 8; ++j) {
+            const float code = static_cast<float>(static_cast<int>((w24 >> (3 * j)) & 0x7u) - 4);
+            sum += code * ab[g * 8 + j];
+          }
+        }
+        acc += sum * s_val;
+      }
+      out[r * out_stride + (n - n_begin)] = acc + b_val;
+    }
+  }
 }
 
 void ScalarNvfp4GemmRange(const uint8_t* weights, const uint8_t* block_scales, float global_scale,
@@ -1750,6 +1792,49 @@ bool MakeMxfp4ExpertBlockLayout(int64_t hidden, int64_t inter, Nvfp4ExpertBlockL
   return true;
 }
 
+bool MakeInt3ExpertBlockLayout(int64_t hidden, int64_t inter, int64_t block_size, Nvfp4ExpertBlockLayout* layout) {
+  if (layout == nullptr || hidden <= 0 || inter <= 0 ||
+      (block_size != 32 && block_size != 64 && block_size != 128)) {
+    return false;
+  }
+  if (hidden > static_cast<int64_t>(std::numeric_limits<int>::max()) ||
+      inter > static_cast<int64_t>(std::numeric_limits<int>::max() / 2)) {
+    return false;
+  }
+  if (hidden % block_size != 0 || inter % block_size != 0 || hidden % 32 != 0 || inter % 32 != 0) {
+    return false;
+  }
+  const size_t h = static_cast<size_t>(hidden);
+  const size_t i = static_cast<size_t>(inter);
+  const size_t blk = static_cast<size_t>(block_size);
+  size_t n1 = 0;
+  if (!CheckedMulSize(2, i, &n1)) return false;
+
+  auto add_bank = [](size_t current_off, size_t raw_bytes, size_t* bank_off, size_t* next_off) -> bool {
+    *bank_off = current_off;
+    size_t aligned = 0;
+    if (!CheckedAlignUp(raw_bytes, kBankAlignment, &aligned)) return false;
+    return CheckedAddSize(current_off, aligned, next_off);
+  };
+
+  Nvfp4ExpertBlockLayout l;
+  l.hidden = hidden;
+  l.inter = inter;
+  size_t off = 0;
+  size_t bytes = 0;
+
+  if (!CheckedMulSize(n1, (h * 3) / 8, &bytes) || !add_bank(off, bytes, &l.fc1_weights, &off)) return false;
+  if (!CheckedMulSize(n1, (h / blk) * sizeof(uint16_t), &bytes) || !add_bank(off, bytes, &l.fc1_scales, &off)) return false;
+  if (!add_bank(off, sizeof(float), &l.fc1_global_scale, &off)) return false;
+  if (!CheckedMulSize(h, (i * 3) / 8, &bytes) || !add_bank(off, bytes, &l.fc2_weights, &off)) return false;
+  if (!CheckedMulSize(h, (i / blk) * sizeof(uint16_t), &bytes) || !add_bank(off, bytes, &l.fc2_scales, &off)) return false;
+  if (!add_bank(off, sizeof(float), &l.fc2_global_scale, &off)) return false;
+
+  l.stride = off;
+  *layout = l;
+  return true;
+}
+
 int ReorderedPosition(int k_offset_in_block) {
   for (int b = 0; b < 16; ++b) {
     const int lo = LowNibbleK(b);
@@ -2031,7 +2116,7 @@ void Int4Fc1SwiGluRange(int64_t hidden, int64_t inter, const Int4ExpertView& vie
                         const float* x_reordered, int64_t m, const SwiGluParams& swiglu,
                         float* inter_reordered, int64_t n_begin, int64_t n_end,
                         bool force_scalar, bool bf16_boundaries, bool fp16_boundaries) {
-  constexpr int64_t kChunk = 64;
+  constexpr int64_t kChunk = 128;
   float tmp[kMaxRowsPerCall * kChunk];
   const int64_t n_total = 2 * inter;
   for (int64_t nb = n_begin; nb < n_end; nb += kChunk) {
@@ -2040,13 +2125,15 @@ void Int4Fc1SwiGluRange(int64_t hidden, int64_t inter, const Int4ExpertView& vie
                   view.scales_are_block_major, view.weights_are_prepacked,
                   view.scale_is_bf16, view.bias_is_bf16,
                   n_total, hidden, x_reordered, m, tmp, kChunk, nb, ne, force_scalar);
-    for (int64_t n = nb; n < ne; n += 2) {
-      const int64_t j = n / 2;
-      const int pos = view.weights_are_prepacked ? ReorderedPosition(static_cast<int>(j & 31))
-                                                 : RawInt4ReorderedPosition(static_cast<int>(j & 31));
-      for (int64_t r = 0; r < m; ++r) {
-        const float gate_projection = tmp[r * kChunk + (n - nb)];
-        const float up_projection = tmp[r * kChunk + (n - nb) + 1];
+    for (int64_t r = 0; r < m; ++r) {
+      const float* row_tmp = tmp + r * kChunk;
+      float* row_out = inter_reordered + r * inter;
+      for (int64_t n = nb; n < ne; n += 2) {
+        const int64_t j = n / 2;
+        const int pos = view.weights_are_prepacked ? ReorderedPosition(static_cast<int>(j & 31))
+                                                   : RawInt4ReorderedPosition(static_cast<int>(j & 31));
+        const float gate_projection = row_tmp[n - nb];
+        const float up_projection = row_tmp[(n - nb) + 1];
         float gate = bf16_boundaries   ? RoundBf16Fast(gate_projection)
                      : fp16_boundaries ? BoundaryFloat16::Round(gate_projection)
                                        : gate_projection;
@@ -2061,7 +2148,7 @@ void Int4Fc1SwiGluRange(int64_t hidden, int64_t inter, const Int4ExpertView& vie
         const float rounded_act = bf16_boundaries   ? RoundBf16Fast(act)
                                   : fp16_boundaries ? BoundaryFloat16::Round(act)
                                                     : act;
-        inter_reordered[r * inter + (j & ~int64_t{31}) + pos] = rounded_act;
+        row_out[(j & ~int64_t{31}) + pos] = rounded_act;
       }
     }
   }
@@ -2104,6 +2191,89 @@ bool Int4ExpertForward(int64_t hidden, int64_t inter, const Int4ExpertView& view
   Int4Fc1SwiGluRange(hidden, inter, view, xr.data(), m, swiglu, inter_buf.data(),
                      0, 2 * inter, force_scalar, bf16_boundaries, fp16_boundaries);
   Int4Fc2Range(hidden, inter, view, inter_buf.data(), m, out,
+               0, hidden, force_scalar, apply_fc2_bias);
+  return true;
+}
+
+void Int3GemmRange(const uint8_t* weights, const uint16_t* scales, const uint16_t* bias,
+                   int64_t block_size, bool scale_is_bf16, bool bias_is_bf16,
+                   int64_t n_total, int64_t k, const float* a_natural, int64_t m,
+                   float* out, int64_t out_stride, int64_t n_begin, int64_t n_end,
+                   bool force_scalar) {
+#if QMOE_COMPILER_SUPPORTS_AVX512
+  if (!force_scalar && CpuHasAvx512() && (block_size == 32 || block_size == 64)) {
+    detail::Avx512Int3GemmRange(weights, scales, bias, block_size, scale_is_bf16, bias_is_bf16,
+                                n_total, k, a_natural, m, out, out_stride, n_begin, n_end);
+    return;
+  }
+#endif
+  (void)force_scalar;
+  ScalarInt3GemmRange(weights, scales, bias, block_size, scale_is_bf16, bias_is_bf16,
+                      n_total, k, a_natural, m, out, out_stride, n_begin, n_end);
+}
+
+void Int3Fc1SwiGluRange(int64_t hidden, int64_t inter, const Int3ExpertView& view,
+                        const float* x_natural, int64_t m, const SwiGluParams& swiglu,
+                        float* inter_natural, int64_t n_begin, int64_t n_end,
+                        bool force_scalar, bool bf16_boundaries, bool fp16_boundaries) {
+  constexpr int64_t kChunk = 128;
+  float tmp[kMaxRowsPerCall * kChunk];
+  const int64_t n_total = 2 * inter;
+  for (int64_t nb = n_begin; nb < n_end; nb += kChunk) {
+    const int64_t ne = std::min(nb + kChunk, n_end);
+    Int3GemmRange(view.fc1_weights, view.fc1_scales, view.fc1_bias,
+                  view.block_size, view.scale_is_bf16, view.bias_is_bf16,
+                  n_total, hidden, x_natural, m, tmp, kChunk, nb, ne, force_scalar);
+    for (int64_t r = 0; r < m; ++r) {
+      const float* row_tmp = tmp + r * kChunk;
+      float* row_out = inter_natural + r * inter;
+      for (int64_t n = nb; n < ne; n += 2) {
+        const int64_t j = n / 2;
+        const float gate_projection = row_tmp[n - nb];
+        const float up_projection = row_tmp[(n - nb) + 1];
+        float gate = bf16_boundaries   ? RoundBf16Fast(gate_projection)
+                     : fp16_boundaries ? BoundaryFloat16::Round(gate_projection)
+                                       : gate_projection;
+        float value = bf16_boundaries   ? RoundBf16Fast(up_projection)
+                      : fp16_boundaries ? BoundaryFloat16::Round(up_projection)
+                                        : up_projection;
+        if (std::isfinite(swiglu.limit)) {
+          gate = std::min(gate, swiglu.limit);
+          value = std::clamp(value, -swiglu.limit, swiglu.limit);
+        }
+        const float act = gate / (1.0f + std::exp(-swiglu.alpha * gate)) * (value + swiglu.beta);
+        row_out[j] = bf16_boundaries   ? RoundBf16Fast(act)
+                     : fp16_boundaries ? BoundaryFloat16::Round(act)
+                                       : act;
+      }
+    }
+  }
+}
+
+void Int3Fc2Range(int64_t hidden, int64_t inter, const Int3ExpertView& view,
+                  const float* inter_natural, int64_t m, float* out,
+                  int64_t n_begin, int64_t n_end, bool force_scalar,
+                  bool apply_bias) {
+  Int3GemmRange(view.fc2_weights, view.fc2_scales, apply_bias ? view.fc2_bias : nullptr,
+                view.block_size, view.scale_is_bf16, view.bias_is_bf16,
+                hidden, inter, inter_natural, m, out + n_begin, hidden,
+                n_begin, n_end, force_scalar);
+}
+
+bool Int3ExpertForward(int64_t hidden, int64_t inter, const Int3ExpertView& view,
+                       const float* x, int64_t m, const SwiGluParams& swiglu, float* out,
+                       bool force_scalar, bool apply_fc2_bias,
+                       bool bf16_boundaries, bool fp16_boundaries) {
+  if (m < 1 || m > kMaxRowsPerCall || hidden <= 0 || inter <= 0 ||
+      (view.block_size != 32 && view.block_size != 64 && view.block_size != 128) ||
+      hidden % view.block_size != 0 || inter % view.block_size != 0) {
+    return false;
+  }
+  if (!view.fc1_weights || !view.fc1_scales || !view.fc2_weights || !view.fc2_scales) return false;
+  std::vector<float> inter_buf(static_cast<size_t>(m * inter));
+  Int3Fc1SwiGluRange(hidden, inter, view, x, m, swiglu, inter_buf.data(),
+                     0, 2 * inter, force_scalar, bf16_boundaries, fp16_boundaries);
+  Int3Fc2Range(hidden, inter, view, inter_buf.data(), m, out,
                0, hidden, force_scalar, apply_fc2_bias);
   return true;
 }
@@ -2290,6 +2460,37 @@ int qmoe_int4_expert_contribution(const uint8_t* fc1_w, const uint16_t* fc1_s, c
                            /*fp16_boundaries=*/is_bf16 == 0)
              ? 1
              : 0;
+}
+
+int qmoe_int3_expert_contribution(const uint8_t* fc1_w, const uint16_t* fc1_s, const uint16_t* fc1_b,
+                                  const uint8_t* fc2_w, const uint16_t* fc2_s, const uint16_t* fc2_b,
+                                  int64_t hidden, int64_t inter, int64_t block_size,
+                                  const float* x, int64_t m, float* out,
+                                  float alpha, float beta, float limit,
+                                  int is_bf16, int apply_fc2_bias, int force_scalar) {
+  Int3ExpertView view{};
+  view.fc1_weights = fc1_w;
+  view.fc1_scales = fc1_s;
+  view.fc1_bias = fc1_b;
+  view.fc2_weights = fc2_w;
+  view.fc2_scales = fc2_s;
+  view.fc2_bias = fc2_b;
+  view.block_size = block_size;
+  view.scale_is_bf16 = (is_bf16 != 0);
+  view.bias_is_bf16 = (is_bf16 != 0);
+  SwiGluParams params{alpha, beta, limit};
+  return Int3ExpertForward(hidden, inter, view, x, m, params, out, force_scalar != 0,
+                           apply_fc2_bias != 0, /*bf16_boundaries=*/is_bf16 != 0,
+                           /*fp16_boundaries=*/is_bf16 == 0)
+             ? 1
+             : 0;
+}
+
+int64_t qmoe_int3_block_bytes(int64_t hidden, int64_t inter, int64_t block_size) {
+  Nvfp4ExpertBlockLayout layout;
+  return MakeInt3ExpertBlockLayout(hidden, inter, block_size, &layout)
+             ? static_cast<int64_t>(layout.stride)
+             : -1;
 }
 
 int qmoe_nvfp4_expert_contribution_bf16(const uint8_t* fc1_w, const uint8_t* fc1_s, float fc1_g,

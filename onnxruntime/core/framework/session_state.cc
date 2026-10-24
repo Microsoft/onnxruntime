@@ -1740,26 +1740,41 @@ bool ValidateNodeForMoeOffload(const Node& node,
   };
 
   const std::string quant_type = moe_offload::MoeOffloadSessionPolicy::ToLowerAscii(get_str_attr("quant_type", "int"));
-  // Only NVFP4 with weights_prepacked=1 defines the K-packed row-major layout the offload kernels read.
-  if (quant_type != "nvfp4") {
-    out_reason = "unsupported quant_type='" + quant_type + "' (expected 'nvfp4')";
+  // Only NVFP4 with weights_prepacked=1, SM80-prepacked INT4 (block_size=32), or raw INT3 (block_size in {32,64,128})
+  // define layouts supported by the offload backend.
+  if (quant_type != "nvfp4" && quant_type != "int") {
+    out_reason = "unsupported quant_type='" + quant_type + "' (expected 'nvfp4' or 'int')";
     return false;
   }
   const int64_t weight_bits = get_int_attr("expert_weight_bits", 8);
-  if (weight_bits != 4) {
-    out_reason = "unsupported expert_weight_bits=" + std::to_string(weight_bits) + " (expected 4)";
-    return false;
-  }
+  const int64_t fc1_bits = get_int_attr("fc1_expert_weight_bits", weight_bits);
+  const int64_t fc2_bits = get_int_attr("fc2_expert_weight_bits", weight_bits);
   const int64_t prepacked = get_int_attr("weights_prepacked", 0);
-  if (prepacked != 1) {
-    out_reason = "requires weights_prepacked=1 (offline K-packed row-major FP4)";
-    return false;
-  }
-  const int64_t expected_blk = (quant_type == "nvfp4") ? 16 : 32;
   const int64_t blk = get_int_attr("block_size", -1);
-  if (blk != -1 && blk != expected_blk) {
-    out_reason = "invalid block_size=" + std::to_string(blk) + " for quant_type='" + quant_type + "'";
-    return false;
+  if (quant_type == "int") {
+    const bool is_int4_prepacked =
+        (weight_bits == 4 && fc1_bits == 4 && fc2_bits == 4 && prepacked == 1 && (blk == -1 || blk == 32));
+    const bool is_int3_raw =
+        (weight_bits == 3 && fc1_bits == 3 && fc2_bits == 3 && prepacked == 0 &&
+         (blk == 32 || blk == 64 || blk == 128));
+    if (!is_int4_prepacked && !is_int3_raw) {
+      out_reason = "quant_type='int' offload requires (bits=4, weights_prepacked=1, block_size=32) or (bits=3, weights_prepacked=0, block_size in {32,64,128})";
+      return false;
+    }
+  } else {
+    if (weight_bits != 4) {
+      out_reason = "unsupported expert_weight_bits=" + std::to_string(weight_bits) + " (expected 4)";
+      return false;
+    }
+    if (prepacked != 1) {
+      out_reason = "requires weights_prepacked=1 (offline K-packed row-major FP4)";
+      return false;
+    }
+    const int64_t expected_blk = (quant_type == "nvfp4") ? 16 : 32;
+    if (blk != -1 && blk != expected_blk) {
+      out_reason = "invalid block_size=" + std::to_string(blk) + " for quant_type='" + quant_type + "'";
+      return false;
+    }
   }
   const std::string act_type = moe_offload::MoeOffloadSessionPolicy::ToLowerAscii(get_str_attr("activation_type", ""));
   if (act_type != "swiglu") {

@@ -529,6 +529,18 @@ Dequantization (symmetric): `W = (W_stored - 128) * scale`.
 
 For MXFP4, the block size is fixed at **32** by the format.
 
+### 6.7 INT2, INT3, and Mixed-Width Integer QMoE (`quant_type="int"`)
+
+`com.microsoft::QMoE` supports projection-specific integer bit-widths via `expert_weight_bits`,
+`fc1_expert_weight_bits`, `fc2_expert_weight_bits`, and `fc3_expert_weight_bits` in `{2, 3, 4, 8}`:
+
+- **INT3 and mixed-width INT3 projections (`(3, 3)`, `(3, 4)`, `(4, 3)`, `(2, 3)`)**:
+  - Uses canonical row-local LSB-first unsigned codes (`[E, N, ceil(K * bits / 8)]`, zero-point offset `4` for `INT3`) with `weights_prepacked = 0` and `block_size` in `{32, 64, 128}`.
+  - Executed directly in-place on CUDA via `LaunchInt3Moe` (`FusedFc1FastKernel` with aligned `uint32_t` `__ldg` + `__funnelshift_r` 8-element unpacking and shared-memory input staging, `Fc2RouteFastKernel` with parallel-route execution, and `FinalizeRoutesFastKernel`).
+- **Offline SM80-prepacked INT2 and mixed INT2/INT4 (`(2, 2)`, `(2, 4)`, `(4, 2)`)**:
+  - Supports both `weights_prepacked = 0` (runtime `PrePackIntExpertWeights`) and `weights_prepacked = 1` (offline SM80 `fpA_intB` `W2_A16` / `W4_A16` prepacked `[E, K, N / (8 / bits)]` tensors) across `block_size` in `{32, 64, 128}`, `num_experts <= 512`, and `k` in `{1, 2, 4, 6, 8, 10}`.
+  - Decode ($M \cdot k \le 64$) dispatches to `launch_moe_gemv_int_symmetric_interleaved_swiglu` and `launch_moe_gemv_int_symmetric` (including 2-scale `GroupSize == 32` dequantization for `Int2DetailsW`), while prefill dispatches to `RunInt2MoePrefill` (SM80 CUTLASS Tensor Core grouped GEMM) using a single GPU weight copy.
+
 ---
 
 ## 7. Cross-Architecture Packing Compatibility
@@ -1731,9 +1743,11 @@ capture policies are never encoded in `model.onnx`.
 | Encoding | `quant_type` | `expert_weight_bits` | `block_size` | `weights_prepacked` | `swiglu_fusion` | Required Expert Input Slots |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
 | **NVFP4 (W4A16)** | `"nvfp4"` | `4` | `16` | `1` (offline K-packed row-major) | `1` (interleaved) | • **Slot 2 (`fc1_experts_weights`)**: `uint8`, physical `[E, 2*I, H/2]` (logical `[E, H, I]`)<br>• **Slot 3 (`fc1_scales`)**: `float8e4m3fn`, `[E, 2*I, H/16]`<br>• **Slot 5 (`fc2_experts_weights`)**: `uint8`, physical `[E, H, I/2]` (logical `[E, I, H/2]`)<br>• **Slot 6 (`fc2_scales`)**: `float8e4m3fn`, `[E, H, I/16]`<br>• **Slot 15 (`fc1_global_scale`)**: `float32`, `[E]`<br>• **Slot 16 (`fc2_global_scale`)**: `float32`, `[E]`<br>• *(Optional)* **Slots 4, 7**: `fc1_experts_bias` `[E, 2*I]`, `fc2_experts_bias` `[E, H]` (`fp16`/`bf16`) |
+| **Prepacked INT4 (W4A16)** | `"int"` | `4` | `32` | `1` (SM80 `fpA_intB` layout) | `1` (interleaved) | • **Slot 2 (`fc1_experts_weights`)**: `uint8`, `[E, H, I]` or `[E, 2*I, H/2]`<br>• **Slot 3 (`fc1_scales`)**: `fp16`/`bf16`, `[E, 2*I, H/32]`<br>• **Slot 5 (`fc2_experts_weights`)**: `uint8`, `[E, I, H/2]` or `[E, H, I/2]`<br>• **Slot 6 (`fc2_scales`)**: `fp16`/`bf16`, `[E, H, I/32]`<br>• *(Optional)* **Slots 4, 7**: `fc1_experts_bias` `[E, 2*I]`, `fc2_experts_bias` `[E, H]` (`fp16`/`bf16`) |
+| **Raw INT3 (W3A16)** | `"int"` | `3` | `32`, `64`, or `128` | `0` (raw packed 3-bit codes) | `1` (interleaved) | • **Slot 2 (`fc1_experts_weights`)**: `uint8`, `[E, 2*I, (H*3)/8]`<br>• **Slot 3 (`fc1_scales`)**: `fp16`/`bf16`, `[E, 2*I, H/block_size]`<br>• **Slot 5 (`fc2_experts_weights`)**: `uint8`, `[E, H, (I*3)/8]`<br>• **Slot 6 (`fc2_scales`)**: `fp16`/`bf16`, `[E, H, I/block_size]`<br>• *(Optional)* **Slots 4, 7**: `fc1_experts_bias` `[E, 2*I]`, `fc2_experts_bias` `[E, H]` (`fp16`/`bf16`) |
 
 > **Eligibility note**: When `session.moe.offload.mode="auto"`, any `MoE`/`QMoE` node outside the
-> table above (such as `quant_type="fp4"` (MXFP4), `quant_type="int"`, `quant_type="fp8"`, `swiglu_fusion=2`, or separate
+> table above (such as `quant_type="fp4"` (MXFP4), unsupported `quant_type="int"` bitwidth/prepack combinations, `quant_type="fp8"`, `swiglu_fusion=2`, or separate
 > `router_weights` at slot 14) keeps its initializers on GPU and executes through the standard CUDA
 > `MoE`/`QMoE` path. When `session.moe.offload.mode="required"`, unsupported nodes or shared
 > non-offload initializer consumers fail fast during session initialization with `ORT_INVALID_ARGUMENT`.

@@ -101,6 +101,29 @@ def load_lib():
         ctypes.c_int,
     ]
     lib.qmoe_int4_expert_contribution.restype = ctypes.c_int
+    lib.qmoe_int3_expert_contribution.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    lib.qmoe_int3_expert_contribution.restype = ctypes.c_int
+    lib.qmoe_int3_block_bytes.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
+    lib.qmoe_int3_block_bytes.restype = ctypes.c_int64
     lib.qmoe_shared_half_bits_to_float_row.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -412,6 +435,100 @@ class SharedLayoutTest(unittest.TestCase):
                     )
                     self.assertEqual(ok2, 1)
                     np.testing.assert_allclose(got_contrib, want_contrib, rtol=2e-3, atol=2e-3)
+
+    def test_canonical_int3_qmoe_banks_block32_and_block64(self):
+        rng = np.random.default_rng(20261025)
+        hidden, inter = 128, 64
+        n1 = 2 * inter
+        lib = load_lib()
+        self.assertEqual(lib.qmoe_int3_block_bytes(256, 128, 32), 43520)
+        self.assertEqual(lib.qmoe_int3_block_bytes(256, 128, 64), 40448)
+
+        def pack_int3_raw(codes: np.ndarray) -> np.ndarray:
+            g = codes.reshape(*codes.shape[:-1], codes.shape[-1] // 8, 8).astype(np.uint32)
+            w24 = np.zeros(g.shape[:-1], dtype=np.uint32)
+            for j in range(8):
+                w24 |= (g[..., j] & 7) << (3 * j)
+            b0 = (w24 & 0xFF).astype(np.uint8)
+            b1 = ((w24 >> 8) & 0xFF).astype(np.uint8)
+            b2 = ((w24 >> 16) & 0xFF).astype(np.uint8)
+            return np.stack([b0, b1, b2], axis=-1).reshape(*codes.shape[:-1], (codes.shape[-1] * 3) // 8)
+
+        for block_size in (32, 64):
+            fc1_codes = rng.integers(0, 8, (n1, hidden), dtype=np.uint8)
+            fc2_codes = rng.integers(0, 8, (hidden, inter), dtype=np.uint8)
+            fc1_scales = (rng.random((n1, hidden // block_size)) * 0.02 + 0.001).astype(np.float16)
+            fc2_scales = (rng.random((hidden, inter // block_size)) * 0.02 + 0.001).astype(np.float16)
+            fc1_bias = ((rng.random(n1) - 0.5) * 0.1).astype(np.float16)
+            fc2_bias = ((rng.random(hidden) - 0.5) * 0.1).astype(np.float16)
+
+            w1_raw = np.ascontiguousarray(pack_int3_raw(fc1_codes))
+            w2_raw = np.ascontiguousarray(pack_int3_raw(fc2_codes))
+            s1 = np.ascontiguousarray(fc1_scales.view(np.uint16))
+            s2 = np.ascontiguousarray(fc2_scales.view(np.uint16))
+            b1 = np.ascontiguousarray(fc1_bias.view(np.uint16))
+            b2 = np.ascontiguousarray(fc2_bias.view(np.uint16))
+
+            w1_deq = (fc1_codes.astype(np.float32) - 4.0) * np.repeat(fc1_scales.astype(np.float32), block_size, axis=1)
+            w2_deq = (fc2_codes.astype(np.float32) - 4.0) * np.repeat(fc2_scales.astype(np.float32), block_size, axis=1)
+
+            for rows in (1, 2, 3, 4):
+                x = (rng.standard_normal((rows, hidden)) * 0.5).astype(np.float32)
+                proj = (x @ w1_deq.T + fc1_bias.astype(np.float32)).astype(np.float16).astype(np.float32)
+                gate = np.minimum(proj[:, 0::2], np.float32(7.0))
+                up = np.clip(proj[:, 1::2], -np.float32(7.0), np.float32(7.0))
+                act = (gate / (1.0 + np.exp(-np.float32(1.702) * gate)) * (up + np.float32(1.0))).astype(np.float16)
+                want_contrib = act.astype(np.float32) @ w2_deq.T
+                want_full = want_contrib + fc2_bias.astype(np.float32)
+
+                for force_scalar in (1, 0):
+                    got_full = np.empty((rows, hidden), dtype=np.float32)
+                    ok = lib.qmoe_int3_expert_contribution(
+                        w1_raw.ctypes.data,
+                        s1.ctypes.data,
+                        b1.ctypes.data,
+                        w2_raw.ctypes.data,
+                        s2.ctypes.data,
+                        b2.ctypes.data,
+                        hidden,
+                        inter,
+                        block_size,
+                        x.ctypes.data,
+                        rows,
+                        got_full.ctypes.data,
+                        1.702,
+                        1.0,
+                        7.0,
+                        0,
+                        1,
+                        force_scalar,
+                    )
+                    self.assertEqual(ok, 1)
+                    np.testing.assert_allclose(got_full, want_full, rtol=1e-4, atol=1e-4)
+
+                    got_contrib = np.empty((rows, hidden), dtype=np.float32)
+                    ok2 = lib.qmoe_int3_expert_contribution(
+                        w1_raw.ctypes.data,
+                        s1.ctypes.data,
+                        b1.ctypes.data,
+                        w2_raw.ctypes.data,
+                        s2.ctypes.data,
+                        None,
+                        hidden,
+                        inter,
+                        block_size,
+                        x.ctypes.data,
+                        rows,
+                        got_contrib.ctypes.data,
+                        1.702,
+                        1.0,
+                        7.0,
+                        0,
+                        0,
+                        force_scalar,
+                    )
+                    self.assertEqual(ok2, 1)
+                    np.testing.assert_allclose(got_contrib, want_contrib, rtol=1e-4, atol=1e-4)
 
     def test_cpu_qmoe_prepacked_and_raw_parity(self):
         try:

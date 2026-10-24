@@ -633,6 +633,44 @@ void LaunchQMoECombineNvfp4ScalesForGemv(
     int k_blocks,
     cudaStream_t stream);
 
+struct Int3Projection {
+  const uint8_t* weights = nullptr;
+  const void* scales = nullptr;
+  const uint8_t* zeros = nullptr;
+  const void* bias = nullptr;
+  int bits = 0;
+};
+
+struct Int3MoeParams {
+  const void* input = nullptr;
+  void* output = nullptr;
+  void* activation = nullptr;
+  void* fc2_partial = nullptr;
+  const int* experts = nullptr;
+  const float* routing_scales = nullptr;
+  const void* router_weights = nullptr;
+  int num_experts = 0;
+  Int3Projection fc1{};
+  Int3Projection fc2{};
+  int rows = 0;
+  int hidden = 0;
+  int intermediate = 0;
+  int top_k = 0;
+  int block_size = 0;
+  float alpha = 1.0f;
+  float beta = 0.0f;
+  float limit = 0.0f;
+  bool is_bfloat16 = false;
+  const int* source_route_ids = nullptr;
+  bool input_is_gathered = false;
+  int total_routes_override = 0;
+};
+
+cudaError_t LaunchInt3Moe(const Int3MoeParams& params, cudaStream_t stream);
+cudaError_t ValidateInt3MoeContent(const Int3Projection& projection, size_t rows,
+                                   int logical_k, int block_size, bool is_bfloat16,
+                                   int* invalid, cudaStream_t stream);
+
 }  // namespace cuda
 }  // namespace contrib
 }  // namespace onnxruntime

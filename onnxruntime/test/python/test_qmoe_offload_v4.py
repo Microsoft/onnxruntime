@@ -16,6 +16,17 @@ from pathlib import Path
 import numpy as np
 import onnx
 
+_WIN_DLL_HANDLES = []
+if os.name == "nt":
+    for _root in (os.environ.get("CUDNN_HOME", ""), os.environ.get("CUDA_PATH", "")):
+        if _root:
+            for _sub in (os.path.join("bin", "x64"), "bin"):
+                _d = os.path.join(_root, _sub)
+                if os.path.isdir(_d):
+                    _WIN_DLL_HANDLES.append(os.add_dll_directory(_d))
+                    if _d not in os.environ.get("PATH", ""):
+                        os.environ["PATH"] = _d + os.pathsep + os.environ.get("PATH", "")
+
 import onnxruntime as ort
 
 TensorProto = onnx.TensorProto
@@ -238,6 +249,8 @@ class TestQMoEOffloadV4(unittest.TestCase):
     def setUpClass(cls):
         plugin_path = os.environ.get("QWEN_PROVIDER")
         if plugin_path and os.path.exists(plugin_path):
+            with contextlib.suppress(Exception):
+                ort.unregister_execution_provider_library("CUDAExecutionProvider")
             with contextlib.suppress(Exception):
                 ort.register_execution_provider_library("CUDAExecutionProvider", plugin_path)
 
@@ -1108,6 +1121,326 @@ int main() {
                 ["g++", "-O2", "-std=c++17", f"-I{repo_root / 'onnxruntime'}", str(src_file), "-o", str(bin_file)]
             )
             subprocess.check_call([str(bin_file)])
+
+    @staticmethod
+    def _build_int_qmoe_model(
+        model_dir: str,
+        layer_specs: list[tuple[int, int, int]],
+        num_experts: int = 8,
+        hidden_size: int = 256,
+        inter_size: int = 128,
+        top_k: int = 2,
+        seed: int = 2026,
+        with_bias: bool = False,
+        use_fp16: bool = False,
+    ) -> str:
+        """Build a multi-layer INT4/INT3 QMoE model where each layer spec is (weight_bits, block_size, prepacked)."""
+        rng = np.random.default_rng(seed)
+        ext_filename = "int_weights.data"
+        ext_path = os.path.join(model_dir, ext_filename)
+        act_onnx_dtype = TensorProto.FLOAT16 if use_fp16 else TensorProto.BFLOAT16
+
+        nodes = []
+        initializers = []
+        offset = 0
+
+        def add_tensor(wf, name, arr, onnx_dtype):
+            nonlocal offset
+            raw = arr.tobytes()
+            pad = (4096 - (offset % 4096)) % 4096
+            if pad:
+                wf.write(b"\x00" * pad)
+                offset += pad
+            wf.write(raw)
+            t = helper.make_tensor(
+                name=name,
+                data_type=onnx_dtype,
+                dims=list(arr.shape),
+                vals=raw,
+                raw=True,
+            )
+            onnx.external_data_helper.set_external_data(t, location=ext_filename, offset=offset, length=len(raw))
+            t.data_location = TensorProto.EXTERNAL
+            t.ClearField("raw_data")
+            offset += len(raw)
+            initializers.append(t)
+
+        with open(ext_path, "wb") as wf:
+            cur_in = "X"
+            for l_idx, (bits, blk_size, prepacked) in enumerate(layer_specs):
+                if bits == 4 and prepacked == 1:
+                    fc1_w = rng.integers(0, 256, size=(num_experts, hidden_size, inter_size), dtype=np.uint8)
+                    fc2_w = rng.integers(0, 256, size=(num_experts, inter_size, hidden_size // 2), dtype=np.uint8)
+                elif bits == 3 and prepacked == 0:
+                    fc1_w = rng.integers(
+                        0, 256, size=(num_experts, 2 * inter_size, (hidden_size * 3) // 8), dtype=np.uint8
+                    )
+                    fc2_w = rng.integers(
+                        0, 256, size=(num_experts, hidden_size, (inter_size * 3) // 8), dtype=np.uint8
+                    )
+                else:
+                    pack_factor = 8 // bits
+                    fc1_w = rng.integers(
+                        0, 256, size=(num_experts, 2 * inter_size, hidden_size // pack_factor), dtype=np.uint8
+                    )
+                    fc2_w = rng.integers(
+                        0, 256, size=(num_experts, hidden_size, inter_size // pack_factor), dtype=np.uint8
+                    )
+
+                s1_f32 = rng.uniform(0.005, 0.03, size=(num_experts, 2 * inter_size, hidden_size // blk_size)).astype(
+                    np.float32
+                )
+                s2_f32 = rng.uniform(0.005, 0.03, size=(num_experts, hidden_size, inter_size // blk_size)).astype(
+                    np.float32
+                )
+                if use_fp16:
+                    fc1_s = s1_f32.astype(np.float16).view(np.uint16)
+                    fc2_s = s2_f32.astype(np.float16).view(np.uint16)
+                else:
+                    fc1_s = _float32_to_bfloat16_u16(s1_f32)
+                    fc2_s = _float32_to_bfloat16_u16(s2_f32)
+
+                w1_name = f"model.layers.{l_idx}.mlp.fc1_experts_weights"
+                s1_name = f"model.layers.{l_idx}.mlp.fc1_scales"
+                b1_name = ""
+                w2_name = f"model.layers.{l_idx}.mlp.fc2_experts_weights"
+                s2_name = f"model.layers.{l_idx}.mlp.fc2_scales"
+                b2_name = ""
+
+                add_tensor(wf, w1_name, fc1_w, TensorProto.UINT8)
+                add_tensor(wf, s1_name, fc1_s, act_onnx_dtype)
+                if with_bias:
+                    b1_name = f"model.layers.{l_idx}.mlp.fc1_bias"
+                    b2_name = f"model.layers.{l_idx}.mlp.fc2_bias"
+                    b1_f32 = rng.uniform(-0.05, 0.05, size=(num_experts, 2 * inter_size)).astype(np.float32)
+                    b2_f32 = rng.uniform(-0.05, 0.05, size=(num_experts, hidden_size)).astype(np.float32)
+                    if use_fp16:
+                        fc1_b = b1_f32.astype(np.float16).view(np.uint16)
+                        fc2_b = b2_f32.astype(np.float16).view(np.uint16)
+                    else:
+                        fc1_b = _float32_to_bfloat16_u16(b1_f32)
+                        fc2_b = _float32_to_bfloat16_u16(b2_f32)
+                    add_tensor(wf, b1_name, fc1_b, act_onnx_dtype)
+                    add_tensor(wf, b2_name, fc2_b, act_onnx_dtype)
+                add_tensor(wf, w2_name, fc2_w, TensorProto.UINT8)
+                add_tensor(wf, s2_name, fc2_s, act_onnx_dtype)
+
+                out_name = "Y" if l_idx == len(layer_specs) - 1 else f"H_{l_idx}"
+                node = helper.make_node(
+                    "QMoE",
+                    inputs=[cur_in, "router_probs", w1_name, s1_name, b1_name, w2_name, s2_name, b2_name],
+                    outputs=[out_name],
+                    name=f"model/layers.{l_idx}/mlp/QMoE_node_{l_idx}",
+                    domain="com.microsoft",
+                    activation_type="swiglu",
+                    normalize_routing_weights=1,
+                    k=min(top_k, num_experts),
+                    expert_weight_bits=bits,
+                    block_size=blk_size,
+                    swiglu_fusion=1,
+                    quant_type="int",
+                    weights_prepacked=prepacked,
+                )
+                nodes.append(node)
+                cur_in = out_name
+
+        prof_path = os.path.join(model_dir, "expert-profile.bin")
+        pairs = [
+            (l_idx, (e * 3 + l_idx) % num_experts)
+            for e in range(num_experts)
+            for l_idx in range(len(layer_specs))
+        ]
+        with open(prof_path, "wb") as pf:
+            pf.write(
+                struct.pack(
+                    "<6I", 0x50525453, 1, len(layer_specs), num_experts, len(layer_specs) * num_experts, len(pairs)
+                )
+            )
+            pf.writelines(struct.pack("<2H", l_id, e_id) for l_id, e_id in pairs)
+
+        graph = helper.make_graph(
+            nodes,
+            "qmoe_int_offload_v4_test",
+            [
+                helper.make_tensor_value_info("X", act_onnx_dtype, ["T", hidden_size]),
+                helper.make_tensor_value_info("router_probs", act_onnx_dtype, ["T", num_experts]),
+            ],
+            [helper.make_tensor_value_info("Y", act_onnx_dtype, ["T", hidden_size])],
+            initializer=initializers,
+        )
+        model = helper.make_model(
+            graph,
+            opset_imports=[helper.make_opsetid("", 20), helper.make_opsetid("com.microsoft", 1)],
+        )
+        model_path = os.path.join(model_dir, "model.onnx")
+        onnx.save_model(model, model_path)
+        return model_path
+
+    def test_v4_int4_and_int3_offload_modes_and_numerical_parity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Prepacked INT4 (bits=4, block_size=32, weights_prepacked=1)
+            dir_int4 = os.path.join(tmpdir, "int4_b32")
+            os.makedirs(dir_int4, exist_ok=True)
+            m_int4 = self._build_int_qmoe_model(
+                dir_int4, layer_specs=[(4, 32, 1), (4, 32, 1)], num_experts=8, hidden_size=256, inter_size=128, top_k=2
+            )
+            # H=256, I=128, INT4 b32: 32768 + 16384 + 4096 + 2048 + 8 = 55,304 B gpu slot; 55,808 B host stride
+            int4_slot_bytes = 55304
+            int4_host_stride = 55808
+            fixed_bytes = 2 * 8 * 4  # 64 B per layer
+            budget_int4_adaptive = 2 * fixed_bytes + 8 * int4_slot_bytes  # 4 slots/layer (2 resident + 2 spare)
+
+            sess_int4_ref = self._make_session(m_int4, {"session.moe.offload.mode": "disabled"})
+            sess_int4_static = self._make_session(
+                m_int4,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "static",
+                    "session.moe.offload.device_expert_bytes": str(2 * fixed_bytes + 6 * int4_slot_bytes),
+                    "session.moe.offload.popularity_file": "expert-profile.bin",
+                },
+            )
+            sess_int4_adaptive = self._make_session(
+                m_int4,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "adaptive",
+                    "session.moe.offload.device_expert_bytes": str(budget_int4_adaptive),
+                    "session.moe.offload.host_expert_bytes": str(2 * 2 * int4_host_stride),
+                    "session.moe.offload.popularity_file": "expert-profile.bin",
+                },
+            )
+            sess_int4_stream = self._make_session(
+                m_int4,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "static",
+                    "session.moe.offload.cpu_execution": "disabled",
+                    "session.moe.offload.device_expert_bytes": str(2 * fixed_bytes + 6 * int4_slot_bytes),
+                },
+            )
+
+            rng = np.random.default_rng(202610)
+            for num_rows in (1, 2, 4, 16):
+                x = rng.standard_normal((num_rows, 256), dtype=np.float32) * 0.5
+                r = rng.standard_normal((num_rows, 8), dtype=np.float32)
+                y_ref = self._run_bf16(sess_int4_ref, x, r)
+                for name, s in (
+                    ("int4_static", sess_int4_static),
+                    ("int4_adaptive_bounded_host", sess_int4_adaptive),
+                    ("int4_gpu_stream", sess_int4_stream),
+                ):
+                    y_cand = self._run_bf16(s, x, r)
+                    self.assertLess(
+                        float(np.max(np.abs(y_ref - y_cand))),
+                        5e-2,
+                        f"INT4 offload mismatch in {name} at T={num_rows}",
+                    )
+            del sess_int4_stream, sess_int4_adaptive, sess_int4_static, sess_int4_ref
+
+            # 2. Raw INT3 (bits=3, weights_prepacked=0) with block_size=32 and block_size=64 in a mixed 2-layer model,
+            # plus a mixed INT4 (layer 0, b32) + INT3 (layer 1, b64) model.
+            dir_int3_mix = os.path.join(tmpdir, "int3_b32_b64")
+            dir_int4_int3 = os.path.join(tmpdir, "int4_b32_int3_b64")
+            os.makedirs(dir_int3_mix, exist_ok=True)
+            os.makedirs(dir_int4_int3, exist_ok=True)
+
+            m_int3 = self._build_int_qmoe_model(
+                dir_int3_mix,
+                layer_specs=[(3, 32, 0), (3, 64, 0)],
+                num_experts=8,
+                hidden_size=256,
+                inter_size=128,
+                top_k=2,
+                seed=2027,
+            )
+            m_int4_int3 = self._build_int_qmoe_model(
+                dir_int4_int3,
+                layer_specs=[(4, 32, 1), (3, 64, 0)],
+                num_experts=8,
+                hidden_size=256,
+                inter_size=128,
+                top_k=2,
+                seed=2028,
+                with_bias=True,
+            )
+            # H=256, I=128, INT3 b32: 24576 + 12288 + 4096 + 2048 + 8 = 43,016 B gpu slot; 43,520 B host stride
+            # H=256, I=128, INT3 b64: 24576 + 12288 + 2048 + 1024 + 8 = 39,944 B gpu slot; 40,448 B host stride
+            int3_b32_slot = 43016
+            int3_b64_slot = 39944
+            int3_b32_host = 43520
+            int3_b64_host = 40448
+            budget_int3 = 2 * fixed_bytes + 4 * int3_b32_slot + 4 * int3_b64_slot
+
+            sess_int3_ref = self._make_session(m_int3, {"session.moe.offload.mode": "disabled"})
+            sess_int3_off = self._make_session(
+                m_int3,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "adaptive",
+                    "session.moe.offload.device_expert_bytes": str(budget_int3),
+                    "session.moe.offload.host_expert_bytes": str(2 * (int3_b32_host + int3_b64_host)),
+                    "session.moe.offload.popularity_file": "expert-profile.bin",
+                },
+            )
+            sess_int3_stream = self._make_session(
+                m_int3,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "static",
+                    "session.moe.offload.cpu_execution": "disabled",
+                    "session.moe.offload.device_expert_bytes": str(budget_int3),
+                },
+            )
+            for num_rows in (1, 2, 4, 16):
+                x = rng.standard_normal((num_rows, 256), dtype=np.float32) * 0.5
+                r = rng.standard_normal((num_rows, 8), dtype=np.float32)
+                y_ref = self._run_bf16(sess_int3_ref, x, r)
+                for name, s in (("int3_adaptive", sess_int3_off), ("int3_gpu_stream", sess_int3_stream)):
+                    y_cand = self._run_bf16(s, x, r)
+                    self.assertLess(
+                        float(np.max(np.abs(y_ref - y_cand))),
+                        5e-2,
+                        f"INT3 offload mismatch in {name} at T={num_rows}",
+                    )
+            del sess_int3_stream, sess_int3_off, sess_int3_ref
+
+            # Mixed INT4 + INT3 with FC1/FC2 bias
+            fc1_bias_slot = 2 * 128 * 2  # 512 B
+            fc2_bias_layer = 8 * 256 * 2  # 4096 B
+            bias_fixed = fixed_bytes + 2 * fc2_bias_layer + 8 * fc1_bias_slot
+            budget_mix = 2 * bias_fixed + 4 * (int4_slot_bytes + fc1_bias_slot) + 4 * (int3_b64_slot + fc1_bias_slot)
+            sess_mix_ref = self._make_session(m_int4_int3, {"session.moe.offload.mode": "disabled"})
+            sess_mix_off = self._make_session(
+                m_int4_int3,
+                {
+                    "session.moe.offload.mode": "required",
+                    "session.moe.offload.placement": "adaptive",
+                    "session.moe.offload.device_expert_bytes": str(budget_mix),
+                    "session.moe.offload.popularity_file": "expert-profile.bin",
+                },
+            )
+            for num_rows in (1, 2, 4, 16):
+                x = rng.standard_normal((num_rows, 256), dtype=np.float32) * 0.5
+                r = rng.standard_normal((num_rows, 8), dtype=np.float32)
+                y_ref = self._run_bf16(sess_mix_ref, x, r)
+                y_off = self._run_bf16(sess_mix_off, x, r)
+                self.assertLess(
+                    float(np.max(np.abs(y_ref - y_off))),
+                    5e-2,
+                    f"Mixed INT4+INT3 offload mismatch at T={num_rows}",
+                )
+            del sess_mix_off, sess_mix_ref
+
+            # 3. Unsupported quant_type='int' attribute combinations (e.g., raw INT4 weights_prepacked=0) must be
+            # rejected in mode=required and ignored in mode=auto.
+            dir_raw_int4 = os.path.join(tmpdir, "raw_int4")
+            os.makedirs(dir_raw_int4, exist_ok=True)
+            m_raw_int4 = self._build_int_qmoe_model(
+                dir_raw_int4, layer_specs=[(4, 32, 0)], num_experts=8, hidden_size=256, inter_size=128, top_k=2
+            )
+            with self.assertRaisesRegex(Exception, "quant_type='int' offload requires"):
+                self._make_session(m_raw_int4, {"session.moe.offload.mode": "required"})
 
 
 if __name__ == "__main__":
